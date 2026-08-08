@@ -1,0 +1,5 @@
+# 所有文本文件统一 LF（仓库与工作区），避免 Windows CRLF 产生的全量 diff 噪音
+* text=auto eol=lf
+
+# Ensure shell scripts always use LF line endings (Docker/Linux compat)
+*.sh text eol=lf

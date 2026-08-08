@@ -1,0 +1,31 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Lint / Type / Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          pip install -e ".[dev]"
+          python -m scripts.install_channel_dependencies --all-channels
+
+      - name: Lint
+        run: ruff check nanobot/
+
+      - name: Type check
+        run: basedpyright
+
+      - name: Test
+        run: pytest
