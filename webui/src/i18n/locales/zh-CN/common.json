@@ -296,11 +296,7 @@
       "noDescription": "暂无描述。"
     },
     "about": {
-      "version": "版本",
-      "checking": "正在检查...",
-      "checkForUpdates": "检查更新",
-      "upToDate": "已是最新版本",
-      "updateAvailable": "有可用更新 v{{version}}"
+      "version": "版本"
     },
     "mcp": {
       "allCategories": "全部分类",

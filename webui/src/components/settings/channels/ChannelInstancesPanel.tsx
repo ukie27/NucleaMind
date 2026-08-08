@@ -53,7 +53,6 @@ export function ChannelInstancesPanel({
   token,
   feature,
   showBrandLogos,
-  chatAppsDocsUrl,
   instances: providedInstances,
   onFeaturesUpdate,
   customization = {},
@@ -61,7 +60,6 @@ export function ChannelInstancesPanel({
   token: string;
   feature: NanobotFeatureInfo;
   showBrandLogos: boolean;
-  chatAppsDocsUrl?: string;
   instances?: NanobotChannelInstanceInfo[];
   onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
   customization?: ChannelInstancesPanelCustomization;
@@ -250,7 +248,6 @@ export function ChannelInstancesPanel({
                       <ChannelGuideLink
                         feature={feature}
                         setup={setup}
-                        chatAppsDocsUrl={chatAppsDocsUrl}
                         compact
                       />
                     }

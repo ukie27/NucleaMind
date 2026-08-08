@@ -179,10 +179,6 @@ const LOCALIZED_SETTINGS_COPY_KEYS = [
   "settings.status.upToDate",
   "settings.actions.save",
   "settings.actions.saving",
-  "settings.about.checking",
-  "settings.about.checkForUpdates",
-  "settings.about.upToDate",
-  "settings.about.updateAvailable",
 ];
 const LOCALIZED_WORKSPACE_COPY_KEYS = [
   "thread.composer.workspace.accessAria",
@@ -530,8 +526,6 @@ describe("webui i18n", () => {
       expect(common.settings.byok.hideApiKey).toBeTruthy();
       expect(common.settings.byok.configuredKeyHint).toBeTruthy();
       expect(common.settings.about.version).toBeTruthy();
-      expect(common.settings.about.checkForUpdates).toBeTruthy();
-      expect(common.settings.about.updateAvailable).toContain("{{version}}");
     }
   });
 

@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 export default {
   presentation: {
@@ -9,7 +8,6 @@ export default {
     logoUrl: "https://matrix.org/favicon.ico",
     setup: {
       mode: "credentials",
-      docsUrl: chatAppGuideUrl("matrix"),
       fields: [
         { key: "channels.matrix.homeserver" },
         { key: "channels.matrix.userId" },

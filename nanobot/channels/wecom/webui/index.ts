@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 export default {
   presentation: {
@@ -9,7 +8,6 @@ export default {
     logoUrl: "https://work.weixin.qq.com/favicon.ico",
     setup: {
       mode: "credentials",
-      docsUrl: chatAppGuideUrl("wecom"),
       fields: [
         { key: "channels.wecom.botId" },
         { key: "channels.wecom.secret" },

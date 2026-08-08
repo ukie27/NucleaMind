@@ -1,6 +1,6 @@
 # CLI Reference
 
-Use this page when you know what you want to run and need the command shape. For a guided first run, start with [`quick-start.md`](./quick-start.md).
+Use this page when you need the command shape for the current inherited CLI.
 
 ## Choose a Command
 

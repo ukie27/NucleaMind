@@ -481,11 +481,7 @@
       "noDescription": "目前沒有描述。"
     },
     "about": {
-      "version": "版本",
-      "checking": "正在檢查…",
-      "checkForUpdates": "檢查更新",
-      "upToDate": "已是最新版本",
-      "updateAvailable": "已有 v{{version}} 版更新"
+      "version": "版本"
     },
     "mcp": {
       "allCategories": "全部分類",

@@ -315,25 +315,13 @@ def test_build_skills_summary_groups_paths_by_root(tmp_path: Path) -> None:
     assert "`beta/SKILL.md`" in summary
 
 
-def test_bundled_update_setup_description_is_valid_yaml(tmp_path: Path) -> None:
-    metadata = SkillsLoader(tmp_path).get_skill_metadata("update-setup")
-
-    assert metadata is not None
-    assert metadata["description"].startswith("One-time setup wizard")
-    assert "Triggers:" in metadata["description"]
-
-
 def test_bundled_skills_use_agent_owned_paths(tmp_path: Path) -> None:
     loader = SkillsLoader(tmp_path)
     memory = loader.load_skill("memory")
-    update_setup = loader.load_skill("update-setup")
 
     assert memory is not None
     assert "<history-log-path>" in memory
     assert 'path="memory/history.jsonl"' not in memory
-    assert update_setup is not None
-    assert "<agent-workspace>/skills/update/SKILL.md" in update_setup
-    assert "Never substitute a project-relative" in update_setup
 
 
 def test_disabled_skills_excluded_from_get_always_skills(tmp_path: Path) -> None:

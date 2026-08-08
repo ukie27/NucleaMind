@@ -48,12 +48,6 @@ RUN for channel in $(printf '%s' "$NANOBOT_CHANNELS" | tr ',' ' '); do \
         python -m scripts.install_channel_dependencies "$channel"; \
     done
 
-# Render deploy template (see render.yaml): committed gateway config that wires
-# secrets through ${ANTHROPIC_API_KEY} / ${NANOBOT_WEB_TOKEN} env vars (resolved
-# at startup). Lives in the code dir (/app), not the data dir, so a mounted disk
-# won't shadow it. Only used when RENDER=true; ignored by local runs.
-COPY render-config.json ./
-
 # Create the non-root user and hand ownership of the writable virtualenv to it.
 RUN useradd -m -u 1000 -s /bin/bash nanobot && \
     mkdir -p /home/nanobot/.nanobot && \
@@ -62,15 +56,12 @@ RUN useradd -m -u 1000 -s /bin/bash nanobot && \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
-# Start as root so the entrypoint can chown the data dir (on Render, the
-# freshly-mounted root-owned persistent disk) before dropping to the non-root
-# nanobot user via setpriv. The entrypoint drops privileges on every root start
-# and fails closed if it cannot, so the agent never runs as root (see
-# entrypoint.sh).
+# Start as root so the entrypoint can fix ownership of a mounted data directory
+# before dropping to the non-root nanobot user via setpriv. The entrypoint drops
+# privileges on every root start and fails closed if it cannot.
 USER root
 ENV HOME=/home/nanobot
-# Ensure crash output reaches Render logs (app output is otherwise swallowed on
-# non-graceful exit).
+# Ensure crash output reaches container logs.
 ENV PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1
 
 # Gateway health endpoint and optional WebUI/WebSocket channel ports

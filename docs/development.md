@@ -1,6 +1,10 @@
 # Development
 
-This page collects contributor-facing notes for extending nanobot. User-facing setup and runtime options live in [`configuration.md`](./configuration.md).
+This page records implementation notes for extending the code that NucleaMind
+currently inherits from nanobot. Prefer future plugin boundaries where they are
+already defined; do not treat every in-tree extension pattern below as a
+permanent kernel API. Runtime configuration remains documented in
+[`configuration.md`](./configuration.md).
 
 ## Adding an LLM Provider
 

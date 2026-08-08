@@ -2,7 +2,10 @@
 
 Config file: `~/.nanobot/config.json`
 
-This is the full reference. If this is your first install, start with [`quick-start.md`](./quick-start.md). If you are trying to choose a model or fix provider/model matching, use [`providers.md`](./providers.md) first and come back here for exact fields and advanced options.
+This is the full reference for the current inherited configuration schema. If
+you are trying to choose a model or fix provider/model matching, use
+[`providers.md`](./providers.md) first and come back here for exact fields and
+advanced options.
 
 For normal local use, prefer the WebUI before editing JSON: **Settings → Models** manages model choices and provider credentials, **Settings → Channels** guides chat-platform setup, other Settings pages cover built-in capabilities, and **Apps** manages CLI App and MCP integrations. Edit `config.json` directly when you need an advanced field, automate deployment, or intentionally manage configuration as code.
 
@@ -14,21 +17,6 @@ For setup and runtime failures, follow the diagnosis order in [`troubleshooting.
 
 > [!NOTE]
 > If your config file is older than the current schema, run `nanobot onboard --refresh`. nanobot adds missing default fields while preserving your existing values.
-
-## Configuration Guides
-
-This page is the complete configuration reference. For task-oriented setup, use
-the focused guides first and come back here for exact fields and defaults.
-
-| Task | Guide |
-|---|---|
-| Add MCP tools | [`guides/configure-mcp-tools.md`](./guides/configure-mcp-tools.md) |
-| Enable web search and web fetch | [`guides/configure-web-search.md`](./guides/configure-web-search.md) |
-| Configure model fallback | [`guides/configure-model-fallback.md`](./guides/configure-model-fallback.md) |
-| Add an OpenAI-compatible provider | [`guides/configure-openai-compatible-provider.md`](./guides/configure-openai-compatible-provider.md) |
-| Add Langfuse observability | [`guides/configure-langfuse-observability.md`](./guides/configure-langfuse-observability.md) |
-| Secure a local AI agent | [`guides/secure-local-ai-agent.md`](./guides/secure-local-ai-agent.md) |
-| Deploy the gateway | [`guides/deploy-nanobot-gateway.md`](./guides/deploy-nanobot-gateway.md) |
 
 ## Quick Jump
 
@@ -248,7 +236,6 @@ Tracing covers the providers that go through nanobot's OpenAI-compatible client 
 
 > [!TIP]
 > - **Voice transcription**: Voice messages and WebUI microphone input use the shared top-level `transcription` settings. The default `transcription.provider` value is `"groq"`; set it to `"openai"` for OpenAI Whisper, `"openrouter"` for OpenRouter speech-to-text models, `"xiaomi_mimo"` for Xiaomi MiMo ASR, or `"assemblyai"` for AssemblyAI. API keys still live in the matching `providers.<provider>` config.
-> - **MiniMax Coding Plan**: Exclusive discount links for the nanobot community: [Overseas](https://platform.minimax.io/subscribe/coding-plan?code=9txpdXw04g&source=link) · [Mainland China](https://platform.minimaxi.com/subscribe/token-plan?code=GILTJpMTqZ&source=link)
 > - **MiniMax (Mainland China)**: If your API key is from MiniMax's mainland China platform (minimaxi.com), set `"apiBase": "https://api.minimaxi.com/v1"` in your minimax provider config.
 > - **MiniMax thinking mode**: `providers.minimaxAnthropic` is the config block for `reasoningEffort` / thinking mode. MiniMax exposes that capability through its Anthropic-compatible endpoint, so nanobot keeps it as a separate provider instead of guessing MiniMax-specific thinking parameters on the generic OpenAI-compatible `minimax` endpoint. It uses the same `MINIMAX_API_KEY`. Default Anthropic-compatible base URL: `https://api.minimax.io/anthropic`; for mainland China use `https://api.minimaxi.com/anthropic`.
 > - **Kimi Coding Plan**: Use `providers.kimiCoding` with `provider: "kimi_coding"` for Kimi's dedicated Anthropic Messages API endpoint. The endpoint requires a Claude-compatible `User-Agent`; nanobot sends `claude-code/0.1.0` by default, and you can override it with `extraHeaders.User-Agent` if your account requires a different value.
@@ -791,7 +778,7 @@ To use a provider-specific proxy, merge this into `config.json` before login:
 The proxy applies to OAuth discovery, token exchange/refresh, model-catalog
 lookups, and subscription model requests. Because this integration depends on
 xAI's public Grok Build client contract, an upstream contract change may require
-a nanobot update.
+updating the integration in this repository.
 
 </details>
 

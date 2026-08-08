@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 import { FeishuAssistantsPanel } from "./FeishuAssistantsPanel";
 
@@ -20,7 +19,6 @@ export default {
     setup: {
       mode: "connect",
       command: "nanobot channels login feishu",
-      docsUrl: chatAppGuideUrl("feishu"),
       manualFields: [
         { key: "channels.feishu.appId" },
         { key: "channels.feishu.appSecret" },

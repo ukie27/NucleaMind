@@ -2,7 +2,8 @@
 
 This page is for cases where you already know what you want to connect and need a pasteable setup. Each recipe shows what to set, what to run, and what a failure usually means.
 
-If this is your first install and terminal commands are new to you, start with [`start-without-technical-background.md`](./start-without-technical-background.md). If you want the field-by-field explanation, read [`providers.md`](./providers.md) and then [`configuration.md#providers`](./configuration.md#providers).
+For field-by-field behavior, read [`providers.md`](./providers.md) and then
+[`configuration.md#providers`](./configuration.md#providers).
 
 Most examples below are snippets to merge into `~/.nanobot/config.json`. Keep any existing sections you still need, and replace placeholder keys such as `${OPENROUTER_API_KEY}` with environment-variable references or real values only on your own machine.
 
@@ -27,7 +28,7 @@ Match the recipe to the credential or endpoint you already have:
 
 ## How to Use a Recipe
 
-1. Install nanobot and run `nanobot onboard` once so `~/.nanobot/config.json` exists. Use `nanobot onboard --wizard` if you prefer prompts over hand-editing JSON.
+1. Install this source checkout in the project virtual environment, then run `nanobot onboard` once so `~/.nanobot/config.json` exists. Use `nanobot onboard --wizard` if you prefer prompts over hand-editing JSON.
 2. Put secrets in environment variables when possible.
 3. Merge the recipe snippet into `~/.nanobot/config.json`.
 4. Run `nanobot status`.
@@ -433,11 +434,10 @@ nanobot agent -m "Hello!"
 
 If you see `connection refused`, Ollama is not running or `apiBase` points to the wrong port. If every response is slow, try a smaller local model or lower `contextWindowTokens`.
 
-If direct Ollama responses are fast but tool-using nanobot turns repeatedly evaluate
+If direct Ollama responses are fast but tool-using turns repeatedly evaluate
 thousands of prompt tokens, the model's chat template may be moving its tool
-definitions between requests. See
-[Improve Ollama Tool-Calling Prompt Cache Reuse](./guides/configure-ollama-prompt-cache.md)
-for a diagnostic procedure and an optional model-specific workaround.
+definitions between requests. Inspect the rendered template before changing
+context or memory settings.
 
 ## Recipe: vLLM or LM Studio
 

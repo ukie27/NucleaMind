@@ -1,10 +1,9 @@
 # nanobot WebUI Source
 
-This directory contains the React/TypeScript source for the nanobot WebUI. If
-you installed `nanobot-ai` from PyPI and only want to use the bundled browser UI,
-read the user guide in [`docs/webui.md`](../docs/webui.md). You do not need
-Node.js, Bun, Vite, or anything in this directory unless you are changing the
-frontend.
+This directory contains the React/TypeScript source for the WebUI currently
+inherited from nanobot. Use [`docs/webui.md`](../docs/webui.md) for runtime
+behavior. You do not need Node.js, Bun, Vite, or anything in this directory
+unless you are changing the frontend.
 
 For the project overview, install guide, and general docs map, see the root [`README.md`](../README.md) and [`docs/README.md`](../docs/README.md).
 
@@ -30,7 +29,7 @@ nanobot/web/dist/      build output served by the gateway
 
 ## Develop the WebUI (Vite HMR)
 
-### 1. Install nanobot from source
+### 1. Install the NucleaMind source checkout
 
 From the repository root:
 

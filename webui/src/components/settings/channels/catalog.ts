@@ -76,20 +76,3 @@ export type ChannelConfigOption = {
   value: string;
   label: string;
 };
-
-const NANOBOT_DOCS_URL = "https://nanobot.wiki/docs/latest";
-const CHAT_APPS_DOCS_URL = `${NANOBOT_DOCS_URL}/getting-started/chat-apps`;
-
-export function chatAppGuideUrl(sectionId: string): string {
-  return `${CHAT_APPS_DOCS_URL}#${sectionId}`;
-}
-
-export function docsUrlWithBase(
-  url: string | undefined,
-  chatAppsDocsUrl?: string,
-): string | undefined {
-  if (!url || !chatAppsDocsUrl) return url;
-  if (!url.startsWith(CHAT_APPS_DOCS_URL)) return url;
-  const anchor = url.includes("#") ? `#${url.split("#").pop()}` : "";
-  return `${chatAppsDocsUrl.replace(/\/$/, "")}${anchor}`;
-}

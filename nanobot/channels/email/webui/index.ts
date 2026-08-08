@@ -1,8 +1,5 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import {
-  type ChannelProviderPresetDefinition,
-  chatAppGuideUrl,
-} from "@/components/settings/channels/catalog";
+import { type ChannelProviderPresetDefinition } from "@/components/settings/channels/catalog";
 
 const EMAIL_PROVIDER_PRESETS: ChannelProviderPresetDefinition[] = [
   {
@@ -43,7 +40,6 @@ export default {
     logoUrl: "https://gmail.com/favicon.ico",
     setup: {
       mode: "credentials",
-      docsUrl: chatAppGuideUrl("email"),
       presets: EMAIL_PROVIDER_PRESETS,
       fields: [
         { key: "channels.email.consentGranted" },

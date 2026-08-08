@@ -1,6 +1,9 @@
 # Channel Package Guide
 
-Use this guide to add a self-contained channel package to the nanobot repository. A channel is part of nanobot when its package lives at `nanobot/channels/<channel>/`; there is no separate external channel-plugin path.
+Use this guide to understand or modify the current self-contained channel
+packages. A channel currently lives at `nanobot/channels/<channel>/`. NucleaMind
+plans to move channels behind an external plugin contract, so this document
+describes the migration baseline rather than the final SDK.
 
 > **Breaking change:** nanobot no longer discovers the `nanobot.channels` Python entry-point group. Move an entry-point implementation into `nanobot/channels/<channel>/` with a package-owned manifest, runtime, tests, and optional WebUI contribution.
 
@@ -773,8 +776,6 @@ String and secret fields default to `""`, list fields to `[]`, and boolean field
 ## Local Development
 
 ```bash
-git clone https://github.com/HKUDS/nanobot.git
-cd nanobot
 python -m pip install -e .
 nanobot plugins list    # should show the package as "webhook"
 nanobot plugins enable webhook

@@ -113,7 +113,6 @@ export function ChannelSetupPanel({
   token,
   feature,
   actionKey,
-  chatAppsDocsUrl,
   showBrandLogos,
   onAction,
   onFeaturesUpdate,
@@ -121,7 +120,6 @@ export function ChannelSetupPanel({
   token: string;
   feature: NanobotFeatureInfo;
   actionKey: string | null;
-  chatAppsDocsUrl?: string;
   showBrandLogos: boolean;
   onAction: (action: "enable" | "disable", name: string) => void;
   onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
@@ -139,7 +137,6 @@ export function ChannelSetupPanel({
         feature={feature}
         actionKey={actionKey}
         showBrandLogos={showBrandLogos}
-        chatAppsDocsUrl={chatAppsDocsUrl}
         onAction={onAction}
         onFeaturesUpdate={onFeaturesUpdate}
       />
@@ -151,7 +148,6 @@ export function ChannelSetupPanel({
         token={token}
         feature={feature}
         showBrandLogos={showBrandLogos}
-        chatAppsDocsUrl={chatAppsDocsUrl}
         onFeaturesUpdate={onFeaturesUpdate}
       />
     );
@@ -243,7 +239,6 @@ export function ChannelSetupPanel({
         token={token}
         feature={feature}
         setup={setup}
-        chatAppsDocsUrl={chatAppsDocsUrl}
         connectRequestId={connectRequestId}
         ConnectFlow={uiContribution?.ConnectFlow}
         onFeaturesUpdate={onFeaturesUpdate}
@@ -256,7 +251,6 @@ function ChannelSetupSurface({
   token,
   feature,
   setup,
-  chatAppsDocsUrl,
   connectRequestId,
   ConnectFlow,
   onFeaturesUpdate,
@@ -264,7 +258,6 @@ function ChannelSetupSurface({
   token: string;
   feature: NanobotFeatureInfo;
   setup: ChannelSetupPresentation;
-  chatAppsDocsUrl?: string;
   connectRequestId: number;
   ConnectFlow?: ComponentType<ChannelPluginConnectFlowProps>;
   onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;
@@ -427,7 +420,7 @@ function ChannelSetupSurface({
 
         <p className="mt-3 text-[12.5px] leading-5 text-muted-foreground">{summary}</p>
         <ChannelValidationDetails validation={validation} />
-        <ChannelSetupLinks feature={feature} setup={setup} chatAppsDocsUrl={chatAppsDocsUrl} />
+        <ChannelSetupLinks feature={feature} setup={setup} />
         <ChannelSetupActions feature={feature} setup={setup} onNotice={setNotice} />
 
         {mode === "connect" && ConnectFlow ? (

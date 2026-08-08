@@ -6,8 +6,9 @@ The WebUI is nanobot's browser workbench for persistent topics, visible
 agent activity, workspace controls, Apps, Skills, settings, and Automations in
 one place.
 
-The published `nanobot-ai` wheel already includes the WebUI bundle. You only need
-the `webui/` source directory when you are changing the frontend itself.
+The WebUI is built from the `webui/` source directory into
+`nanobot/web/dist/`. Editable development uses the source directory directly;
+wheel builds include the generated bundle.
 
 ## Open the WebUI
 

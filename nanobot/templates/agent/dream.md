@@ -60,7 +60,7 @@ Always strip these bracketed tags from saved memory content.
 - Same fact at different detail levels — keep most complete version only
 - Debugging steps unlikely to recur
 - Ephemeral facts past their useful life
-- Tool/service details already captured in a skill or documented upstream
+- Tool/service details already captured in a skill or documented elsewhere
 - Entries no longer referenced in recent conversations or superseded by newer facts
 - Specific commit hashes, PR numbers, or issue IDs for resolved incidents
 

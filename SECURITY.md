@@ -2,7 +2,8 @@
 
 ## 项目定位
 
-NucleaMind 是 fork 自 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协议）的个人 AI Agent 项目，自主开发、不向上游提交代码。本项目不作为公共基础设施运营；安全修复按常规 git 提交进行。
+NucleaMind 基于 HKUDS/nanobot（MIT 协议）独立开发。本项目目前处于重构阶段，
+不作为公共基础设施运营；安全修复按本仓库的常规 git 提交进行。
 
 ## 安全最佳实践（开发与部署均适用）
 
@@ -39,4 +40,5 @@ chmod 600 ~/.nanobot/config.json
 
 ## 报告漏洞
 
-本项目由个人自主维护。如发现安全漏洞，请通过 GitHub issue 联系维护者，或直接修复后提交。
+如发现安全漏洞，请通过本仓库的 issue tracker 联系维护者。报告中不要包含可用的
+API key、token、cookie、私有地址或其他敏感信息。

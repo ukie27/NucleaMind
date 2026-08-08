@@ -1,13 +1,12 @@
 [project]
 name = "nanobot-ai"
 version = "0.3.0"
-description = "A lightweight personal AI assistant framework"
+description = "A modular Agent Kernel derived from nanobot"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Xubin Ren"},
-    {name = "the nanobot contributors"}
+    {name = "NucleaMind contributors"}
 ]
 keywords = ["ai", "agent", "chatbot"]
 classifiers = [

@@ -198,4 +198,4 @@ the WebUI Automations view.
 - [`chat-commands.md#local-triggers`](./chat-commands.md#local-triggers) for `/trigger`
 - [`cli-reference.md#local-triggers`](./cli-reference.md#local-triggers) for `nanobot trigger`
 - [`configuration.md#gateway-heartbeat`](./configuration.md#gateway-heartbeat) for heartbeat settings
-- [`guides/long-running-ai-agent.md`](./guides/long-running-ai-agent.md) for long-running agent work
+- [`concepts.md#background-jobs`](./concepts.md#background-jobs) for runtime job ownership

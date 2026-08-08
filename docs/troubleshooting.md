@@ -72,14 +72,10 @@ Use the same Python command for install checks and module fallback. On macOS/Lin
 | Symptom | Check |
 |---|---|
 | `python: command not found` | Try `python3 --version` on macOS/Linux or `py --version` on Windows. Then replace `python` in docs commands with the command that worked. |
-| `curl: command not found` | The macOS/Linux one-command installer could not download the script. Install curl, or use a manual isolated install such as `uv tool install nanobot-ai` or `pipx install nanobot-ai`. |
-| `irm` is not recognized | PowerShell could not run the download helper. Use manual install: `uv tool install nanobot-ai`, `pipx install nanobot-ai`, or `py -m pip install nanobot-ai` inside an environment you control. |
-| Could not download `raw.githubusercontent.com` | Your network, proxy, or firewall blocked the installer script download. Use manual install from PyPI, or configure your proxy and rerun the command. |
 | `nanobot: command not found` | Use the module form, for example `python -m nanobot ...`, `python3 -m nanobot ...`, or `py -m nanobot ...`. Reinstall with the same Python command, or add that Python's scripts directory to `PATH`. |
-| `No module named nanobot` | You are running a different Python than the one used for installation. Run `python -m pip show nanobot-ai`, `python3 -m pip show nanobot-ai`, or `py -m pip show nanobot-ai`, matching the command that installed nanobot. |
-| `pip is not available` | When the installer uses a virtual environment, it tries `python -m ensurepip --upgrade`. If that fails, install pip for that Python, or use a Python installer/distribution that includes pip. |
-| `externally-managed-environment` | Your system Python blocks global pip installs. Use the one-command installer, `uv tool install nanobot-ai`, `pipx install nanobot-ai`, or create a virtual environment; do not add `--break-system-packages` for nanobot. |
-| Installer chose the wrong Python | Set `PYTHON` before running the installer, such as `curl -fsSL https://raw.githubusercontent.com/HKUDS/nanobot/main/scripts/install.sh | PYTHON=python3 sh` or `$env:PYTHON="py"` before the PowerShell command. |
+| `No module named nanobot` | You are running a different Python than the project environment. From the repository root, install with that environment's Python using `python -m pip install -e .`. |
+| `pip is not available` | Run `python -m ensurepip --upgrade` or recreate the project virtual environment with a Python distribution that includes pip. |
+| `externally-managed-environment` | Do not modify the system Python. Create `.venv` in the repository and install the editable project there. |
 | Editable source install does not update | From the repo root, run `python -m pip install -e .` again with the Python command used for development, then check `python -m nanobot --version` or `nanobot --version`. |
 | WebUI build tools missing | They are only needed for WebUI development. Packaged installs already include the WebUI bundle. |
 
@@ -158,7 +154,7 @@ If you need a known-good snippet instead of diagnosis, use [`provider-cookbook.m
 | xAI login runs on a remote/headless machine | In the WebUI, finish sign-in in your local browser; if the loopback redirect cannot reach the server, copy the final URL from the address bar into the WebUI dialog. From the CLI, run `nanobot provider login xai-grok` interactively, open the printed URL elsewhere, and paste the final callback URL or authorization code when prompted. |
 | xAI returns 403 or subscription access denied | Confirm the signed-in account has an eligible X Premium / Grok subscription, then run `nanobot provider login xai-grok` again. This provider does not use an xAI API key or X Developer OAuth. |
 | xAI returns 400 `invalid-argument` | Read the bounded `Response body` appended to the provider error. Hosted `x_search` is sent only when xAI's model catalog advertises `supportsBackendSearch`; the model ID `grok-4.5` itself is valid. |
-| xAI model or X Search stops working after an upstream release | The integration follows Grok Build's public OAuth/proxy client contract. Update nanobot if xAI changes that contract. |
+| xAI model or X Search stops working after a Grok service change | The integration follows Grok Build's public OAuth/proxy client contract. Update the integration in this repository if xAI changes that contract; do not install the upstream `nanobot-ai` package as a fix. |
 
 ## Langfuse Problems
 
@@ -318,7 +314,7 @@ See [`chat-apps.md`](./chat-apps.md) for channel-specific setup.
 
 ## Collect Useful Evidence
 
-When opening an issue or asking for help, include:
+When recording a bug or asking for help, include:
 
 - install method and `nanobot --version`;
 - operating system and Python version;
@@ -328,6 +324,5 @@ When opening an issue or asking for help, include:
 - gateway logs from `nanobot gateway --verbose`;
 - whether `nanobot agent -m "Hello!"` works.
 
-Never paste real API keys, bot tokens, OAuth tokens, or private chat IDs into public issues.
-
-If you find a docs mistake, outdated command, or confusing step, please open an issue: <https://github.com/HKUDS/nanobot/issues>.
+Never paste real API keys, bot tokens, OAuth tokens, or private chat IDs into
+issues, logs, screenshots, or chat messages.

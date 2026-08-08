@@ -296,11 +296,7 @@
       "noDescription": "Nenhuma descrição disponível."
     },
     "about": {
-      "version": "Versão",
-      "checking": "Verificando...",
-      "checkForUpdates": "Verificar atualizações",
-      "upToDate": "Você está atualizado",
-      "updateAvailable": "Atualização disponível v{{version}}"
+      "version": "Versão"
     },
     "mcp": {
       "allCategories": "Todas as categorias",

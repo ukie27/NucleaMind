@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 export default {
   presentation: {
@@ -10,7 +9,6 @@ export default {
     setup: {
       mode: "connect",
       command: "nanobot channels login whatsapp",
-      docsUrl: chatAppGuideUrl("whatsapp"),
       manualFields: [
         { key: "channels.whatsapp.allowFrom" },
         { key: "channels.whatsapp.groupPolicy" },

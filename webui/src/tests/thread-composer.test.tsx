@@ -1857,8 +1857,8 @@ describe("ThreadComposer", () => {
             available: true,
           },
           {
-            name: "update-setup",
-            description: "One-time setup wizard",
+            name: "update-project",
+            description: "Update project settings",
             source: "builtin",
             available: true,
           },
@@ -1879,7 +1879,7 @@ describe("ThreadComposer", () => {
       .getAllByRole("option");
     expect(options.map((option) => option.textContent)).toEqual([
       "upExact match",
-      "update-setupOne-time setup wizard",
+      "update-projectUpdate project settings",
       "setup-updateConfigure upgrades",
       "skill-creatorCreate or update AgentSkills",
     ]);

@@ -481,11 +481,7 @@
       "noDescription": "설명이 없습니다."
     },
     "about": {
-      "version": "버전",
-      "checking": "확인 중...",
-      "checkForUpdates": "업데이트 확인",
-      "upToDate": "최신 버전입니다",
-      "updateAvailable": "업데이트 사용 가능 v{{version}}"
+      "version": "버전"
     },
     "mcp": {
       "allCategories": "모든 카테고리",

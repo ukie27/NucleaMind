@@ -1,20 +1,8 @@
 # Chat Apps for Self-Hosted AI Agents
 
-Connect nanobot to Telegram, Discord, Slack, WeChat, Email, Mattermost, and
-other chat platforms. This page is the full chat-channel reference. If you want
-a focused setup path for one platform, start with a guide:
-
-| Platform | Guide |
-|---|---|
-| Telegram | [Build a Telegram AI Agent with nanobot](./guides/telegram-ai-agent.md) |
-| Discord | [Build a Discord AI Agent with nanobot](./guides/discord-ai-agent.md) |
-| Slack | [Build a Slack AI Agent with nanobot](./guides/slack-ai-agent.md) |
-| Feishu | [Build a Feishu AI Agent with nanobot](./guides/feishu-ai-agent.md) |
-| WhatsApp | [Build a WhatsApp AI Agent with nanobot](./guides/whatsapp-ai-agent.md) |
-| WeChat | [Build a WeChat AI Agent with nanobot](./guides/wechat-ai-agent.md) |
-| QQ | [Build a QQ AI Agent with nanobot](./guides/qq-ai-agent.md) |
-| Email | [Build an Email AI Agent with nanobot](./guides/email-ai-agent.md) |
-| Mattermost | [Build a Mattermost AI Agent with nanobot](./guides/mattermost-ai-agent.md) |
+This page documents the chat-channel implementations currently inherited from
+nanobot. Channels are planned plugin candidates, so use this as a behavior and
+migration reference rather than a permanent kernel contract.
 
 Want to build your own channel? See the [Channel Package Guide](./channel-package-guide.md).
 
@@ -24,7 +12,10 @@ Before configuring a chat app, make sure the local CLI path works:
 nanobot agent -m "Hello!"
 ```
 
-If that fails, fix installation, config, provider, or model setup first with [`quick-start.md`](./quick-start.md), [`providers.md`](./providers.md), and [`troubleshooting.md`](./troubleshooting.md). Chat apps require `nanobot gateway` to stay running after the channel is configured.
+If that fails, fix configuration, provider, or model setup first with
+[`providers.md`](./providers.md) and
+[`troubleshooting.md`](./troubleshooting.md). Chat apps require
+`nanobot gateway` to stay running after the channel is configured.
 
 ## Recommended Setup in the WebUI
 
@@ -38,7 +29,8 @@ For normal local setup, let the WebUI write and validate the channel config:
 6. Restart from the WebUI if it reports that a restart is required.
 7. Send a private test message. If the channel returns a pairing code, approve the pending request in the WebUI and send the message again.
 
-If your installed stable release does not show **Settings → Channels**, continue with the [manual setup pattern](#manual-setup-pattern) below or install current source.
+If the current WebUI does not show **Settings → Channels**, continue with the
+[manual setup pattern](#manual-setup-pattern) below.
 
 Optional package installation is available to a same-machine WebUI by default. Remote browser clients cannot change the Python environment unless an administrator explicitly enables that capability. Run `nanobot plugins enable <channel>` locally when the guided install is unavailable.
 
@@ -121,8 +113,8 @@ The configuration badge means nanobot found a saved token. The live connection
 check is separate, so a temporary Telegram or proxy outage does not make an
 existing configuration disappear. Saved tokens and proxy URLs remain masked.
 
-See the [step-by-step Telegram guide](./guides/telegram-ai-agent.md) for pairing
-and troubleshooting.
+Pairing and troubleshooting behavior is covered below and in
+[`troubleshooting.md`](./troubleshooting.md).
 
 **Manual setup**
 

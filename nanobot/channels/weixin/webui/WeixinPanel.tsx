@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronDown, ExternalLink, Loader2, Plus } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { channelFieldMessageKey, channelTranslator } from "@/channel-plugins/i18n";
 import { channelLocaleMessages } from "@/channel-plugins/locale-registry";
 import type { ChannelPluginPanelProps } from "@/channel-plugins/types";
 import { ToggleButton } from "@/components/settings/ToggleButton";
-import {
-  chatAppGuideUrl,
-  docsUrlWithBase,
-  type ChannelConfigField,
-} from "@/components/settings/channels/catalog";
+import { type ChannelConfigField } from "@/components/settings/channels/catalog";
 import {
   CredentialForm,
   channelValuesForSave,
@@ -59,7 +55,6 @@ export function WeixinPanel({
   token,
   feature,
   actionKey,
-  chatAppsDocsUrl,
   showBrandLogos,
   onAction,
   onFeaturesUpdate,
@@ -104,8 +99,6 @@ export function WeixinPanel({
   const primaryFields = localizeBooleanFields(setupFields.primary, onLabel, offLabel);
   const advancedFields = localizeBooleanFields(setupFields.advanced, onLabel, offLabel);
   const editableFields = [...primaryFields, ...advancedFields];
-  const docsUrl = docsUrlWithBase(chatAppGuideUrl("wechat"), chatAppsDocsUrl)
-    ?? chatAppGuideUrl("wechat");
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
     defaultChannelFieldValues(editableFields, feature.config_values),
   );
@@ -353,12 +346,6 @@ export function WeixinPanel({
           </details>
         ) : null}
 
-        <div className="flex justify-end">
-          <WeixinGuideLink
-            url={docsUrl}
-            label={channelTx("setup.docsLabel", "Open WeChat setup")}
-          />
-        </div>
       </div>
     </aside>
   );
@@ -450,41 +437,6 @@ function WeixinLogo({ showBrandLogos }: { showBrandLogos: boolean }) {
     >
       WX
     </span>
-  );
-}
-
-function WeixinGuideLink({ url, label }: { url: string; label: string }) {
-  const logoUrls = useMemo(() => logoFallbackUrls("https://weixin.qq.com/favicon.ico"), []);
-  const { logoUrl, onLogoError, onLogoLoad } = useLogoFallback(logoUrls);
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noreferrer"
-      className="inline-flex max-w-full items-center gap-2 rounded-full bg-background/80 py-1 pl-1 pr-2.5 text-[11.5px] font-semibold text-foreground transition-colors hover:bg-background"
-    >
-      <span
-        className="grid h-5 w-5 shrink-0 place-items-center overflow-hidden rounded-full bg-muted/70 text-[9px] font-bold"
-        style={{ color: "#07C160" }}
-        aria-hidden
-      >
-        {logoUrl ? (
-          <img
-            src={logoUrl}
-            alt=""
-            decoding="async"
-            loading="lazy"
-            className="h-3.5 w-3.5 object-contain"
-            onLoad={onLogoLoad}
-            onError={onLogoError}
-          />
-        ) : (
-          "WX"
-        )}
-      </span>
-      <span className="truncate">{label}</span>
-      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-    </a>
   );
 }
 

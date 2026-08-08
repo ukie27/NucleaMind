@@ -10,7 +10,6 @@ export type ChannelPluginPanelProps = {
   token: string;
   feature: NanobotFeatureInfo;
   actionKey: string | null;
-  chatAppsDocsUrl?: string;
   showBrandLogos: boolean;
   onAction: (action: "enable" | "disable", name: string) => void;
   onFeaturesUpdate: (payload: NanobotFeaturesPayload) => void;

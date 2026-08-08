@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 const SLACK_SOCKET_MODE_MANIFEST = `display_information:
   name: nanobot
@@ -46,7 +45,6 @@ export default {
     logoUrl: "https://slack.com/favicon.ico",
     setup: {
       mode: "credentials",
-      docsUrl: chatAppGuideUrl("slack"),
       actions: [
         {
           id: "slack-manifest",

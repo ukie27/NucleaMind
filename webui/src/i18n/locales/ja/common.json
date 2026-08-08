@@ -481,11 +481,7 @@
       "noDescription": "説明はありません。"
     },
     "about": {
-      "version": "バージョン",
-      "checking": "確認中...",
-      "checkForUpdates": "アップデートを確認",
-      "upToDate": "最新の状態です",
-      "updateAvailable": "アップデートがあります v{{version}}"
+      "version": "バージョン"
     },
     "mcp": {
       "allCategories": "すべてのカテゴリ",

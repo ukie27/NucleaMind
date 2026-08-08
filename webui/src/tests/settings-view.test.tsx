@@ -117,12 +117,6 @@ function settingsPayload(): SettingsPayload {
     version: {
       current: "0.2.2",
     },
-    docs: {
-      version: "0.2.2",
-      base_url: "https://nanobot.wiki/docs/0.2.2",
-      chat_apps_url: "https://nanobot.wiki/docs/0.2.2/getting-started/chat-apps",
-      latest_url: "https://nanobot.wiki/docs/latest",
-    },
   };
 }
 
@@ -1553,10 +1547,7 @@ describe("SettingsView Apps catalog", () => {
     renderSettingsView({ initialSection: "channels" });
 
     expect(await screen.findByRole("button", { name: "View Discord settings" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Discord setup" })).toHaveAttribute(
-      "href",
-      "https://nanobot.wiki/docs/0.2.2/getting-started/chat-apps#discord",
-    );
+    expect(screen.queryByRole("link", { name: "Open Discord setup" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Discord channel" })).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("Discord bot token"), {
       target: { value: "discord-token" },
@@ -1717,13 +1708,10 @@ describe("SettingsView Apps catalog", () => {
     renderSettingsView({ initialSection: "channels" });
 
     expect(await screen.findByRole("button", { name: "View Telegram settings" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open Telegram setup" })).toHaveAttribute(
-      "href",
-      "https://nanobot.wiki/docs/0.2.2/getting-started/chat-apps#telegram",
-    );
+    expect(screen.queryByRole("link", { name: "Open Telegram setup" })).not.toBeInTheDocument();
   });
 
-  it("shows branded setup guide links for supported WebUI channels", async () => {
+  it("does not advertise inherited setup guides for supported WebUI channels", async () => {
     const channels = [
       ["websocket", "WebSocket", "Open WebSocket setup"],
       ["telegram", "Telegram", "Open Telegram setup"],
@@ -1789,9 +1777,7 @@ describe("SettingsView Apps catalog", () => {
       if (displayName === "Feishu") {
         fireEvent.click(screen.getByRole("button", { name: "nanobot" }));
       }
-      const guide = screen.getByRole("link", { name: guideLabel });
-      expect(guide).toHaveAttribute("href", expect.stringMatching(/^https:\/\//));
-      expect(guide.querySelector("span[aria-hidden] img, span[aria-hidden] svg")).not.toBeNull();
+      expect(screen.queryByRole("link", { name: guideLabel })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole("button", { name: "View MoChat settings" })).not.toBeInTheDocument();
   });

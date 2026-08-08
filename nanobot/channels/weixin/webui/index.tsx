@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 import { WeixinConnectFlow } from "./WeixinConnectFlow";
 import {
@@ -23,7 +22,6 @@ export default {
     setup: {
       mode: "connect",
       command: "nanobot channels login weixin",
-      docsUrl: chatAppGuideUrl("wechat"),
       fields: WEIXIN_PRIMARY_FIELD_KEYS.map((key) => ({ key })),
       manualFields: WEIXIN_ADVANCED_FIELD_KEYS.map((key) => ({ key })),
     },

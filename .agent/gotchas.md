@@ -2,8 +2,8 @@
 
 ## Do not use `ruff format`
 
-上游文档曾建议 `ruff format`，但**不要运行它**——历史代码未经 ruff format 排版，
-整体运行会生成大面积无关 diff。只用 `ruff check`。
+**不要运行 `ruff format`**——当前历史代码未经 ruff format 排版，整体运行会生成
+大面积无关 diff。只用 `ruff check`。
 
 ## Config `${VAR}` References
 

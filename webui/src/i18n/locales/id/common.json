@@ -481,11 +481,7 @@
       "noDescription": "Tidak ada deskripsi."
     },
     "about": {
-      "version": "Versi",
-      "checking": "Memeriksa pembaruan...",
-      "checkForUpdates": "Periksa pembaruan",
-      "upToDate": "Anda sudah menggunakan versi terbaru",
-      "updateAvailable": "Pembaruan tersedia v{{version}}"
+      "version": "Versi"
     },
     "mcp": {
       "allCategories": "Semua kategori",

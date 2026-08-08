@@ -4,7 +4,8 @@
 
 ## 项目概述
 
-NucleaMind 是 fork 自 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协议）的个人 AI Agent 项目。
+NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协议）
+独立开发的个人 AI Agent 项目，仓库与上游 Git 历史及协作流程均已分离。
 
 - **当前状态**：代码库仍保留 nanobot 的完整结构（Agent Runtime、Channels、Tools、Memory、WebUI 等），可正常运行。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
@@ -81,6 +82,12 @@ nanobot gateway
 
 - 常见坑（`${VAR}` 语义、Windows 兼容、prompt 模板、上下文污染、原子写等）：[.agent/gotchas.md](.agent/gotchas.md)
 - 安全边界（工作区路径解析、SSRF 防护、shell 沙箱，不可绕过）：[.agent/security.md](.agent/security.md)
+
+## 指令文件边界
+
+- 根目录 `AGENTS.md` 是本仓库 AI 编码代理的开发指引，`CLAUDE.md` 仅引用本文件。
+- `nanobot/templates/AGENTS.md` 是运行时复制到用户 workspace 的 Agent 行为模板，不是仓库开发规范。
+- 修改 `nanobot/templates/`、`nanobot/skills/` 中的说明会改变最终用户 Agent 的行为；不要把仓库开发流程、上游协作方式或当前重构任务写入这些运行时模板。
 
 ## 代码风格
 

@@ -707,12 +707,6 @@ export interface SettingsPayload {
   version?: {
     current: string;
   };
-  docs?: {
-    version: string;
-    base_url: string;
-    chat_apps_url: string;
-    latest_url?: string;
-  };
 }
 
 export interface ApiServicePayload {

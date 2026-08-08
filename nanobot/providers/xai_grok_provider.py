@@ -585,7 +585,10 @@ def _friendly_error(status_code: int, response_body: str | None = None) -> str:
     elif status_code == 403:
         message = "This xAI account or subscription cannot access the Grok subscription endpoint."
     elif status_code == 426:
-        message = "xAI requires a newer Grok client version. Update nanobot and try again."
+        message = (
+            "xAI requires a newer Grok client version. Update the integration in the current "
+            "NucleaMind source checkout and try again."
+        )
     elif status_code == 429:
         message = "xAI usage quota or rate limit reached. Please try again later."
     else:

@@ -481,11 +481,7 @@
       "noDescription": "Không có mô tả."
     },
     "about": {
-      "version": "Phiên bản",
-      "checking": "Đang kiểm tra...",
-      "checkForUpdates": "Kiểm tra bản cập nhật",
-      "upToDate": "Bạn đang dùng phiên bản mới nhất",
-      "updateAvailable": "Có bản cập nhật v{{version}}"
+      "version": "Phiên bản"
     },
     "mcp": {
       "allCategories": "Tất cả danh mục",

@@ -1,5 +1,4 @@
 import type { ChannelUiContribution } from "@/channel-plugins/types";
-import { chatAppGuideUrl } from "@/components/settings/channels/catalog";
 
 export default {
   presentation: {
@@ -9,7 +8,6 @@ export default {
     logoUrl: "https://signal.org/favicon.ico",
     setup: {
       mode: "credentials",
-      docsUrl: chatAppGuideUrl("signal"),
       fields: [
         { key: "channels.signal.phoneNumber" },
         { key: "channels.signal.daemonHost" },

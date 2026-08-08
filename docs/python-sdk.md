@@ -25,12 +25,10 @@ your Python code
 
 ## Before You Start
 
-Install and configure nanobot first. If you have not done that yet, follow the
-[Quick Start](quick-start.md) and complete the setup wizard. For SDK-only Python
-environments, install the package with:
+Install the current repository in an isolated development environment:
 
 ```bash
-python -m pip install nanobot-ai
+python -m pip install -e .
 ```
 
 `Nanobot.from_config()` reuses your normal `~/.nanobot/config.json` and
@@ -38,8 +36,7 @@ python -m pip install nanobot-ai
 match the CLI unless you override them. For the difference between config and
 workspace, see [Concepts: Config vs Workspace](concepts.md#config-vs-workspace).
 
-Before writing SDK code, run the same first-run checks from the main
-[Install and Quick Start](quick-start.md):
+Before writing SDK code, check the current runtime:
 
 ```bash
 nanobot status
@@ -452,7 +449,6 @@ configuration docs remain the source of truth for the runtime around it:
 
 | Need | Read |
 |------|------|
-| First working install and config | [Install and Quick Start](quick-start.md) |
 | Mental model for config, workspace, sessions, tools, and memory | [Concepts](concepts.md) |
 | Provider/model/API key/base URL matching | [Providers and Models](providers.md) |
 | Pasteable provider recipes | [Provider Cookbook](provider-cookbook.md) |

@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import { channelUiPresentation } from "@/channel-plugins/registry";
 import { Button } from "@/components/ui/button";
 import {
-  docsUrlWithBase,
   type ChannelProviderPreset,
   type ChannelSetupPresentation,
 } from "@/components/settings/channels/catalog";
@@ -28,12 +27,10 @@ import { cn } from "@/lib/utils";
 export function ChannelGuideLink({
   feature,
   setup,
-  chatAppsDocsUrl,
   compact = false,
 }: {
   feature: NanobotFeatureInfo;
   setup: ChannelSetupPresentation;
-  chatAppsDocsUrl?: string;
   compact?: boolean;
 }) {
   const { t } = useTranslation();
@@ -47,7 +44,7 @@ export function ChannelGuideLink({
   const Icon = presentation?.icon;
   const initials = presentation?.initials ?? feature.display_name.slice(0, 2).toUpperCase();
   const color = presentation?.color ?? "#6B7280";
-  const docsUrl = docsUrlWithBase(setup.docsUrl, chatAppsDocsUrl);
+  const docsUrl = setup.docsUrl;
 
   if (!docsUrl) return null;
 
@@ -98,16 +95,14 @@ export function ChannelGuideLink({
 export function ChannelSetupLinks({
   feature,
   setup,
-  chatAppsDocsUrl,
 }: {
   feature: NanobotFeatureInfo;
   setup: ChannelSetupPresentation;
-  chatAppsDocsUrl?: string;
 }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <ChannelOfficialLink feature={feature} setup={setup} />
-      <ChannelGuideLink feature={feature} setup={setup} chatAppsDocsUrl={chatAppsDocsUrl} compact />
+      <ChannelGuideLink feature={feature} setup={setup} compact />
     </div>
   );
 }

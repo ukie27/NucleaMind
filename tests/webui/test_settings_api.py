@@ -13,7 +13,6 @@ from nanobot.providers.registry import find_by_name
 from nanobot.webui.settings_api import (
     WebUISettingsError,
     _clear_webui_oauth_flows,
-    _docs_version,
     _model_catalog_kind,
     _oauth_provider_status,
     _reasoning_effort_values_for,
@@ -56,18 +55,11 @@ def test_settings_payload_propagates_preset_resolution_failure(
         settings_payload()
 
 
-def test_docs_version_uses_released_versions_and_falls_back_for_dev() -> None:
-    assert _docs_version("0.2.3") == "0.2.3"
-    assert _docs_version("0.2.3.post1") == "0.2.3.post1"
-    assert _docs_version("0.2.3.dev0") == "latest"
-    assert _docs_version("0.2.3+editable") == "latest"
-
-
 def test_kimi_k3_only_offers_supported_reasoning_effort_values() -> None:
     assert _reasoning_effort_values_for("moonshot", "kimi-k3") == ["", "max"]
 
 
-def test_settings_payload_includes_versioned_docs(
+def test_settings_payload_does_not_advertise_upstream_docs(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -78,12 +70,7 @@ def test_settings_payload_includes_versioned_docs(
 
     payload = settings_payload()
 
-    assert payload["docs"] == {
-        "version": "0.2.3",
-        "base_url": "https://nanobot.wiki/docs/0.2.3",
-        "chat_apps_url": "https://nanobot.wiki/docs/0.2.3/getting-started/chat-apps",
-        "latest_url": "https://nanobot.wiki/docs/latest",
-    }
+    assert "docs" not in payload
 
 
 def test_settings_payload_exposes_edenai_provider(
@@ -1626,7 +1613,7 @@ def test_openai_codex_oauth_login_reports_missing_oauth_cli_kit(
 
     assert str(exc.value) == (
         "This nanobot installation is missing the required oauth-cli-kit package. "
-        "Reinstall or upgrade nanobot-ai using the same installation method."
+        "Reinstall the current source checkout with its required dependencies."
     )
 
 
@@ -1647,7 +1634,7 @@ def test_github_copilot_oauth_login_reports_missing_oauth_cli_kit(
 
     assert str(exc.value) == (
         "This nanobot installation is missing the required oauth-cli-kit package. "
-        "Reinstall or upgrade nanobot-ai using the same installation method."
+        "Reinstall the current source checkout with its required dependencies."
     )
 
 

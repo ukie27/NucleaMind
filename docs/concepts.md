@@ -176,7 +176,6 @@ is marked failed rather than retried forever.
 
 | Need | Read |
 |---|---|
-| First working install | [`quick-start.md`](./quick-start.md) |
 | Provider/model setup | [`providers.md`](./providers.md) |
 | Chat app setup | [`chat-apps.md`](./chat-apps.md) |
 | Complete config reference | [`configuration.md`](./configuration.md) |

@@ -1,6 +1,8 @@
 # Architecture
 
-This page maps nanobot's runtime behavior to source files. Use it when you are debugging internals, reviewing a PR, adding a provider/channel/tool, or trying to understand where a user-visible behavior comes from.
+This page maps the inherited runtime behavior to source files. Use it when
+debugging internals, planning a kernel boundary, adding a provider/channel/tool,
+or tracing where a user-visible behavior comes from.
 
 For the product-level mental model, read [`concepts.md`](./concepts.md) first.
 
@@ -85,7 +87,10 @@ Main files:
 | Discovery and lifecycle | `nanobot/channels/manager.py` |
 | WebSocket/WebUI channel | `nanobot/channels/websocket/` |
 
-Channels are discovered by scanning self-contained packages under `nanobot/channels/`. Add a channel by contributing one package that follows [`channel-package-guide.md`](./channel-package-guide.md).
+Channels are currently discovered by scanning self-contained packages under
+`nanobot/channels/`. The current in-tree package structure is documented in
+[`channel-package-guide.md`](./channel-package-guide.md); it is a migration
+baseline rather than the final external plugin contract.
 
 ## WebUI and Gateway
 
