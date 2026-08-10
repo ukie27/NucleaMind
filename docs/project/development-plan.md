@@ -1,7 +1,7 @@
 # NucleaMind 模块化开发方案
 
-- 状态：初稿待评审
-- 更新时间：2026-08-09
+- 状态：评审后修订
+- 更新时间：2026-08-10
 - 文档阶段：开发执行计划
 - 上游依据：[`requirements-analysis.md`](./requirements-analysis.md)、[`technical-design.md`](./technical-design.md)
 
@@ -19,6 +19,8 @@
 ## 2. 模块化开发的工作方式
 
 ### 2.1 单个模块的标准流程
+
+`D00` 是唯一例外：它没有新逻辑可测，流程见该模块自身的 A0–A3。
 
 ```text
 1  读技术方案对应小节，确认边界。有歧义先提出，不靠猜测实现
@@ -40,7 +42,7 @@
 | --- | --- |
 | 1 | `ruff check` 无新增告警 |
 | 2 | `basedpyright` 严格模式通过，新增 `Any` 均带 `# boundary:` 注释 |
-| 3 | `tests/architecture` 全部通过，无 skip、无 xfail |
+| 3 | `tests/architecture` 全部通过，无 skip、无 xfail（`D00` 除外，此时该目录尚不存在） |
 | 4 | 新增模块首个 docstring 含「职责/不负责」两行 |
 | 5 | 满足 §12.1 规模阈值：`kernel/` 单文件 ≤500 行、单函数 ≤60 行、圈复杂度 ≤12 |
 | 6 | 该模块引入的每个错误码在 `contracts/errors.py` 注册且有测试触达 |
@@ -71,8 +73,9 @@
 
 **其一：重构提前到最前面（`D00`）。** 技术方案初稿曾约定「首版不引入 `nucleamind`
 包名前缀，重命名等 Kernel 稳定后再做」。改为最先做，理由是重命名成本随代码量单调
-上升，而此刻它还是纯机械变更——验收标准是现有测试逐项一致，风险最低。等新架构写完
-再动，要改的就不止今天这 2979 个导入点了。技术方案 §2.3、§13 M-A 已同步修订。
+上升，而此刻仍能把变更限制在结构、导入和明列的对外名称；遗留业务与配置行为可用
+现有基线验证。等新架构写完再动，要改的就不止今天这 2979 个导入点了。
+技术方案 §2.3、§13 M-A 已同步修订。
 
 **其二：遗留 Agent 路径改为最后一次性删除（`D31`）。** 技术方案 §13 M2 原本把
 「旧 `AgentLoop` 改为薄适配层」放在 turn 引擎拆分之后。现改为：内建能力与插件体系
@@ -104,7 +107,7 @@
                        ├─ D17 session_jsonl    ├─ D20 tools_fs
                        ├─ D18 context_basic    ├─ D21 tools_shell
                        ├─ D19 model_openai     └─ D22 commands_core
-                       └─ D23 cli_entry + runtime 组装 + nm 入口
+                       └─ D23 cli_entry + runtime/embed 组装 + nm 入口
                      |
 阶段 6  开箱可用     D24 首次运行体验与开箱可用验收 ★
                      |
@@ -117,7 +120,8 @@
 
 ★ = 里程碑验收模块，不新增功能，只做集成验证。
 
-`D17`–`D22` 之间无相互依赖，可并行开发；`D23` 需等 `D22` 完成；其余按箭头顺序串行。
+`D17`–`D22` 之间无相互依赖，可并行开发；`D23` 需等 `D17`–`D22` 全部完成；
+其余按箭头顺序串行。
 
 ## 4. 阶段 0：工程基座
 
@@ -130,44 +134,82 @@
 
 **要点**（技术方案 §4.1–§4.5、§13 M-A）
 
-这是**纯机械变更**：不改行为、不改逻辑、不拆模块。验收标准就是现有测试逐项一致。
-一旦混入哪怕一行逻辑改动，这个验收标准就失效了，也就失去了做这次重构的最好时机。
+这是**受限的结构与命名迁移**：允许且仅允许包名、发行名、导入路径和 CLI 名称发生
+技术方案 §4.5 明列的变化；不改 Agent 业务逻辑，不改遗留配置格式、环境变量、状态目录，
+也不拆遗留模块。验收标准是除明列命名变化外，现有行为基线逐项一致。
 
-分三个可独立回退的 commit：
+分四个可独立回退的 commit：
 
 ```text
+A0  捕获行为基线（必须在任何改动之前）
+    scripts/test_snapshot.py capture --out migration-snapshot/before.json
+    产物提交入库，D00 验收通过后删除
+
 A1  git mv nanobot/ src/nucleamind/legacy/
     用 git mv 保留历史，使 git log --follow 仍可追溯
 
-A2  scripts/migrate_names.py 全量重命名
+A2  scripts/migrate_names.py 机械重写
     导入前缀   nanobot.        ->  nucleamind.legacy.       （约 2979 处）
-    环境变量   NANOBOT_*       ->  NUCLEAMIND_*             （约 20 个）
-    实例目录   ~/.nanobot/     ->  ~/.nucleamind/default/   （46 处引用）
-    同时处理：字符串形式的模块路径、entry point 名、pytest testpaths、
-              basedpyright include、Dockerfile / compose / entrypoint.sh、
-              hatch_build.py 的 NANOBOT_SKIP_WEBUI_BUILD 等、docstring 中的模块引用
+    同时处理：字符串形式的模块路径、pytest testpaths、basedpyright include、
+              构建资源路径和 docstring 中的模块引用
+    不处理：  NANOBOT_*、~/.nanobot/、camelCase 配置别名等遗留运行契约
 
 A3  pyproject.toml 重写
     name = "nucleamind"；packages = ["src/nucleamind"]
     [project.scripts] nm = "nucleamind.runtime.cli.main:app"     # 唯一命令
     [project.entry-points."nucleamind.plugins"] 组建立（暂空）
     hatch include / sdist / wheel 路径全部更新
+    新增 runtime/legacy_entry.py，作为 nm legacy 到遗留 CLI 的唯一过渡适配器
 ```
 
-**不写任何兼容垫片**（技术方案 §4.5）：不保留 `nanobot` 命令别名、不双读
-`NANOBOT_*` 环境变量、不读取也不自动搬迁 `~/.nanobot/`、不保留 camelCase 配置别名。
-每个垫片都要长期维护和双份测试，而它们保护的是一个本项目不再承诺支持的产品。
-旧实例目录里的数据仍在磁盘上，需要时手工拷贝一次配置即可。
+**A0 不可省略。** D00 的验收标准是「与重构前逐项一致」，但「重构前」这个状态只存在于
+动手之前的那一刻。不先落盘，D00 做完就无从比对，验收标准会退化成「看起来能跑」。
+当前仓库有约 5850 个用例，其中可能本就存在失败项——基线要记录的是**完整的用例 ID
+与结果集合**，不是「全绿」这个假设。
 
-环境变量与实例目录的重命名是**用户可见变更**，但仍不破坏本模块的验收标准：
-只要重命名在源码与测试中一致应用，测试结果就不变。若某条测试因硬编码旧名而失败，
-说明 A2 漏改了那一处，属于遗漏而非行为变更。
+`scripts/test_snapshot.py` 的契约（D00 交付物，验收通过后与 `migration-snapshot/` 一并删除）：
+
+```text
+capture  --out <path>
+  运行 pytest --collect-only 与完整测试，输出规范化 JSON：
+    { "canonical_id": "<outcome>", ... } + 各 outcome 计数 + 采集错误列表
+  采集错误（collection error）非空时以非零码退出并拒绝写出基线——
+  模块导入失败会让用例静默消失，这种基线不可信
+
+compare  --before <path> --after <path>
+  输出三类差异并在非空时以非零码退出：
+    missing        基线中有、当前没有   <- 最危险：用例被结构迁移弄丢了
+    added          当前有、基线中没有
+    outcome_changed 同一用例结果变化
+```
+
+**用例 ID 规范化规则**（`capture` 内实现，`compare` 直接比对规范化后的 ID）：
+文件移动会改变 pytest node ID，因此按「根标签 + 相对路径」归一，而不是简单剥前缀：
+
+| 原始路径前缀 | 根标签 | 说明 |
+| --- | --- | --- |
+| `src/nucleamind/legacy/` | `pkg` | 重构后的包内测试 |
+| `nanobot/` | `pkg` | 重构前的包内测试 |
+| `tests/legacy/` | `tests` | 重构后的独立测试 |
+| `tests/` | `tests` | 重构前的独立测试 |
+
+规范化结果形如 `pkg:channels/telegram/tests/test_x.py::test_y`。
+保留根标签而不是全部剥成相对路径，是为了避免 `tests/channels/...` 与
+`nanobot/channels/...` 归一后相撞。路径分隔符统一为 `/`，消除 Windows 与 Linux 差异。
+
+**新层不写长期兼容垫片**（技术方案 §4.5）：不保留 `nanobot` 命令别名；后续新 Kernel
+只读 `NUCLEAMIND_*`、`~/.nucleamind/<instance>/` 和 snake_case 配置，不双读旧格式。
+但 `legacy/` 在被删除前继续读取 `NANOBOT_*`、`~/.nanobot/` 和原 camelCase 配置，
+以便 D00 能验证遗留功能没有被结构迁移破坏。
 
 `legacy/` 内部代码在迁移期仍需可运行——这不是兼容层，而是尚未改写完的实现。
 入口收敛为 `nm legacy <原 nanobot 参数>` 单个子命令：只有一个命令名，
 旧功能在明确的临时命名空间下可达，`D31` 随 `legacy/agent/` 一并删除。
 此时 `runtime/cli/main.py` 只是最小骨架，仅暴露 `nm legacy` 与 `nm --version`，
 真正的子命令在 `D23` 落地。
+
+`runtime/legacy_entry.py` 是 `R6` 的唯一迁移期例外，只转发参数、退出码和标准流。
+它不得被其他模块导入，不得承载新功能；D01 用精确路径白名单约束，D31 连同白名单删除。
 
 同时创建新层的空骨架（只有 `__init__.py` 与模块 docstring，无实现）：
 `contracts/`、`kernel/`、`sdk/`、`builtins/`、`runtime/`、`embed/`，
@@ -177,42 +219,60 @@ A3  pyproject.toml 重写
 **交付**
 
 ```text
+migration-snapshot/before.json    # A0 产物，D00 验收通过后删除
 src/nucleamind/legacy/            # 原 nanobot/ 全部内容
 src/nucleamind/{contracts,kernel,sdk,builtins,runtime,embed}/__init__.py
 src/nucleamind/runtime/cli/main.py  # 最小入口：nm legacy + nm --version
+src/nucleamind/runtime/legacy_entry.py # R6 唯一过渡适配器
 src/nucleamind/legacy/README.md   # 隔离规则与迁移状态
 plugins/  examples/plugins/  deploy/
 tests/legacy/                     # 原 tests/ 中针对遗留代码的用例
+scripts/test_snapshot.py          # 一次性工具，D00 验收通过后删除
 scripts/migrate_names.py          # 一次性脚本，D00 完成后删除
 scripts/legacy_debt.py            # 常驻：统计 legacy/ 文件数与行数
 pyproject.toml                    # 全面重写
 AGENTS.md                         # 更新包名、目录约定与「不兼容 nanobot」原则
-docs/                             # 记录旧实例目录不再读取，需手工拷贝配置
+docs/                             # 记录新层不读取旧实例目录；legacy 迁移期仍可读取
 ```
 
 **验收**
 
 ```bash
-.venv\Scripts\python.exe -m pytest tests/ -q          # 与重构前逐项一致
+# 1. 行为基线比对（硬门禁）
+.venv\Scripts\python.exe scripts/test_snapshot.py capture --out migration-snapshot/after.json
+.venv\Scripts\python.exe scripts/test_snapshot.py compare \
+    --before migration-snapshot/before.json --after migration-snapshot/after.json
+
+# 2. 打包与入口
 .venv\Scripts\python.exe -m pip install -e .
 nm --version && nm legacy --help                      # 唯一命令 + 遗留子命令可用
+.venv\Scripts\python.exe -m build
+
+# 3. 静态检查与债务基线
 .venv\Scripts\python.exe -m ruff check src/
 uv run --no-sync basedpyright
 .venv\Scripts\python.exe scripts/legacy_debt.py       # 输出基线数字
 ```
 
-- 重构前后的 pytest 报告逐项比对：通过数、失败数、用例 ID 集合完全一致。
-  **有任何一条用例的结果发生变化，即说明混入了行为改动或 A2 漏改，必须查明后重做。**
+- `compare` 必须报告 `missing` 与 `outcome_changed` 均为空。因导入路径变化而更新测试
+  源码是允许的，但不得改变断言语义；`added` 非空需逐条说明来源（通常只应是新层空骨架
+  带来的采集变化，若无则应为空）。
+- 两次 capture 的采集错误列表均为空——有模块导入失败时用例会静默消失，
+  此时用例数相符也不能作为通过依据。
+- `nm legacy` 对原 `NANOBOT_*`、`~/.nanobot/` 和 camelCase 配置的读取行为保持不变。
 - `python -m build` 产物包含 `templates/`、`skills/`、`web/dist/` 等非 Python 资源。
 - 仓库根目录下不存在可被误导入的 `nucleamind/` 目录（`src/` 布局生效）。
 - `git log --follow src/nucleamind/legacy/agent/loop.py` 能看到重构前的历史。
-- 全仓库检索确认无残留旧名：`rg -i "nanobot" src/ tests/ scripts/ deploy/ pyproject.toml`
-  只应命中 `legacy/` 目录名说明、文档中的历史叙述和 `nm legacy` 子命令本身。
+- 新层检索确认无意外旧名：
+  `rg -i "nanobot" src/nucleamind --glob "!legacy/**"` 只允许命中迁移说明与
+  `nm legacy`；`legacy/` 中的旧环境变量、配置键和历史叙述不计为遗漏。
 
-**规模**：脚本约 300 行 + 配置重写。改动文件数极大但均为机械替换。
-**风险**：中。风险不在逻辑而在遗漏——非 Python 资源路径、字符串形式的模块引用、
-CI 配置、Dockerfile、shell 脚本中的路径都容易漏。验收的「逐项一致」加上
-「全仓库无残留旧名」是两道互补的防线。
+验收通过后，在同一 PR 的收尾 commit 中删除 `migration-snapshot/`、`scripts/test_snapshot.py`
+与 `scripts/migrate_names.py`——它们是 D00 专用设施，留在仓库里只会误导后续开发。
+
+**规模**：两个一次性脚本约 400 行 + 配置重写。改动文件数极大，业务逻辑保持不变。
+**风险**：中。风险在导入、构建资源和入口迁移遗漏，以及误把配置迁移混入本模块。
+验收的行为基线比对、遗留配置回归和新层旧名扫描是三道互补防线；A0 是前两道的前提。
 
 ### D01 架构守卫与 CI 门禁
 
@@ -237,7 +297,8 @@ pyproject.toml                                   # ruff 分层规则集
 - 边界检查用 `ast.parse` 遍历 `src/nucleamind/` 各层与 `plugins/`，
   收集 `Import` / `ImportFrom` 的模块名后断言 `R1`–`R6`。
 - `R6` 是**单向**规则：断言新层不 import `legacy/`，但允许 `legacy/` import 新层。
-  实现时不要写成对称检查。
+  实现时不要写成对称检查。唯一例外是精确文件
+  `src/nucleamind/runtime/legacy_entry.py`，并额外断言没有第二个例外。
 - 新层此时只有空骨架，检查必须对**空目录返回通过**而不是报错，
   否则 `D01` 自身无法验收。同时要有「注入违规样例必须失败」的反向测试，
   证明守卫真的会拦。
@@ -254,7 +315,8 @@ pyproject.toml                                   # ruff 分层规则集
 ```
 
 - 反向测试证明 `R1`–`R6` 各自都能拦住一个构造的违规样例，共 6 个反向用例。
-- `R6` 的反向测试需成对：新层 import legacy 必须失败；legacy import 新层必须通过。
+- `R6` 的反向测试需覆盖：普通新层 import legacy 必须失败；legacy import 新层必须通过；
+  唯一适配器 import legacy 必须通过；第二个白名单外适配器必须失败。
 - `legacy/` 债务指标接入 CI，数字只允许下降。
 - CI 中架构守卫是独立阶段，失败即阻断，不允许 skip / xfail。
 
@@ -338,7 +400,7 @@ pyproject.toml                                   # ruff 分层规则集
 
 ```text
 src/nucleamind/sdk/__init__.py       # __all__ 规范性清单
-src/nucleamind/sdk/api.py            # NucleaAPI Protocol（8 方法）
+src/nucleamind/sdk/api.py            # NucleaAPI Protocol（9 方法）
 src/nucleamind/sdk/manifest.py       # PluginManifest / CapabilityDecl / PermissionDecl
 src/nucleamind/sdk/version.py        # SDK_VERSION
 src/nucleamind/sdk/testing/fakes.py  # Fake 实现
@@ -348,7 +410,8 @@ tests/sdk/test_public_surface.py
 
 **要点**（技术方案 §7.2、§7.5、§7.6）
 
-- `NucleaAPI` 恰好 8 个注册方法 + `ctx`，不多不少。
+- `NucleaAPI` 恰好 9 个注册方法 + `ctx`，其中包含可覆盖内建 CLI 的
+  `register_cli_entry()`。
 - `testing.py` 第一版提供 `FakeModelProvider`（可脚本化返回 tool_call 序列）、
   `InMemorySessionStore`、`RecordingHook`，以及 5 个契约测试基类的空骨架。
   Fake 必须在公开 SDK 内，因为它同时是插件开发者的验收工具。
@@ -357,7 +420,7 @@ tests/sdk/test_public_surface.py
 **验收**
 
 - `test_public_surface.py` 建立 `__all__` 快照；手动增删一个导出会让测试失败。
-- `NucleaAPI` 方法数断言为 8。
+- `NucleaAPI` 方法数断言为 9，并断言 `register_cli_entry` 存在。
 - 导入 `sdk.manifest` 的耗时与副作用测试：无网络、无文件写入。
 - `sdk/` 只 import `contracts/`（D01 守卫覆盖）。
 
@@ -631,7 +694,8 @@ Hook 与 Context 逻辑应尽量下沉到 `hooks.py` 和 Provider 侧。
 
 ```text
 src/nucleamind/builtins/registry.py       # BUILTIN_MANIFESTS 静态清单（此时为空元组）
-src/nucleamind/kernel/plugins/builtin_loader.py   # 复用后续 load(manifest) 的最小版本
+src/nucleamind/kernel/plugins/host.py      # NucleaAPI 宿主实现：统一注册到 RegistrationBatch
+src/nucleamind/kernel/plugins/builtin_loader.py   # 静态内建清单 bootstrap
 src/nucleamind/runtime/wiring.py          # 组装根：registry ← builtins（R5 的唯一落点）
 src/nucleamind/sdk/testing/contracts.py   # 补全 5 个契约测试基类
 tests/architecture/test_builtin_no_privilege.py
@@ -640,15 +704,22 @@ tests/architecture/test_kernel_runs_without_builtins.py
 
 **要点**（技术方案 §6.1 末段、§8、§12.3）
 
-- 内建与插件走同一条 `load(manifest)` 路径，区别只在 `ProviderId` 与不可 entry-point 卸载。
-  **不允许存在内建专用注册 API**（`SDK-007`）。
+- 本模块先落地唯一的 Host `NucleaAPI` 实现。内建 bootstrap 和 D27 的外部插件 loader
+  都通过它把能力写入 `RegistrationBatch`；**不允许存在内建专用注册 API**
+  （`SDK-007`）。
+- D16 的 `host.py` 只实现注册分派，并接收外部注入的 `PluginContext`；本阶段测试使用
+  `FakePluginContext`。生产级权限 Context 由 D26 补齐，D26 不得重写注册分派。
+- 内建与外部插件可以有不同的来源发现和生命周期编排：内建来自静态可信清单，外部插件
+  还需 entry point、依赖、权限和版本校验。差异不得延伸到能力注册接口。
 - 契约测试基类：`ModelProviderContract`、`SessionStoreContract`、`ContextProviderContract`、
   `ToolContract`、`ChannelContract`。子类只需提供构造夹具即获得全部用例。
 - 契约测试放在公开 SDK 内，因为它同时是插件开发者的验收工具。
 
 **验收**
 
-- `builtins/` 不 import `nanobot.kernel.*`（架构测试断言，`BAS-005`）。
+- `builtins/` 不 import `nucleamind.kernel.*`（架构测试断言，`BAS-005`）。
+- 用同一个 Host API 分别注册一个 Fake builtin 和 Fake plugin，断言 registry 结果结构一致，
+  只允许 `ProviderId` 不同。
 - 禁用全部可禁用内建实现后，Kernel 用 Fake 能力仍能跑通一次 turn（`NFR-701`）。
 - 5 个契约基类各自有一个「故意不合规的 Fake」能被测出来的反向样例。
 
@@ -792,9 +863,9 @@ tests/architecture/test_kernel_runs_without_builtins.py
 
 **规模**：约 400 行 + 350 行测试。**风险**：低。
 
-### D23 内建 CLI 能力与 nm 入口
+### D23 内建 CLI 能力、runtime/embed 组装与 nm 入口
 
-**依赖**：D22、D14
+**依赖**：D17–D22、D14
 
 **交付**
 
@@ -804,8 +875,10 @@ src/nucleamind/runtime/cli/main.py   # nm 可执行程序：argv 解析与进程
 src/nucleamind/runtime/cli/commands/ # nm run / config / session（plugins 见 D29）
 src/nucleamind/runtime/bootstrap.py  # 启动序列（§10.1 的 10 步）
 src/nucleamind/runtime/instance.py   # AgentInstance：就绪 / 运行 / 停止
+src/nucleamind/embed/__init__.py     # 嵌入式 Python SDK 薄门面
 tests/builtins/test_cli_entry.py
 tests/runtime/test_bootstrap.py
+tests/embed/test_embed.py
 ```
 
 **要点**（技术方案 §4.2、§8.1、§10.1，需求 `BAS-009`、`BAS-010`、`EDG-108`）
@@ -821,6 +894,8 @@ tests/runtime/test_bootstrap.py
 - CLI 不可禁用；配置试图禁用时显式拒绝（`EDG-108`）。
 - 覆盖失败时回落到内建实现，且该项不允许配置为 `fail_start`（`BAS-010`）。
 - `runtime/wiring.py` 是唯一同时 import `kernel/` 与 `builtins/` 的模块（`R5`）。
+- `embed/` 只包装 `runtime/instance.py` 的稳定调用面，不 import `builtins/`，不复制一套
+  turn 编排逻辑。
 
 **验收**
 
@@ -830,6 +905,7 @@ tests/runtime/test_bootstrap.py
 - CLI 消息经过与其他 Channel 相同的契约路径（用 `ChannelContract` 验证）。
 - 启动序列的 10 步可通过事件序列逐步追踪。
 - 架构测试：除 `runtime/` 外无任何模块同时 import `kernel/` 与 `builtins/`。
+- `embed.run()` 与 CLI 使用同一个 `AgentInstance`，同一 Fake 输入产生等价的 turn 结果。
 
 **规模**：约 700 行 + 500 行测试。**风险**：中，终端信号处理在 Windows 与 Linux 有差异。
 
@@ -905,7 +981,10 @@ tests/runtime/test_bootstrap.py
 
 - 资源访问器（`fs` / `net` / `shell` / `secret`）只在 manifest 声明且配置授权后才构造，
   否则属性访问抛 `PERMISSION_DENIED`。
-- `spawn_task()` 是插件创建后台任务的唯一途径；Host API 不暴露裸 `asyncio.create_task`。
+- `PluginContext.spawn_task()` 是插件创建后台任务的唯一途径；Host API 不暴露裸
+  `asyncio.create_task`。
+- 在 D16 已有 `host.py` 上补齐生产级 `PluginContext`，不得另建第二套 Host API 或复制
+  注册分派逻辑。
 - 授予结果写入 `permissions.json` 并发布事件（`NFR-301`）。
 - 文档中必须写明：**应用级权限 ≠ 进程隔离**，同进程插件可绕过（`13.7`）。
   不写这句就是虚假安全承诺。
@@ -924,15 +1003,18 @@ tests/runtime/test_bootstrap.py
 
 **依赖**：D26、D06
 
-**交付**：`kernel/plugins/loader.py`、`kernel/plugins/host.py`（NucleaAPI 宿主实现）、
+**交付**：`kernel/plugins/loader.py`、`kernel/plugins/host.py`（扩展外部 PluginContext）、
 `tests/plugins/test_loader.py`
 
 **要点**（技术方案 §7.3）
 
 - 阶段 A（校验，不导入实现）7 个子步骤；阶段 B（加载）按拓扑序 5 个子步骤。
 - 阶段 B 用 `RegistrationBatch`（D06 已实现），setup 抛异常即整体回滚。
+- 外部插件必须复用 D16 的 Host `NucleaAPI` 注册实现；本模块只能补充受限
+  `PluginContext`、加载计划与错误编排，不得复制注册分派逻辑。
 - 阶段 A 失败按 `critical` 决定后果：critical → 启动失败；否则记入报告继续启动。
-- Plugin Runtime 全部禁用时退化为只处理 `BUILTIN_MANIFESTS`，实例照常启动（`PLG-007`）。
+- 未启用任何外部插件时，外部发现、依赖解析和生命周期阶段为空；Runtime 仍通过
+  D16 的统一 Host API 注册 `BUILTIN_MANIFESTS`，实例照常启动（`PLG-007`）。
 
 **验收**
 
@@ -948,7 +1030,7 @@ tests/runtime/test_bootstrap.py
 | 全部插件禁用 | 实例按内建基线正常启动（`PLG-007`、`EDG-101`） |
 | 覆盖目标不存在 | 启动错误（复用 D06 语义） |
 
-- 插件不 import `nanobot.kernel.*`（架构测试，`PLG-002`）。
+- 插件不 import `nucleamind.kernel.*`（架构测试，`PLG-002`）。
 
 **规模**：约 550 行 + 650 行测试。**风险**：高。分支最多的模块，验收表必须逐条对齐。
 
@@ -1025,7 +1107,7 @@ docs/ 插件开发入门文档
 | 3 | 覆盖内建 session store，`nm capabilities` 显示 shadowed 关系 |
 | 4 | 禁用后能力消失；恢复内建与否由 `on_disable` 显式配置决定 |
 | 5 | 配置错误 / SDK 不兼容 / 运行失败三类各有稳定错误码与诊断输出 |
-| 6 | 示例插件不 import `nanobot.kernel.*` |
+| 6 | 示例插件不 import `nucleamind.kernel.*` |
 | 7 | 内建与插件 session store 通过同一套 `SessionStoreContract` |
 | 8 | 原能力关键行为有回归测试或明确迁移说明 |
 
@@ -1033,13 +1115,14 @@ docs/ 插件开发入门文档
 
 **规模**：约 400 行示例 + 450 行 e2e。**风险**：低，但这是对外宣称「插件体系可用」的节点。
 
-## 12. 阶段 8：旧路径桥接
+## 12. 阶段 8：旧路径切换与清理
 
 ### D31 遗留 Agent 路径切换与删除
 
 **依赖**：D30
 
 **交付**：`legacy/agent/` 删除、`legacy/cli/` 删除、`nm legacy` 子命令删除、
+`runtime/legacy_entry.py` 与 D01 中对应的 `R6` 白名单删除、
 `legacy/api/server.py` 与 WebUI gateway 改为调用新 Kernel、
 `tests/baseline/` 与对应 `tests/legacy/` 用例删除
 
@@ -1067,6 +1150,7 @@ docs/ 插件开发入门文档
 - `legacy/agent/`、`legacy/cli/` 目录不再存在，全仓库无悬挂引用
   （`rg "legacy\.agent|legacy\.cli" src/ tests/` 无命中）。
 - `nm legacy` 子命令已删除，`nm --help` 中不再出现。
+- `runtime/legacy_entry.py` 与架构测试中的精确白名单已删除；此后 `R6` 恢复为无例外。
 - `legacy/api/server.py` 的现有测试在改用新 Kernel 后全部通过。
 - `tests/baseline/` 与 `legacy/agent` 相关的 `tests/legacy/` 用例已删除。
 - `scripts/legacy_debt.py` 数字显著下降（约 19000 行 agent + 6500 行 cli）。
@@ -1110,7 +1194,7 @@ docs/ 插件开发入门文档
 | D20 | tools_fs | 5 | D16 | 1150 | 中高 |
 | D21 | tools_shell | 5 | D16 | 850 | 高 |
 | D22 | commands_core | 5 | D16 D13 | 750 | 低 |
-| D23 | cli_entry + nm 入口 | 5 | D22 D14 | 1200 | 中 |
+| D23 | cli_entry + runtime/embed + nm 入口 | 5 | D17–D22 D14 | 1300 | 中 |
 | D24 | 开箱可用验收 ★ | 6 | D17–D23 | 750 | 中 |
 | D25 | Manifest 与发现 | 7 | D24 | 900 | 中 |
 | D26 | 权限门面与 Context | 7 | D25 D11 | 850 | 中 |
