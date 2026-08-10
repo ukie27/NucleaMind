@@ -1,5 +1,5 @@
 """
-Entry point for running nanobot as a module: python -m nanobot
+Entry point for running the legacy CLI as a module: python -m nucleamind.legacy
 """
 
 from nucleamind.legacy.cli.commands import app

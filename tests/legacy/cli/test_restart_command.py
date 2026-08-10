@@ -107,7 +107,7 @@ class TestRestartCommand:
             await scheduled[0]
 
         mock_popen.assert_called_once_with(
-            [sys.executable, "-m", "nanobot"] + sys.argv[1:],
+            [sys.executable, "-m", "nucleamind.legacy"] + sys.argv[1:],
             creationflags=512,
         )
         mock_exit.assert_called_once_with(0)

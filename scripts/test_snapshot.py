@@ -12,12 +12,19 @@ D00 验收通过后，本脚本与 `migration-snapshot/` 一并删除。
 `capture` 先跑 `--collect-only` 再跑完整测试；任一阶段出现采集错误（collection
 error）都会以非零码退出且拒绝写出基线——模块导入失败会让用例静默消失，
 这种基线不可信。
+
+**两次 capture 必须在同一个 Python 环境下运行。** 本工具规范化了着色环境变量与
+临时目录，但**不能**规范化已安装的依赖：`legacy/channels/*/tests/` 的用例在对应
+渠道依赖缺失时会被跳过采集，装上之后才出现。中途执行过
+`scripts/install_channel_dependencies.py` 或安装 extras，就必须在同一环境下
+重新采集 before，否则 `added` 会混入几百条与重构无关的用例。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -139,6 +146,20 @@ def _basetemp() -> Path:
     return Path(tempfile.gettempdir()) / "nucleamind-pytest-basetemp"
 
 
+def _snapshot_env() -> dict[str, str]:
+    """规范化会影响测试结果的环境变量。
+
+    终端着色是最容易漏掉的一项：`FORCE_COLOR` / `NO_COLOR` 会改变 rich 与 click
+    的输出，而不少 CLI 用例直接断言 stdout 文本。两次 capture 如果在不同着色设置
+    下运行，`compare` 会报出一批与重构无关的 `outcome_changed`。
+    """
+    env = dict(os.environ)
+    for name in ("FORCE_COLOR", "NO_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "COLORTERM"):
+        env.pop(name, None)
+    env["TERM"] = "dumb"
+    return env
+
+
 def _spawn(pytest_args: list[str], label: str) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         raw = Path(tmp) / "raw.json"
@@ -152,7 +173,7 @@ def _spawn(pytest_args: list[str], label: str) -> dict[str, Any]:
             *pytest_args,
         ]
         print(f"[snapshot] {label}: {' '.join(pytest_args)}", flush=True)
-        completed = subprocess.run(cmd, cwd=_ROOT)
+        completed = subprocess.run(cmd, cwd=_ROOT, env=_snapshot_env())
         if not raw.is_file():
             raise SystemExit(
                 f"[snapshot] {label} 未产出结果文件（pytest 子进程退出码 "

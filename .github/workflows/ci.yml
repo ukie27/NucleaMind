@@ -22,10 +22,13 @@ jobs:
           python -m scripts.install_channel_dependencies --all-channels
 
       - name: Lint
-        run: ruff check nanobot/
+        run: ruff check src/ plugins/ scripts/ tests/
 
       - name: Type check
         run: basedpyright
+
+      - name: Legacy debt
+        run: python scripts/legacy_debt.py
 
       - name: Test
         run: pytest

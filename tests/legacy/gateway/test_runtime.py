@@ -74,7 +74,7 @@ def test_start_background_writes_state_and_child_command(tmp_path, monkeypatch):
     assert calls[0]["command"] == [
         "/python",
         "-m",
-        "nanobot",
+        "nucleamind.legacy",
         "gateway",
         "--foreground",
         "--port",

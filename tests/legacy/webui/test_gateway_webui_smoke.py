@@ -66,7 +66,7 @@ def _start_gateway(config_path: Path, log_path: Path) -> subprocess.Popen[bytes]
             [
                 sys.executable,
                 "-m",
-                "nanobot",
+                "nucleamind.legacy",
                 "gateway",
                 "--config",
                 str(config_path),

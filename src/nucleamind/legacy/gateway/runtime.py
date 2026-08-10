@@ -29,7 +29,7 @@ def build_gateway_command(python_executable: str, options: GatewayStartOptions) 
     command = [
         python_executable,
         "-m",
-        "nanobot",
+        "nucleamind.legacy",
         "gateway",
         "--foreground",
         "--port",

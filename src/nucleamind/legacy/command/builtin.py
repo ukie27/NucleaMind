@@ -231,7 +231,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
 
     async def _do_restart():
         await asyncio.sleep(1)
-        argv = [sys.executable, "-m", "nanobot"] + sys.argv[1:]
+        argv = [sys.executable, "-m", "nucleamind.legacy"] + sys.argv[1:]
         mode = ctx.loop.restart_mode or "auto"
         if mode == "auto":
             mode = "spawn" if sys.platform == "win32" else "exec"

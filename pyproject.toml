@@ -1,7 +1,7 @@
 [project]
-name = "nanobot-ai"
+name = "nucleamind"
 version = "0.3.0"
-description = "A modular Agent Kernel derived from nanobot"
+description = "A modular, pluggable Agent Kernel"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -105,12 +105,13 @@ dev = [
 ]
 
 [project.scripts]
-nanobot = "nanobot.cli.commands:app"
+# `nm` is the only command; no `nanobot` alias is kept (technical design 4.5).
+nm = "nucleamind.runtime.cli.main:app"
 
-# Third-party tool plugins register here.  Built-in tools are discovered
-# automatically via pkgutil scanning in ToolLoader.discover().
-# [project.entry-points."nanobot.tools"]
-# my_plugin = "my_package.plugins:MyTool"
+# Primary plugin discovery source (technical design 7.1). Official and
+# third-party plugins register in the same group and share one load path.
+# Empty until the plugin runtime lands in D25-D30.
+[project.entry-points."nucleamind.plugins"]
 
 [build-system]
 requires = ["hatchling"]
@@ -124,38 +125,35 @@ allow-direct-references = true
 
 [tool.hatch.build]
 include = [
-    "nanobot/**/*.py",
-    "nanobot/templates/**/*.md",
-    "nanobot/skills/**/*.md",
-    "nanobot/skills/**/*.sh",
-    "nanobot/channels/*/webui/**/*",
-    "nanobot/web/dist/**/*",
+    "src/nucleamind/**/*.py",
+    "src/nucleamind/legacy/templates/**/*.md",
+    "src/nucleamind/legacy/skills/**/*.md",
+    "src/nucleamind/legacy/skills/**/*.sh",
+    "src/nucleamind/legacy/channels/*/webui/**/*",
+    "src/nucleamind/legacy/web/dist/**/*",
 ]
-# nanobot/web/dist/ is produced by `cd webui && bun run build` and is
-# git-ignored. List it as an artifact so hatch ships it in both wheel and
+# src/nucleamind/legacy/web/dist/ is produced by `cd webui && bun run build` and
+# is git-ignored. List it as an artifact so hatch ships it in both wheel and
 # sdist even though VCS does not track it.
 artifacts = [
-    "nanobot/web/dist/**/*",
+    "src/nucleamind/legacy/web/dist/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["nanobot"]
-exclude = ["nanobot/channels/*/tests/**"]
-
-[tool.hatch.build.targets.wheel.sources]
-"nanobot" = "nanobot"
+packages = ["src/nucleamind"]
+exclude = ["src/nucleamind/legacy/channels/*/tests/**"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "nanobot/",
-    "nanobot/web/dist/",
+    "src/nucleamind/",
+    "src/nucleamind/legacy/web/dist/",
     "hatch_build.py",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
 ]
-exclude = ["nanobot/channels/*/tests/**"]
+exclude = ["src/nucleamind/legacy/channels/*/tests/**"]
 
 [tool.ruff]
 line-length = 100
@@ -166,17 +164,17 @@ select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
 [tool.basedpyright]
-include = ["nanobot"]
+include = ["src/nucleamind"]
 exclude = ["**/tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "nanobot/channels"]
+testpaths = ["tests", "src/nucleamind/legacy/channels"]
 
 [tool.coverage.run]
-source = ["nanobot"]
+source = ["src/nucleamind"]
 omit = ["tests/*", "**/tests/*"]
 
 [tool.coverage.report]

@@ -44,7 +44,7 @@ class ApiRuntime(ManagedProcessRuntime[ApiStartOptions]):
         command = [
             self.python_executable or sys.executable,
             "-m",
-            "nanobot",
+            "nucleamind.legacy",
             "serve",
             "--host",
             options.host,

@@ -7,18 +7,46 @@
 NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协议）
 独立开发的个人 AI Agent 项目，仓库与上游 Git 历史及协作流程均已分离。
 
-- **当前状态**：代码库仍保留 nanobot 的完整结构（Agent Runtime、Channels、Tools、Memory、WebUI 等），可正常运行。
+- **当前状态**：`D00` 已把仓库搬到目标结构（`src/` 布局 + 新层空骨架 + `legacy/` 隔离区）。遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；新 Kernel 各层仍是空骨架。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
-> **注意**：包名与导入路径目前仍是 `nanobot`（`pyproject.toml` 中 name 为 `nanobot-ai`），尚未做全局重命名。后续改造时再统一规划，不要在代码中混用 `nucleamind` 前缀。
+> **命名（`D00` 已落地，技术方案 §4.5）**：Python 包为 `nucleamind`，发行名 `nucleamind`，
+> CLI 命令只有 `nm`（不保留 `nanobot` 别名）。新层只读 `NUCLEAMIND_*`、
+> `~/.nucleamind/<instance>/` 和 snake_case 配置，**不双读旧格式、不写长期兼容垫片**。
+> `src/nucleamind/legacy/` 在被删除前继续使用 `NANOBOT_*`、`~/.nanobot/` 和 camelCase
+> 配置别名——那是尚未改写完的实现，不是兼容承诺。
+
+## 仓库结构（`D00` 已落地，技术方案 §4.1–§4.4）
+
+```text
+src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable install）
+├── contracts/             # 第 1 层：公开数据契约，纯类型，零内部依赖
+├── kernel/                # 第 2 层：机制，只依赖 contracts
+├── sdk/                   # 第 3 层：插件唯一依赖面，只 import contracts
+├── builtins/              # 第 4 层：内建默认能力，与插件同等身份
+├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
+├── embed/                 # 第 5 层：嵌入式 Python SDK
+└── legacy/                # 隔离区：nanobot 遗留代码，只出不进
+plugins/                   # 一等公民：官方插件，各自独立发行
+examples/plugins/          # 教学用最小示例插件
+tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
+deploy/                    # Dockerfile / compose / entrypoint
+webui/                     # 前端源码（TypeScript）
+```
+
+`contracts/`–`embed/` 目前是空骨架（只有 `__init__.py` 与 docstring），
+按开发方案 `D02` 起逐个填充。**新代码直接写在最终位置**，不要放临时目录。
 
 ## 开发命令
 
 ```bash
 # Python：单测 / lint
-.venv\Scripts\python.exe -m pytest tests/test_openai_api.py::test_function -v
-.venv\Scripts\python.exe -m ruff check nanobot/
+.venv\Scripts\python.exe -m pytest tests/legacy/test_openai_api.py::test_function -v
+.venv\Scripts\python.exe -m ruff check src/ plugins/
+
+# legacy/ 债务指标（只允许下降）
+.venv\Scripts\python.exe scripts/legacy_debt.py
 
 # 严格类型检查（与 CI 一致）
 uv sync --all-extras --dev
@@ -26,13 +54,13 @@ uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run --no-sync basedpyright
 
 # WebUI：dev server（代理 API/WS 到 gateway :8765）/ build / test
-# 构建产物输出到 ../nanobot/web/dist（打进 Python wheel）
+# 构建产物输出到 ../src/nucleamind/legacy/web/dist（打进 Python wheel）
 cd webui && bun run dev      # 或 NANOBOT_API_URL=... bun run dev
 cd webui && bun run build
 cd webui && bun run test
 
-# Gateway
-nanobot gateway
+# Gateway（迁移期遗留入口，D31 随 legacy/agent/ 一并删除）
+nm legacy gateway
 ```
 
 ## Python 环境与沙箱
@@ -51,48 +79,55 @@ nanobot gateway
 - 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
   对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
-## 高层架构（当前状态，源自 nanobot）
+## 高层架构（`legacy/` 隔离区，源自 nanobot）
+
+下列 `legacy/` 路径均在 `src/nucleamind/legacy/` 之下，描述的是**待迁移**的遗留实现。
+新 Kernel 的目标分层见技术方案 §4.2；`legacy/` 的隔离规则见
+[`src/nucleamind/legacy/README.md`](./src/nucleamind/legacy/README.md)。
 
 ### 核心数据流
 
-消息通过异步 `MessageBus`（`nanobot/bus/queue.py`）解耦聊天渠道与 agent 核心：
+消息通过异步 `MessageBus`（`legacy/bus/queue.py`）解耦聊天渠道与 agent 核心：
 
-1. **Channels**（`nanobot/channels/`）接收外部平台消息，向总线发布 `InboundMessage` 事件。
-2. **`AgentLoop`**（`nanobot/agent/loop.py`）消费入站消息，构建上下文，协调整个 turn。
-3. **`AgentRunner`**（`nanobot/agent/runner.py`）执行真正的 LLM 对话循环：发送消息、接收 tool calls、执行工具、流式返回。
+1. **Channels**（`legacy/channels/`）接收外部平台消息，向总线发布 `InboundMessage` 事件。
+2. **`AgentLoop`**（`legacy/agent/loop.py`）消费入站消息，构建上下文，协调整个 turn。
+3. **`AgentRunner`**（`legacy/agent/runner.py`）执行真正的 LLM 对话循环：发送消息、接收 tool calls、执行工具、流式返回。
 4. 响应以 `OutboundMessage` 事件发布回对应渠道。
 
 ### 关键子系统
 
-- **Agent Loop**（`nanobot/agent/loop.py`、`runner.py`）：核心处理引擎。`AgentLoop` 管理 session keys、hooks、上下文构建；`AgentRunner` 执行带工具调用的多轮 LLM 对话。
-- **LLM Providers**（`nanobot/providers/`）：Anthropic、OpenAI 兼容、OpenAI Responses API、Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类（`base.py`），含图像生成（`image_generation.py`）与音频转录（`transcription.py`）。`factory.py` / `registry.py` 负责实例化与模型发现。
-- **Channels**（`nanobot/channels/`）：Telegram、Discord、Slack、Feishu、Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、WebSocket、Mattermost。`manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
-- **Tools**（`nanobot/agent/tools/`）：文件系统、shell（含沙箱后端）、web 搜索/抓取、MCP servers、cron、notebook、subagent、长任务/持续目标（`long_task.py`）、图像生成、自修改。`pkgutil` 扫描 + entry-point 插件自动发现。
-- **Memory**（`nanobot/agent/memory.py`）：会话历史持久化 + Dream 两阶段记忆整合，原子写（temp + fsync + rename）保证持久性。
-- **Session Management**（`nanobot/session/`）：会话历史、上下文压缩、TTL 自动压缩（`manager.py`）、持续目标状态（`goal_state.py`）。
-- **Config**（`nanobot/config/schema.py`、`loader.py`）：Pydantic 配置，从 `~/.nanobot/config.json` 加载，支持 camelCase 别名。
+- **Agent Loop**（`legacy/agent/loop.py`、`runner.py`）：核心处理引擎。`AgentLoop` 管理 session keys、hooks、上下文构建；`AgentRunner` 执行带工具调用的多轮 LLM 对话。
+- **LLM Providers**（`legacy/providers/`）：Anthropic、OpenAI 兼容、OpenAI Responses API、Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类（`base.py`），含图像生成（`image_generation.py`）与音频转录（`transcription.py`）。`factory.py` / `registry.py` 负责实例化与模型发现。
+- **Channels**（`legacy/channels/`）：Telegram、Discord、Slack、Feishu、Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、WebSocket、Mattermost。`manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
+- **Tools**（`legacy/agent/tools/`）：文件系统、shell（含沙箱后端）、web 搜索/抓取、MCP servers、cron、notebook、subagent、长任务/持续目标（`long_task.py`）、图像生成、自修改。`pkgutil` 扫描 + entry-point 插件自动发现。
+- **Memory**（`legacy/agent/memory.py`）：会话历史持久化 + Dream 两阶段记忆整合，原子写（temp + fsync + rename）保证持久性。
+- **Session Management**（`legacy/session/`）：会话历史、上下文压缩、TTL 自动压缩（`manager.py`）、持续目标状态（`goal_state.py`）。
+- **Config**（`legacy/config/schema.py`、`loader.py`）：Pydantic 配置，从 `~/.nanobot/config.json` 加载（迁移期不变），支持 camelCase 别名。
 - **WebUI**（`webui/`）：Vite + React SPA，通过 WebSocket 多路复用协议与 gateway 通信。
-- **API Server**（`nanobot/api/server.py`）：OpenAI 兼容 HTTP API（`/v1/chat/completions`、`/v1/models`）。
-- **Command Router**（`nanobot/command/`）：斜杠命令路由与内置命令处理。
-- **Skills**（`nanobot/skills/`）：内置技能定义（cron、github、image-generation 等），markdown + YAML frontmatter。
-- **Security**（`nanobot/security/`）：PTH 文件守卫等安全措施，CLI 入口激活。
+- **API Server**（`legacy/api/server.py`）：OpenAI 兼容 HTTP API（`/v1/chat/completions`、`/v1/models`）。
+- **Command Router**（`legacy/command/`）：斜杠命令路由与内置命令处理。
+- **Skills**（`legacy/skills/`）：内置技能定义（cron、github、image-generation 等），markdown + YAML frontmatter。
+- **Security**（`legacy/security/`）：PTH 文件守卫等安全措施，CLI 入口激活。
 
 ### 入口点
 
-- **CLI**：`nanobot/cli/commands.py`
-- **Python SDK**：`nanobot/nanobot.py`
+- **`nm`（唯一命令）**：`src/nucleamind/runtime/cli/main.py`（最小骨架，真正的子命令在 `D23`）
+- **遗留 CLI**：`nm legacy` -> `src/nucleamind/runtime/legacy_entry.py` -> `legacy/cli/commands.py`
+- **遗留 Python SDK**：`legacy/nanobot.py`（新层门面 `embed/` 为重写，不移植旧实现）
 
 ## 架构约束与改造方向
 
-改造时遵循以下边界（详见 [.agent/design.md](.agent/design.md)）：
+改造时遵循以下边界（详见 [.agent/design.md](.agent/design.md)）；分层与依赖规则
+`R1`–`R6` 见技术方案 §3.1、§4.2：
 
-1. **核心保持小，能力在边缘扩展**：新能力优先放到 `channels/`、`agent/tools/`、skills、MCP server 或未来的插件包中。`agent/loop.py` 与 `agent/runner.py` 是核心路径，改动必须克制且有明确理由。
+1. **核心保持小，能力在边缘扩展**：新代码写在最终位置——机制进 `kernel/`，能力进 `builtins/` 或 `plugins/`，公开类型进 `contracts/`，装配进 `runtime/`。**不允许往 `legacy/` 新增文件**（只出不进，`R6`）。
 2. **接口优先于实现**：不绑定具体数据库、聊天平台、模型供应商、工作流框架，优先设计抽象接口（Memory Interface、Context Interface、Message Interface、Agent Provider Interface）。
 3. **机制优先于功能**：核心提供 Extension Mechanism、Lifecycle、Registry、Interface，而不是堆积具体功能。
 4. **少结构、多智能**：优先简单可读的代码，不要引入不必要的框架层和间接层。
-5. **优先重复而非过早抽象**：channel/provider 之间允许重复逻辑（发送重试、媒体处理、消息拆分），不要为消除重复引入复杂基类。
+5. **优先重复而非过早抽象**：channel/provider 之间允许重复逻辑（发送重试、媒体处理、消息拆分），不要为消除重复引入复杂基类。从 `legacy/` 复用实现时**把代码搬到新家并补测试**，不要 import 过来。
 6. **在边界类型化动态数据**：wire payload、持久化记录、第三方 SDK 对象在拥有它们的边缘做解析/规范化，用 `TypedDict` 固定形状，不用 `Any` 向核心泄漏；`typing.cast` 必须有运行时检查支撑。
-7. **显式优于魔法**：配置必须在 `config/schema.py` 中显式声明；错误处理抛清晰异常，不静默修正坏输入。
+7. **显式优于魔法**：配置必须显式声明（新层在 `kernel/config/`，`legacy/` 仍在 `legacy/config/schema.py`）；错误处理抛清晰异常，不静默修正坏输入。
+8. **新模块首个 docstring 含「职责/不负责」两行**（技术方案 §4.6）：`contracts/`、`kernel/`、`sdk/`、`runtime/` 强制，由 `D01` 的架构守卫检查。
 
 ## 常见坑与安全边界
 
@@ -129,8 +164,8 @@ nanobot gateway
 ## 指令文件边界
 
 - 根目录 `AGENTS.md` 是本仓库 AI 编码代理的开发指引，`CLAUDE.md` 仅引用本文件。
-- `nanobot/templates/AGENTS.md` 是运行时复制到用户 workspace 的 Agent 行为模板，不是仓库开发规范。
-- 修改 `nanobot/templates/`、`nanobot/skills/` 中的说明会改变最终用户 Agent 的行为；不要把仓库开发流程、上游协作方式或当前重构任务写入这些运行时模板。
+- `legacy/templates/AGENTS.md` 是运行时复制到用户 workspace 的 Agent 行为模板，不是仓库开发规范。
+- 修改 `legacy/templates/`、`legacy/skills/` 中的说明会改变最终用户 Agent 的行为；不要把仓库开发流程、上游协作方式或当前重构任务写入这些运行时模板。
 
 ## 代码风格
 

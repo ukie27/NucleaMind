@@ -44,7 +44,7 @@ def test_api_runtime_builds_detached_serve_command(tmp_path: Path, monkeypatch) 
     assert calls == [[
         "/python",
         "-m",
-        "nanobot",
+        "nucleamind.legacy",
         "serve",
         "--host",
         "0.0.0.0",

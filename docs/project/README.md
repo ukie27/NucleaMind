@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-10
-- 当前阶段：nanobot 基线整理与 NucleaMind 模块化改造准备
+- 当前阶段：阶段 0 工程基座（`D00` 已完成，下一步 `D01`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -13,9 +13,14 @@
 ## 当前项目状态
 
 - NucleaMind 已与上游 nanobot 的 Git 历史和协作流程分离。
-- 当前包名、导入路径和主要目录仍沿用 `nanobot`；目标结构（`src/nucleamind/` 分层
-  + 顶层 `plugins/` + `legacy/` 隔离区）已在技术方案 §4 定稿，由 `D00` 一次性落地。
-- nanobot 原有的 Agent Runtime、Channels、Tools、Memory、WebUI 等能力仍保留。
+- **`D00` 已落地**：包名 `nucleamind`，发行名 `nucleamind`，CLI 命令只有 `nm`。
+  仓库为 `src/` 布局：`src/nucleamind/{contracts,kernel,sdk,builtins,runtime,embed}/`
+  为空骨架，遗留实现全部在 `src/nucleamind/legacy/`（352 个 Python 文件 / 133317 行，
+  债务基线）；顶层新增 `plugins/`、`examples/plugins/`、`deploy/`，
+  原 `tests/` 移到 `tests/legacy/`。
+- nanobot 原有的 Agent Runtime、Channels、Tools、Memory、WebUI 等能力仍保留，
+  通过 `nm legacy <原参数>` 运行；`legacy/` 内部继续使用 `NANOBOT_*`、`~/.nanobot/`
+  和 camelCase 配置（迁移期运行契约，不是兼容承诺）。
 - 当前目标是先明确核心边界和扩展机制，再逐步将具体能力迁移为可选插件。
 - `references/` 保存本地参考源码并被 Git 忽略；其受版本控制的导航文档位于
   [`../references/`](../references/README.md)。
@@ -27,10 +32,24 @@
 - 建立参考项目导航文档和轻量索引脚本，支持按需查询参考源码。
 - 规定参考源码与 NucleaMind 自有文档分离管理。
 - 建立本交接文档和临时开发文档约定。
+- **`D00` 仓库重构与包重命名**（4 个 commit）：
+  - `A0` 用 `scripts/test_snapshot.py` 捕获行为基线（5852 个用例、0 采集错误）。
+  - `A1` 用 `git mv` 搬到目标结构，`git log --follow` 可追溯重构前历史。
+  - `A2` 用 `scripts/migrate_names.py` 机械改写 4389 处包名/发行名，
+    手工处理 `parents[N]` 层级、构建资源路径、vite outDir、Dockerfile 与
+    `python -m` 子进程调用等机械规则覆盖不到的位置。
+  - `A3` 重写 `pyproject.toml`（`packages`/`include`/`artifacts`/`testpaths`/
+    `basedpyright.include`），新增 `nm` 入口与 `nucleamind.plugins` entry point 组，
+    创建新层空骨架、`legacy/README.md` 与常驻的 `scripts/legacy_debt.py`。
+  - 验收：基线比对 `missing`/`added`/`outcome_changed` 均为空；
+    `nm --version` 与 `nm legacy --help` 可用且无 `nanobot` 命令；
+    wheel/sdist 含 `templates/`、`skills/`、`web/dist/`；
+    `ruff check` 与 `basedpyright` 通过；新层无旧名残留。
 
 ## 正在进行
 
-- 尚未开始大规模拆分 nanobot 的现有模块，尚无新代码落地。
+- `D00` 已完成，`D01` 架构守卫尚未开始。新 Kernel 各层仍是空骨架，
+  尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -78,17 +97,21 @@
 
 ## 下一步工作
 
-1. 执行 `D00`：单独一个 PR，四个可回退 commit。**A0 先捕获行为基线**
-   （约 5850 个用例的规范化 ID 与结果集合，落盘入库），再依次 `git mv` →
-   导入/构建路径机械重写 → `pyproject` 与入口重写，同时创建新层空骨架与顶层
-   `plugins/`、`deploy/`。遗留配置、`NANOBOT_*` 和 `~/.nanobot/` 在迁移期保持不变；
-   遗留功能收敛为 `nm legacy` 单个子命令。`AGENTS.md` 需在此模块内一并更新。
-2. 执行 `D01`：落地 `tests/architecture/` 的 `R1`–`R6` 断言、反向违规样例、
+1. 执行 `D01`：落地 `tests/architecture/` 的 `R1`–`R6` 断言、反向违规样例、
    `runtime/legacy_entry.py` 精确白名单、
    `legacy/` 债务指标与 CI 门禁。
-3. 按 `D02`–`D06` 落地契约层与 Capability Registry（此阶段不改动 `legacy/` 业务代码）。
+2. 按 `D02`–`D06` 落地契约层与 Capability Registry（此阶段不改动 `legacy/` 业务代码）。
 
-当前进度：D00– ⬜（尚未开始编码）
+`D01` 需要注意的 `D00` 遗留事实：
+
+- `legacy/` 债务基线：352 个 Python 文件 / 133317 行（`scripts/legacy_debt.py --json`）。
+- `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单要精确到这一个文件路径。
+- Windows 上有一批**既有**失败用例（与 `D00` 无关）：`tools/test_exec_session_tools.py`
+  中 3-4 个用例依赖子进程时序，逐次运行结果不稳定；`test_web_fetch_security.py`、
+  `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例在本机稳定失败。
+  基线里记录的是这些用例的真实结果，不是「全绿」假设。
+
+当前进度：D00 ✅  D01– ⬜（尚未开始）
 
 ## 本目录文档分类
 

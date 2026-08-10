@@ -36,7 +36,10 @@ def test_systemd_install_dry_run_renders_user_unit(tmp_path):
     assert ("systemctl", "--user", "restart", "nanobot-gateway.service") in result.commands
     assert result.content is not None
     assert 'WorkingDirectory="/tmp/nanobot workspace"' in result.content
-    assert 'ExecStart=/venv/bin/python -m nanobot gateway --foreground --port 18790 --verbose' in result.content
+    assert (
+        "ExecStart=/venv/bin/python -m nucleamind.legacy gateway "
+        "--foreground --port 18790 --verbose"
+    ) in result.content
     assert '--workspace "/tmp/nanobot workspace" --config /tmp/nanobot/config.json' in result.content
 
 
@@ -92,7 +95,7 @@ def test_launchd_install_dry_run_renders_plist(tmp_path):
     assert payload["ProgramArguments"] == [
         "/opt/homebrew/bin/python3",
         "-m",
-        "nanobot",
+        "nucleamind.legacy",
         "gateway",
         "--foreground",
         "--port",
