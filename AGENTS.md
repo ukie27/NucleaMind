@@ -9,7 +9,7 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
 
 - **当前状态**：代码库仍保留 nanobot 的完整结构（Agent Runtime、Channels、Tools、Memory、WebUI 等），可正常运行。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
-- 愿景与开发原则详见 [`开发背景.md`](./开发背景.md)。
+- 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
 > **注意**：包名与导入路径目前仍是 `nanobot`（`pyproject.toml` 中 name 为 `nanobot-ai`），尚未做全局重命名。后续改造时再统一规划，不要在代码中混用 `nucleamind` 前缀。
 
@@ -116,10 +116,11 @@ nanobot gateway
 [`docs/project/README.md`](./docs/project/README.md) 是项目当前状态和开发进度的交接文档。
 每次新会话开始较大开发任务前应先阅读；完成一个大模块、项目阶段或架构调整后必须更新。
 
-- `开发背景.md` 只维护相对稳定的项目愿景、目标和原则，不记录阶段性进度。
-- `docs/project/` 保持扁平，不按方案、计划、决策等类型继续拆分子目录。
+- `docs/project/开发背景.md` 只维护相对稳定的项目愿景、目标和原则，不记录阶段性进度。
+- `docs/project/` 保持扁平，不按方案、计划、决策等类型继续拆分子目录；长期文档使用
+  中文原名，临时开发文档文件名优先使用小写英文和短横线。
 - 开发模块时，可在 `docs/project/` 直接创建临时 Markdown 文档，记录目标、技术方案、
-  任务拆分、风险和验收方式；文件名优先使用小写英文和短横线。
+  任务拆分、风险和验收方式。
 - 模块完成后，先把当前状态、关键结果和下一步工作更新到 `docs/project/README.md`，
   再将仍然有效的架构或使用说明更新到正式文档，最后删除对应临时开发文档。
 - 参考项目导航资料放在 [`docs/references/`](./docs/references/README.md)，不要写入被

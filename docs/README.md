@@ -12,7 +12,7 @@ marketing guides have intentionally been removed during the refactoring phase.
 
 | Goal | Document |
 |---|---|
-| Understand project direction | [`../开发背景.md`](../开发背景.md) |
+| Understand project direction | [`project/开发背景.md`](./project/开发背景.md) |
 | Follow repository development rules | [`../AGENTS.md`](../AGENTS.md) |
 | Continue current development work | [`project/README.md`](./project/README.md) |
 | Read reference-project navigation rules | [`references/README.md`](./references/README.md) |

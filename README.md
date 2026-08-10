@@ -42,8 +42,8 @@ Feature implementations such as channels, memory backends, browser access, MCP,
 WebUI, automation, workflows, and multi-agent systems are candidates for
 official or third-party plugins.
 
-See [开发背景.md](./开发背景.md) for the project vision and [AGENTS.md](./AGENTS.md)
-for repository development rules.
+See [开发背景.md](./docs/project/开发背景.md) for the project vision and
+[AGENTS.md](./AGENTS.md) for repository development rules.
 
 ## Development Setup
 
@@ -97,7 +97,7 @@ When `.venv` exists, use its Python executable for Python commands.
 
 ## Documentation
 
-- [Development background](./开发背景.md)
+- [Development background](./docs/project/开发背景.md)
 - [Repository instructions](./AGENTS.md)
 - [Architecture constraints](./.agent/design.md)
 - [Security boundaries](./.agent/security.md)
