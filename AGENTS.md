@@ -17,8 +17,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
 
 ```bash
 # Python：单测 / lint
-pytest tests/test_openai_api.py::test_function -v
-ruff check nanobot/
+.venv\Scripts\python.exe -m pytest tests/test_openai_api.py::test_function -v
+.venv\Scripts\python.exe -m ruff check nanobot/
 
 # 严格类型检查（与 CI 一致）
 uv sync --all-extras --dev
@@ -34,6 +34,22 @@ cd webui && bun run test
 # Gateway
 nanobot gateway
 ```
+
+## Python 环境与沙箱
+
+- 项目本地开发和测试统一使用仓库中的 `.venv`，所有 Python 命令均通过
+  `.venv\Scripts\python.exe` 执行，例如
+  `.venv\Scripts\python.exe -m pytest` 和
+  `.venv\Scripts\python.exe -m pip install -e ".[dev]"`。
+- 不要使用裸 `pip`、`pytest` 或系统 `python` 代替项目虚拟环境；只有在明确确认
+  `.venv` 不存在时，才可以使用系统 Python 创建或修复虚拟环境。
+- Python 虚拟环境与执行沙箱是两套独立机制：`.venv` 负责固定 Python 解释器和依赖，
+  沙箱负责限制进程可访问的文件、目录和网络。沙箱不会提供或替代 Python 环境。
+- 如果 `.venv` 在普通终端可用，但 Agent 执行时出现基础解释器不存在、访问被拒绝、
+  依赖下载失败等问题，应先检查沙箱的文件或网络权限。不要仅凭沙箱内的失败判断
+  `.venv` 已损坏，也不要因此绕过 `.venv` 改用系统 Python。
+- 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
+  对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
 ## 高层架构（当前状态，源自 nanobot）
 
@@ -82,6 +98,32 @@ nanobot gateway
 
 - 常见坑（`${VAR}` 语义、Windows 兼容、prompt 模板、上下文污染、原子写等）：[.agent/gotchas.md](.agent/gotchas.md)
 - 安全边界（工作区路径解析、SSRF 防护、shell 沙箱，不可绕过）：[.agent/security.md](.agent/security.md)
+
+## 参考项目读取规范
+
+`references/` 是本地只读参考源码目录，默认被 Git 忽略。当前约定的参考项目及其导航文档位于 [`docs/references/`](./docs/references/README.md)。
+
+- 不要全量读取 `references/`，先阅读 `docs/references/README.md` 和对应项目导航文档。
+- 先按主题定位候选目录、文件和符号，再使用 `rg` 或索引查询缩小范围。
+- 只有在需要确认具体实现、调用关系、生命周期或兼容性契约时，才读取相关源码和测试。
+- `references/nanobot` 用于确认原始 nanobot 行为；`references/openclaw` 用于插件、SDK 和生态兼容研究；`references/pi` 用于极简 Agent、扩展点和运行时设计研究。
+- 参考项目中的 `AGENTS.md` 只约束对该参考项目源码的阅读和解释，不覆盖 NucleaMind 的开发规则。
+- 参考源码不是 NucleaMind 的实现目录。借鉴设计时，必须记录采用的边界和不采用的部分，避免直接复制与当前目标冲突的功能。
+- 索引由 `scripts/reference_index.py` 生成，属于导航辅助数据，不是架构事实的唯一来源；索引过期时先重新生成。
+
+## 项目文档规范
+
+[`docs/project/README.md`](./docs/project/README.md) 是项目当前状态和开发进度的交接文档。
+每次新会话开始较大开发任务前应先阅读；完成一个大模块、项目阶段或架构调整后必须更新。
+
+- `开发背景.md` 只维护相对稳定的项目愿景、目标和原则，不记录阶段性进度。
+- `docs/project/` 保持扁平，不按方案、计划、决策等类型继续拆分子目录。
+- 开发模块时，可在 `docs/project/` 直接创建临时 Markdown 文档，记录目标、技术方案、
+  任务拆分、风险和验收方式；文件名优先使用小写英文和短横线。
+- 模块完成后，先把当前状态、关键结果和下一步工作更新到 `docs/project/README.md`，
+  再将仍然有效的架构或使用说明更新到正式文档，最后删除对应临时开发文档。
+- 参考项目导航资料放在 [`docs/references/`](./docs/references/README.md)，不要写入被
+  Git 忽略的 `references/`。
 
 ## 指令文件边界
 

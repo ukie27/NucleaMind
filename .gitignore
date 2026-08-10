@@ -7,6 +7,10 @@
 .web
 .orion
 
+# Local reference source checkouts and generated reference indexes
+/references/
+/docs/references/.index/
+
 # Claude / AI assistant artifacts
 docs/superpowers/
 docs/plans/

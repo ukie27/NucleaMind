@@ -14,6 +14,8 @@ marketing guides have intentionally been removed during the refactoring phase.
 |---|---|
 | Understand project direction | [`../开发背景.md`](../开发背景.md) |
 | Follow repository development rules | [`../AGENTS.md`](../AGENTS.md) |
+| Continue current development work | [`project/README.md`](./project/README.md) |
+| Read reference-project navigation rules | [`references/README.md`](./references/README.md) |
 | Understand current runtime ownership and flow | [`architecture.md`](./architecture.md) |
 | Extend the current implementation while it is being migrated | [`development.md`](./development.md) |
 | Inspect configuration fields and defaults | [`configuration.md`](./configuration.md) |

@@ -1,0 +1,90 @@
+{
+  "projects": {
+    "nanobot": {
+      "path": "references/nanobot",
+      "role": "原始 nanobot 行为基线和迁移参照",
+      "languages": ["python", "typescript"],
+      "topics": {
+        "agent_runtime": [
+          "nanobot/agent/loop.py",
+          "nanobot/agent/runner.py"
+        ],
+        "providers": [
+          "nanobot/providers/base.py",
+          "nanobot/providers/factory.py",
+          "nanobot/providers/registry.py"
+        ],
+        "channels": ["nanobot/channels/"],
+        "tools": ["nanobot/agent/tools/"],
+        "memory_and_session": [
+          "nanobot/agent/memory.py",
+          "nanobot/session/"
+        ],
+        "configuration": [
+          "nanobot/config/schema.py",
+          "nanobot/config/loader.py"
+        ]
+      }
+    },
+    "openclaw": {
+      "path": "references/openclaw",
+      "role": "插件 SDK、宿主边界和外部插件生态兼容研究",
+      "languages": ["typescript", "javascript"],
+      "topics": {
+        "plugin_contract": [
+          "packages/plugin-sdk/",
+          "src/plugin-sdk/",
+          "src/plugins/",
+          "docs/plugins/"
+        ],
+        "providers": [
+          "src/plugin-sdk/provider-entry.ts",
+          "src/plugin-sdk/provider-auth.ts",
+          "extensions/openai/"
+        ],
+        "channels": [
+          "src/channels/",
+          "extensions/telegram/",
+          "extensions/discord/"
+        ],
+        "memory": [
+          "packages/memory-host-sdk/",
+          "extensions/memory-core/",
+          "extensions/memory-lancedb/"
+        ],
+        "protocol_and_gateway": [
+          "packages/gateway-protocol/",
+          "packages/gateway-client/",
+          "src/gateway/"
+        ]
+      }
+    },
+    "pi": {
+      "path": "references/pi",
+      "role": "极简 Agent、扩展点和 coding-agent Runtime 研究",
+      "languages": ["typescript", "javascript"],
+      "topics": {
+        "agent_runtime": [
+          "packages/agent/",
+          "packages/coding-agent/"
+        ],
+        "extensions": [
+          "packages/coding-agent/src/",
+          "packages/coding-agent/examples/extensions/"
+        ],
+        "context_and_compaction": [
+          "packages/coding-agent/src/",
+          "packages/coding-agent/docs/"
+        ],
+        "sessions": [
+          "packages/coding-agent/src/",
+          "packages/session-backends/"
+        ],
+        "package_distribution": [
+          "packages/coding-agent/README.md",
+          "package.json"
+        ]
+      }
+    }
+  }
+}
