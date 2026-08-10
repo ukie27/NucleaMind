@@ -7,9 +7,9 @@ from typing import Any, cast
 
 from loguru import logger
 
-from nanobot.channels.contracts import ChannelInstanceSpec, ChannelManagementSpec
-from nanobot.channels.feishu.config import feishu_default_config
-from nanobot.config.loader import merge_missing_defaults
+from nucleamind.legacy.channels.contracts import ChannelInstanceSpec, ChannelManagementSpec
+from nucleamind.legacy.channels.feishu.config import feishu_default_config
+from nucleamind.legacy.config.loader import merge_missing_defaults
 
 DEFAULT_INSTANCE_ID = "default"
 _INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")

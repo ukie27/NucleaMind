@@ -11,31 +11,31 @@ from typing import Any, Callable, TypedDict
 
 from loguru import logger
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
-from nanobot.agent.tools.base import ToolResult
-from nanobot.agent.tools.context import (
+from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext
+from nucleamind.legacy.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
+from nucleamind.legacy.agent.tools.base import ToolResult
+from nucleamind.legacy.agent.tools.context import (
     RequestContext,
     ToolContext,
     bind_request_context,
     reset_request_context,
 )
-from nanobot.agent.tools.exec_session import ExecSessionManager
-from nanobot.agent.tools.file_state import FileStates
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import AgentDefaults, ToolsConfig
-from nanobot.providers.base import LLMProvider
-from nanobot.security.workspace_access import (
+from nucleamind.legacy.agent.tools.exec_session import ExecSessionManager
+from nucleamind.legacy.agent.tools.file_state import FileStates
+from nucleamind.legacy.agent.tools.loader import ToolLoader
+from nucleamind.legacy.agent.tools.registry import ToolRegistry
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.config.schema import AgentDefaults, ToolsConfig
+from nucleamind.legacy.providers.base import LLMProvider
+from nucleamind.legacy.security.workspace_access import (
     WorkspaceScope,
     bind_workspace_scope,
     reset_workspace_scope,
     workspace_sandbox_status,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.prompt_templates import render_template
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.utils.prompt_templates import render_template
 
 
 class _SubagentOrigin(TypedDict):
@@ -528,7 +528,7 @@ class SubagentManager:
 
     def _build_subagent_prompt(self, workspace: Path | None = None) -> str:
         """Build a focused system prompt for the subagent."""
-        from nanobot.agent.skills import SkillsLoader
+        from nucleamind.legacy.agent.skills import SkillsLoader
 
         agent_workspace = self.workspace.expanduser().resolve()
         project_workspace = workspace.expanduser().resolve() if workspace else agent_workspace

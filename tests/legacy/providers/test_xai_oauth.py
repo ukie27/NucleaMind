@@ -9,8 +9,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 import pytest
 
-import nanobot.providers.xai_oauth as xai_oauth
-from nanobot.providers.xai_oauth import (
+import nucleamind.legacy.providers.xai_oauth as xai_oauth
+from nucleamind.legacy.providers.xai_oauth import (
     XAI_CLIENT_ID,
     XAI_OAUTH_SCOPES,
     XAIOAuthError,

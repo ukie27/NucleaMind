@@ -6,27 +6,27 @@ import platform
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.skills import SkillsLoader
-from nanobot.agent.tools import image_generation as image_generation_tools
-from nanobot.agent.tools import mcp as mcp_tools
-from nanobot.agent.tools import sessions as session_tools
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.apps.cli import utils as cli_app_utils
-from nanobot.bus.events import InboundMessage
-from nanobot.runtime_context import (
+from nucleamind.legacy.agent.memory import MemoryStore
+from nucleamind.legacy.agent.skills import SkillsLoader
+from nucleamind.legacy.agent.tools import image_generation as image_generation_tools
+from nucleamind.legacy.agent.tools import mcp as mcp_tools
+from nucleamind.legacy.agent.tools import sessions as session_tools
+from nucleamind.legacy.agent.tools.registry import ToolRegistry
+from nucleamind.legacy.apps.cli import utils as cli_app_utils
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_END,
     RUNTIME_CONTEXT_MESSAGE_META,
     RUNTIME_CONTEXT_TAG,
     RuntimeContextBlock,
     append_runtime_context,
 )
-from nanobot.utils.helpers import (
+from nucleamind.legacy.utils.helpers import (
     detect_image_mime,
     load_bundled_template,
     truncate_text_to_tokens,
 )
-from nanobot.utils.prompt_templates import render_template
+from nucleamind.legacy.utils.prompt_templates import render_template
 
 
 def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:

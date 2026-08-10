@@ -9,7 +9,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nucleamind.legacy.providers.base import LLMResponse, ToolCallRequest
 
 
 @dataclass(slots=True)

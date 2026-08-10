@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.subagent import SubagentManager, SubagentStatus
-from nanobot.agent.tools.filesystem import FileToolsConfig
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ToolsConfig
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.security.workspace_access import build_workspace_scope
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.agent.runner import AgentRunResult
+from nucleamind.legacy.agent.subagent import SubagentManager, SubagentStatus
+from nucleamind.legacy.agent.tools.filesystem import FileToolsConfig
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.config.schema import ToolsConfig
+from nucleamind.legacy.providers.base import GenerationSettings, LLMProvider
+from nucleamind.legacy.security.workspace_access import build_workspace_scope
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 
 def _runtime(provider: LLMProvider) -> LLMRuntime:

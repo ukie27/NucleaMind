@@ -7,11 +7,11 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from nanobot.channels.connect import ChannelConnectError, QueryParams, query_first
-from nanobot.config.loader import load_config
+from nucleamind.legacy.channels.connect import ChannelConnectError, QueryParams, query_first
+from nucleamind.legacy.config.loader import load_config
 
 if TYPE_CHECKING:
-    from nanobot.channels.weixin.runtime import WeixinChannel
+    from nucleamind.legacy.channels.weixin.runtime import WeixinChannel
 
 
 @dataclass(slots=True)
@@ -124,7 +124,7 @@ class WeixinConnectStore:
 
         status_payload = status_data
         status = status_payload.get("status", "")
-        from nanobot.channels.weixin.runtime import MAX_QR_REFRESH_COUNT
+        from nucleamind.legacy.channels.weixin.runtime import MAX_QR_REFRESH_COUNT
 
         if status == "confirmed":
             if self._sessions.get(session_id) is not session:
@@ -273,8 +273,8 @@ class WeixinConnectStore:
 
     @staticmethod
     def _build_channel() -> WeixinChannel:
-        from nanobot.bus.queue import MessageBus
-        from nanobot.channels.weixin.runtime import WeixinChannel
+        from nucleamind.legacy.bus.queue import MessageBus
+        from nucleamind.legacy.channels.weixin.runtime import WeixinChannel
 
         section = getattr(load_config().channels, "weixin", None)
         if section is not None and hasattr(section, "model_dump"):

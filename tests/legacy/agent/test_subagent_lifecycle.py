@@ -7,17 +7,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent import SubagentManager
-from nanobot.agent.hook import AgentHookContext
-from nanobot.agent.runner import AgentRunResult
-from nanobot.agent.subagent import (
+from nucleamind.legacy.agent import SubagentManager
+from nucleamind.legacy.agent.hook import AgentHookContext
+from nucleamind.legacy.agent.runner import AgentRunResult
+from nucleamind.legacy.agent.subagent import (
     SubagentStatus,
     _SubagentHook,
 )
-from nanobot.agent.tools.context import current_request_context
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.agent.tools.context import current_request_context
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.providers.base import GenerationSettings, LLMProvider
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, TypeAlias, cast
 
-from nanobot.runtime_context import public_history_messages
+from nucleamind.legacy.runtime_context import public_history_messages
 
 StreamEventType: TypeAlias = Literal[
     "run.started",

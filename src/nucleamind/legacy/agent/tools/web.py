@@ -17,16 +17,16 @@ import httpx
 from loguru import logger
 from pydantic import Field
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.schema import (
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.context import ToolContext
+from nucleamind.legacy.agent.tools.schema import (
     BooleanSchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.config_base import Base
-from nanobot.utils.helpers import build_image_content_blocks
+from nucleamind.legacy.config_base import Base
+from nucleamind.legacy.utils.helpers import build_image_content_blocks
 
 # Shared constants
 _DEFAULT_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
@@ -110,26 +110,26 @@ def _validate_url(url: str) -> tuple[bool, str]:
 
 def _validate_url_safe(url: str) -> tuple[bool, str]:
     """Validate URL with SSRF protection: scheme, domain, and resolved IP check."""
-    from nanobot.security.network import validate_url_target
+    from nucleamind.legacy.security.network import validate_url_target
 
     return validate_url_target(url)
 
 
 def _resolve_url_safe(url: str) -> tuple[bool, str, tuple[str, ...]]:
     """Validate URL and return the resolved IPs to pin during the request."""
-    from nanobot.security.network import resolve_url_target
+    from nucleamind.legacy.security.network import resolve_url_target
 
     return resolve_url_target(url)
 
 
 def _pinned_dns_transport() -> httpx.AsyncBaseTransport:
-    from nanobot.security.network import PinnedDNSAsyncTransport
+    from nucleamind.legacy.security.network import PinnedDNSAsyncTransport
 
     return PinnedDNSAsyncTransport()
 
 
 def _fetch_client_kwargs(proxy: str | None, timeout: float) -> dict[str, Any]:
-    from nanobot.security.network import httpx_env_proxy_mounts
+    from nucleamind.legacy.security.network import httpx_env_proxy_mounts
 
     kwargs: dict[str, Any] = {"timeout": timeout}
     if proxy:
@@ -143,7 +143,7 @@ def _fetch_client_kwargs(proxy: str | None, timeout: float) -> dict[str, Any]:
 
 
 def _unsafe_url_request_error(exc: BaseException) -> str | None:
-    from nanobot.security.network import UnsafeURLRequestError
+    from nucleamind.legacy.security.network import UnsafeURLRequestError
 
     return str(exc) if isinstance(exc, UnsafeURLRequestError) else None
 
@@ -318,7 +318,7 @@ class WebSearchTool(Tool):
         config_loader: Callable[[], WebSearchConfig] | None = None
         if ctx.provider_snapshot_loader is not None:
             def _load_search_config() -> WebSearchConfig:
-                from nanobot.config.loader import load_config, resolve_config_env_vars
+                from nucleamind.legacy.config.loader import load_config, resolve_config_env_vars
                 return resolve_config_env_vars(load_config()).tools.web.search
             config_loader = _load_search_config
         return cls(

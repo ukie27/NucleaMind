@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.providers.azure_openai_provider import (
+from nucleamind.legacy.providers.azure_openai_provider import (
     AzureOpenAIProvider,
     _AzureTokenProvider,
 )
-from nanobot.providers.base import LLMResponse, ProviderCallContext
+from nucleamind.legacy.providers.base import LLMResponse, ProviderCallContext
 
 # ---------------------------------------------------------------------------
 # Init & validation

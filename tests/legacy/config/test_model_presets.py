@@ -7,9 +7,9 @@ import warnings
 
 import pytest
 
-from nanobot.agent.model_presets import load_model_preset_catalog
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.schema import Config
+from nucleamind.legacy.agent.model_presets import load_model_preset_catalog
+from nucleamind.legacy.config.errors import ConfigLoadError
+from nucleamind.legacy.config.schema import Config
 
 
 def test_resolve_preset_returns_defaults_when_no_preset() -> None:
@@ -51,7 +51,7 @@ def test_agent_timezones_use_packaged_data_without_system_database() -> None:
         """\
         from zoneinfo import TZPATH
 
-        from nanobot.config.schema import Config
+        from nucleamind.legacy.config.schema import Config
 
         assert not TZPATH
         for name in ("UTC", "Asia/Shanghai"):

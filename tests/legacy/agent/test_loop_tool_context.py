@@ -4,17 +4,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import (
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.agent.tools.context import (
     RequestContext,
     bind_request_context,
     current_request_context,
     reset_request_context,
 )
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_META
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.providers.base import LLMResponse, ToolCallRequest
+from nucleamind.legacy.session.turn_continuation import INTERNAL_CONTINUATION_META
 
 
 class _ContextRecordingTool:

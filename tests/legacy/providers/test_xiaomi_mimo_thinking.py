@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.config.schema import ProvidersConfig
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-from nanobot.providers.registry import PROVIDERS
+from nucleamind.legacy.config.schema import ProvidersConfig
+from nucleamind.legacy.providers.openai_compat_provider import OpenAICompatProvider
+from nucleamind.legacy.providers.registry import PROVIDERS
 
 
 def _mimo_spec():

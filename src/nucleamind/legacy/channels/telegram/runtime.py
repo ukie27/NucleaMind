@@ -29,15 +29,15 @@ from telegram.error import BadRequest, NetworkError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.command.builtin import build_help_text
-from nanobot.config.paths import get_media_dir
-from nanobot.config.schema import Base
-from nanobot.security.network import validate_url_target
-from nanobot.utils.helpers import split_message
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.command.builtin import build_help_text
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.security.network import validate_url_target
+from nucleamind.legacy.utils.helpers import split_message
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 # Telegram's actual API limit is 4096; we split raw markdown at 4000 as a

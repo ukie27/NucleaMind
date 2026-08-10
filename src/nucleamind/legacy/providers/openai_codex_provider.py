@@ -14,14 +14,14 @@ import httpx
 from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
 
-from nanobot.providers.base import (
+from nucleamind.legacy.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
     resolve_stream_idle_timeout_s,
 )
-from nanobot.providers.openai_responses import (
+from nucleamind.legacy.providers.openai_responses import (
     ResponsesStreamCapture,
     build_responses_state,
     consume_sse_with_reasoning,

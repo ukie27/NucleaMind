@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from nanobot.providers.base import tool_arguments_json_for_replay
+from nucleamind.legacy.providers.base import tool_arguments_json_for_replay
 
 
 def _as_json_object(value: object) -> dict[str, Any] | None:

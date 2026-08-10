@@ -6,21 +6,21 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
-from nanobot.agent.hook import (
+from nucleamind.legacy.agent.hook import (
     AgentHook,
     AgentHookContext,
     AgentRunHookContext,
     AgentTurnHookContext,
 )
-from nanobot.providers.base import ToolCallRequest
-from nanobot.utils.file_edit_events import (
+from nucleamind.legacy.providers.base import ToolCallRequest
+from nucleamind.legacy.utils.file_edit_events import (
     FileEditTracker,
     build_file_edit_end_event,
     build_file_edit_error_event,
     build_file_edit_start_event,
     prepare_file_edit_trackers,
 )
-from nanobot.utils.progress_events import (
+from nucleamind.legacy.utils.progress_events import (
     invoke_file_edit_progress,
     on_progress_accepts_file_edit_events,
 )

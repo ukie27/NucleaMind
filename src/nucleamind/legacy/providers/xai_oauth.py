@@ -30,8 +30,10 @@ import httpx
 from filelock import FileLock
 from loguru import logger
 
-from nanobot.config.paths import get_data_dir
-from nanobot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
+from nucleamind.legacy.config.paths import get_data_dir
+from nucleamind.legacy.utils.helpers import (
+    _write_text_atomic,  # pyright: ignore[reportPrivateUsage]
+)
 
 XAI_OAUTH_ISSUER = "https://auth.x.ai"
 XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"

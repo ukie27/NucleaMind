@@ -22,14 +22,14 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from nanobot import __logo__
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy import __logo__
+from nucleamind.legacy.bus.outbound_events import (
     ProgressEvent,
     RetryWaitEvent,
     outbound_event_from_message,
 )
-from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
-from nanobot.utils.helpers import sanitize_surrogates as _sanitize_surrogates
+from nucleamind.legacy.cli.stream import StreamRenderer, ThinkingSpinner
+from nucleamind.legacy.utils.helpers import sanitize_surrogates as _sanitize_surrogates
 
 __all__ = [
     "_ReasoningBuffer",
@@ -179,7 +179,7 @@ def _init_prompt_session() -> None:
 
         _saved_term_attrs = termios.tcgetattr(sys.stdin.fileno())
 
-    from nanobot.config.paths import get_cli_history_path
+    from nucleamind.legacy.config.paths import get_cli_history_path
 
     history_file = get_cli_history_path()
     history_file.parent.mkdir(parents=True, exist_ok=True)

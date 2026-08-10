@@ -14,9 +14,9 @@ from typing import Any
 
 import httpx
 
-from nanobot.channels.connect import ChannelConnectError, QueryParams, query_first
-from nanobot.channels.feishu import runtime as feishu
-from nanobot.channels.feishu.instances import DEFAULT_INSTANCE_ID, validate_instance_id
+from nucleamind.legacy.channels.connect import ChannelConnectError, QueryParams, query_first
+from nucleamind.legacy.channels.feishu import runtime as feishu
+from nucleamind.legacy.channels.feishu.instances import DEFAULT_INSTANCE_ID, validate_instance_id
 
 
 @dataclass(slots=True)

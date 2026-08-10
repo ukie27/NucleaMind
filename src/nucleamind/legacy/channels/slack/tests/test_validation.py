@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.channels.slack import validation as slack_validation
-from nanobot.channels.validation import validate_channel_config
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config
+from nucleamind.legacy.channels.slack import validation as slack_validation
+from nucleamind.legacy.channels.validation import validate_channel_config
+from nucleamind.legacy.config.loader import load_config, save_config
+from nucleamind.legacy.config.schema import Config
 
 
 def test_validate_channel_does_not_write_config(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -22,7 +22,7 @@ def test_validate_channel_does_not_write_config(tmp_path, monkeypatch: pytest.Mo
         }
     )
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
     monkeypatch.setattr(slack_validation, "http_post", lambda *_args, **_kwargs: {"ok": True})
 
     result = validate_channel_config(

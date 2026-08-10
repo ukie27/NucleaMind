@@ -8,17 +8,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.tools.cli_apps import CliAppsTool
-from nanobot.agent.tools.context import RequestContext, ToolContext, request_context
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
-from nanobot.agent.tools.image_generation import ImageGenerationError, ImageGenerationTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.search import GrepTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
-from nanobot.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
-from nanobot.security.workspace_access import (
+from nucleamind.legacy.agent.tools.cli_apps import CliAppsTool
+from nucleamind.legacy.agent.tools.context import RequestContext, ToolContext, request_context
+from nucleamind.legacy.agent.tools.filesystem import ReadFileTool, WriteFileTool
+from nucleamind.legacy.agent.tools.image_generation import ImageGenerationError, ImageGenerationTool
+from nucleamind.legacy.agent.tools.message import MessageTool
+from nucleamind.legacy.agent.tools.search import GrepTool
+from nucleamind.legacy.agent.tools.shell import ExecTool
+from nucleamind.legacy.agent.tools.spawn import SpawnTool
+from nucleamind.legacy.apps.cli.service import CliAppManager, CliAppsRuntimeConfig
+from nucleamind.legacy.config.schema import ImageGenerationToolConfig, ProviderConfig, ToolsConfig
+from nucleamind.legacy.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
     WorkspaceScopeError,
     bind_workspace_scope,
@@ -425,9 +425,9 @@ async def test_cli_app_scope_controls_working_dir(
     CliAppManager(workspace=project, data_dir=data_dir)._save_installed(
         {"demo": {"entry_point": "demo-cli"}}
     )
-    monkeypatch.setattr("nanobot.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
+    monkeypatch.setattr("nucleamind.legacy.apps.cli.service.get_runtime_subdir", lambda _name: data_dir)
     monkeypatch.setattr(
-        "nanobot.apps.cli.service.shutil.which",
+        "nucleamind.legacy.apps.cli.service.shutil.which",
         lambda entry: "/usr/bin/demo-cli" if entry == "demo-cli" else None,
     )
 
@@ -437,7 +437,7 @@ async def test_cli_app_scope_controls_working_dir(
         seen["cwd"] = kwargs["cwd"]
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("nanobot.apps.cli.service.subprocess.run", fake_run)
+    monkeypatch.setattr("nucleamind.legacy.apps.cli.service.subprocess.run", fake_run)
     tool = CliAppsTool(
         workspace=tmp_path,
         restrict_to_workspace=True,

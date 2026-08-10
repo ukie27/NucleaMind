@@ -9,10 +9,10 @@ from typing import Any
 import httpx
 import pytest
 
-from nanobot.config.schema import Config
-from nanobot.providers.factory import make_provider
-from nanobot.providers.registry import find_by_name
-from nanobot.providers.xai_grok_provider import (
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.providers.factory import make_provider
+from nucleamind.legacy.providers.registry import find_by_name
+from nucleamind.legacy.providers.xai_grok_provider import (
     DEFAULT_XAI_GROK_MODEL,
     DEFAULT_XAI_GROK_MODELS_URL,
     XAIGrokProvider,
@@ -40,7 +40,7 @@ def _token(access: str = "subscription-token") -> SimpleNamespace:
 
 def _mock_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
+        "nucleamind.legacy.providers.xai_grok_provider.get_xai_oauth_token",
         lambda **_kwargs: _token(),
     )
 
@@ -54,7 +54,7 @@ def _mock_model_capabilities(
         return {"grok-4.5": supports_backend_search}
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider._fetch_xai_model_capabilities",
+        "nucleamind.legacy.providers.xai_grok_provider._fetch_xai_model_capabilities",
         fake_fetch,
     )
 
@@ -84,7 +84,7 @@ async def test_provider_injects_hosted_x_search_and_required_proxy_headers(monke
         calls.append((url, headers, body))
         return "answer [[1]](https://x.com/example/status/1)", [], "stop", {}, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     provider = XAIGrokProvider()
     tools = [
         {
@@ -154,10 +154,10 @@ async def test_explicit_parameterized_x_search_is_preserved_without_catalog_look
         return "ok", [], "stop", {}, None
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider._fetch_xai_model_capabilities",
+        "nucleamind.legacy.providers.xai_grok_provider._fetch_xai_model_capabilities",
         unexpected_catalog_lookup,
     )
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     hosted_tool = {
         "type": "x_search",
         "allowed_x_handles": ["nanobot_ai"],
@@ -217,10 +217,10 @@ async def test_explicit_empty_tools_disables_catalog_lookup_and_hosted_tool(monk
         return "ok", [], "stop", {}, None
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider._fetch_xai_model_capabilities",
+        "nucleamind.legacy.providers.xai_grok_provider._fetch_xai_model_capabilities",
         unexpected_catalog_lookup,
     )
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     provider = XAIGrokProvider(extra_body={"tools": []})
 
     response = await provider.chat(
@@ -256,7 +256,7 @@ async def test_provider_keeps_local_x_search_when_model_does_not_support_hosted_
         bodies.append(body)
         return "ok", [], "stop", {}, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     provider = XAIGrokProvider()
     tools = [
         {
@@ -298,10 +298,10 @@ async def test_provider_fails_closed_and_caches_model_catalog_failure(monkeypatc
         return "ok", [], "stop", {}, None
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider._fetch_xai_model_capabilities",
+        "nucleamind.legacy.providers.xai_grok_provider._fetch_xai_model_capabilities",
         failing_fetch,
     )
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     provider = XAIGrokProvider()
 
     await provider.chat([{"role": "user", "content": "first"}])
@@ -321,7 +321,7 @@ async def test_provider_refreshes_and_retries_exactly_once_after_401(monkeypatch
         return _token("fresh-token" if force_refresh else "stale-token")
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider.get_xai_oauth_token",
+        "nucleamind.legacy.providers.xai_grok_provider.get_xai_oauth_token",
         fake_token,
     )
     request_tokens: list[str] = []
@@ -332,7 +332,7 @@ async def test_provider_refreshes_and_retries_exactly_once_after_401(monkeypatch
             raise _XAIHTTPError("unauthorized", status_code=401, should_retry=False)
         return "ok", [], "stop", {}, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     provider = XAIGrokProvider(proxy="http://127.0.0.1:7890")
 
     response = await provider.chat([{"role": "user", "content": "hello"}])
@@ -358,7 +358,7 @@ async def test_second_401_is_non_retryable_and_prompts_reauthentication(monkeypa
         )
 
     monkeypatch.setattr(
-        "nanobot.providers.xai_grok_provider._request_xai",
+        "nucleamind.legacy.providers.xai_grok_provider._request_xai",
         always_unauthorized,
     )
     provider = XAIGrokProvider()
@@ -382,7 +382,7 @@ async def test_factory_builds_xai_provider_and_applies_explicit_body_overrides(m
         bodies.append(body)
         return "ok", [], "stop", {}, None
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider._request_xai", fake_request)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider._request_xai", fake_request)
     config = Config.model_validate(
         {
             "agents": {
@@ -442,7 +442,7 @@ async def test_raw_response_request_streams_text_usage_and_inline_citations(monk
             timeout=kwargs["timeout"],
         )
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
     deltas: list[str] = []
 
     result = await _request_xai(
@@ -494,7 +494,7 @@ async def test_raw_response_request_streams_hosted_x_search_lifecycle(monkeypatc
             timeout=kwargs["timeout"],
         )
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
     tool_events: list[dict[str, Any]] = []
 
     result = await _request_xai(
@@ -573,7 +573,7 @@ async def test_model_capability_request_uses_subscription_headers(monkeypatch) -
             follow_redirects=kwargs["follow_redirects"],
         )
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
     payload = base64.urlsafe_b64encode(
         json.dumps({"sub": "user-42", "email": "user@example.com"}).encode()
     ).decode().rstrip("=")
@@ -617,7 +617,7 @@ async def test_raw_response_error_preserves_bounded_redacted_body(monkeypatch) -
             timeout=kwargs["timeout"],
         )
 
-    monkeypatch.setattr("nanobot.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
+    monkeypatch.setattr("nucleamind.legacy.providers.xai_grok_provider.httpx.AsyncClient", fake_client)
 
     with pytest.raises(_XAIHTTPError) as caught:
         await _request_xai(

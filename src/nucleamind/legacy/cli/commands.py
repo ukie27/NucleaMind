@@ -45,17 +45,17 @@ from rich.markup import escape  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich.text import Text  # noqa: E402
 
-from nanobot import __logo__, __version__  # noqa: E402
-from nanobot import optional_features as feature_support  # noqa: E402
-from nanobot.agent.hooks import create_file_edit_activity_hook  # noqa: E402
-from nanobot.agent.loop import AgentLoop  # noqa: E402
-from nanobot.cli import terminal as cli_terminal  # noqa: E402
-from nanobot.cli.agent import agent  # noqa: E402
-from nanobot.cli.gateway import create_gateway_app  # noqa: E402
-from nanobot.cli.gateway_runtime import _run_gateway  # noqa: E402
-from nanobot.cli.log_control import _set_nanobot_logs  # noqa: E402
-from nanobot.cli.provider import provider_app  # noqa: E402
-from nanobot.cli.runtime_config import (  # noqa: E402
+from nucleamind.legacy import __logo__, __version__  # noqa: E402
+from nucleamind.legacy import optional_features as feature_support  # noqa: E402
+from nucleamind.legacy.agent.hooks import create_file_edit_activity_hook  # noqa: E402
+from nucleamind.legacy.agent.loop import AgentLoop  # noqa: E402
+from nucleamind.legacy.cli import terminal as cli_terminal  # noqa: E402
+from nucleamind.legacy.cli.agent import agent  # noqa: E402
+from nucleamind.legacy.cli.gateway import create_gateway_app  # noqa: E402
+from nucleamind.legacy.cli.gateway_runtime import _run_gateway  # noqa: E402
+from nucleamind.legacy.cli.log_control import _set_nanobot_logs  # noqa: E402
+from nucleamind.legacy.cli.provider import provider_app  # noqa: E402
+from nucleamind.legacy.cli.runtime_config import (  # noqa: E402
     _load_inspection_config,
     _load_runtime_config,
     _model_display,
@@ -63,16 +63,18 @@ from nanobot.cli.runtime_config import (  # noqa: E402
     _print_model_setup_steps,
     _provider_setup_error,
 )
-from nanobot.cli.webui import webui  # noqa: E402
-from nanobot.cli.webui_support import (  # noqa: E402
+from nucleamind.legacy.cli.webui import webui  # noqa: E402
+from nucleamind.legacy.cli.webui_support import (  # noqa: E402
     _prepare_webui_bundle_for_gateway,
     _validate_gateway_startup,
 )
-from nanobot.config.paths import get_workspace_path  # noqa: E402
-from nanobot.config.schema import Config  # noqa: E402
-from nanobot.security.network import is_loopback_host  # noqa: E402
-from nanobot.utils.helpers import sanitize_surrogates as _sanitize_surrogates  # noqa: E402,F401
-from nanobot.utils.helpers import (  # noqa: E402
+from nucleamind.legacy.config.paths import get_workspace_path  # noqa: E402
+from nucleamind.legacy.config.schema import Config  # noqa: E402
+from nucleamind.legacy.security.network import is_loopback_host  # noqa: E402
+from nucleamind.legacy.utils.helpers import (  # noqa: E402
+    sanitize_surrogates as _sanitize_surrogates,  # noqa: F401
+)
+from nucleamind.legacy.utils.helpers import (  # noqa: E402
     sync_workspace_templates,
 )
 
@@ -118,8 +120,13 @@ def onboard(
     non_interactive_refresh: bool = typer.Option(False, "--refresh", help="Refresh config, preserving existing settings without prompting"),
 ):
     """Initialize nanobot configuration and workspace."""
-    from nanobot.config.loader import get_config_path, load_config, save_config, set_config_path
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.config.loader import (
+        get_config_path,
+        load_config,
+        save_config,
+        set_config_path,
+    )
+    from nucleamind.legacy.config.schema import Config
 
     explicit_config = config is not None
     if config:
@@ -173,7 +180,7 @@ def onboard(
 
     # Run interactive wizard if enabled
     if wizard:
-        from nanobot.cli.onboard import run_onboard
+        from nucleamind.legacy.cli.onboard import run_onboard
 
         try:
             result = run_onboard(initial_config=loaded_config)
@@ -209,9 +216,9 @@ def _onboard_plugins(config_path: Path) -> None:
     """Inject default config for all discovered channels (built-in + plugins)."""
     import json
 
-    from nanobot.channels.contracts import channel_default_config
-    from nanobot.channels.registry import discover_plugins
-    from nanobot.config.loader import merge_missing_defaults
+    from nucleamind.legacy.channels.contracts import channel_default_config
+    from nucleamind.legacy.channels.registry import discover_plugins
+    from nucleamind.legacy.config.loader import merge_missing_defaults
 
     plugins = discover_plugins()
     if not plugins:
@@ -287,7 +294,7 @@ def trigger(
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
     """Deliver a local trigger message to its bound chat session."""
-    from nanobot.triggers.local_store import (
+    from nucleamind.legacy.triggers.local_store import (
         LocalTriggerStore,
         TriggerDisabledError,
         TriggerNotFoundError,
@@ -329,10 +336,10 @@ def serve(
         console.print("[red]aiohttp is required. Install with: nanobot plugins enable api[/red]")
         raise typer.Exit(1)
 
-    from nanobot.api.server import create_app
-    from nanobot.bus.queue import MessageBus
-    from nanobot.providers.image_generation import image_gen_provider_configs
-    from nanobot.session.manager import SessionManager
+    from nucleamind.legacy.api.server import create_app
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.providers.image_generation import image_gen_provider_configs
+    from nucleamind.legacy.session.manager import SessionManager
 
     _set_nanobot_logs(verbose)
 
@@ -445,7 +452,7 @@ def channels_status(
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
     """Show channel status."""
-    from nanobot.channels.registry import discover_all
+    from nucleamind.legacy.channels.registry import discover_all
 
     _, loaded = _load_inspection_config(config=config)
 
@@ -476,8 +483,8 @@ def channels_login(
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
     """Authenticate with a channel via QR code or other interactive login."""
-    from nanobot.bus.queue import MessageBus
-    from nanobot.channels.registry import discover_all
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.channels.registry import discover_all
 
     _, loaded = _load_inspection_config(config=config)
     channel_cfg: Any = getattr(loaded.channels, channel_name, None) or {}
@@ -513,8 +520,8 @@ def plugins_list(
     config_path: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
     """List optional nanobot features."""
-    from nanobot.channels.registry import discover_plugins
-    from nanobot.config.loader import load_config, set_config_path
+    from nucleamind.legacy.channels.registry import discover_plugins
+    from nucleamind.legacy.config.loader import load_config, set_config_path
 
     resolved_config_path = Path(config_path).expanduser().resolve() if config_path else None
     if resolved_config_path is not None:
@@ -534,7 +541,7 @@ def plugins_enable(
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show optional package install logs"),
 ):
     """Enable a nanobot feature."""
-    from nanobot.config.loader import get_config_path, set_config_path
+    from nucleamind.legacy.config.loader import get_config_path, set_config_path
 
     resolved_config_path = Path(config_path).expanduser().resolve() if config_path else None
     if resolved_config_path is not None:
@@ -562,7 +569,7 @@ def plugins_disable(
     config_path: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
     """Disable a nanobot channel feature."""
-    from nanobot.config.loader import get_config_path, set_config_path
+    from nucleamind.legacy.config.loader import get_config_path, set_config_path
 
     resolved_config_path = Path(config_path).expanduser().resolve() if config_path else None
     if resolved_config_path is not None:
@@ -602,9 +609,9 @@ def status(
     )
 
     if config_path.exists():
-        from nanobot.config.errors import ConfigLoadError
-        from nanobot.config.loader import resolve_config_env_vars, resolve_env_refs
-        from nanobot.providers.registry import PROVIDERS
+        from nucleamind.legacy.config.errors import ConfigLoadError
+        from nucleamind.legacy.config.loader import resolve_config_env_vars, resolve_env_refs
+        from nucleamind.legacy.providers.registry import PROVIDERS
 
         _model, _preset_tag = _model_display(loaded)
         console.print(f"Model: {_model}{_preset_tag}")

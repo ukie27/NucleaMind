@@ -13,30 +13,30 @@ from typing import Any, cast
 
 from loguru import logger
 
-from nanobot.agent.context_governance import (
+from nucleamind.legacy.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
 )
-from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
-from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
-from nanobot.providers.base import (
+from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from nucleamind.legacy.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nucleamind.legacy.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
     ToolCallRequest,
 )
-from nanobot.providers.conversation_state import (
+from nucleamind.legacy.providers.conversation_state import (
     ProviderConversationStateController,
     allows_conversation_message_merge,
 )
-from nanobot.runtime_context import (
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     detach_runtime_context,
     reattach_runtime_context,
 )
-from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.utils.helpers import (
+from nucleamind.legacy.session.history_visibility import is_hidden_history_message
+from nucleamind.legacy.utils.helpers import (
     IncrementalThinkExtractor,
     build_assistant_message,
     estimate_message_tokens,
@@ -45,9 +45,9 @@ from nanobot.utils.helpers import (
     strip_reasoning_tags,
     strip_think,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.prompt_templates import render_template
-from nanobot.utils.runtime import (
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.utils.prompt_templates import render_template
+from nucleamind.legacy.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     build_budget_exhausted_finalization_message,
     build_finalization_retry_message,

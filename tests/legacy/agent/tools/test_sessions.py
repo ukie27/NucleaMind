@@ -8,13 +8,13 @@ from datetime import datetime
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.loader import ToolLoader
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.sessions import ReadSessionTool, SearchSessionsTool
-from nanobot.runtime_context import RuntimeContextBlock, append_runtime_context
-from nanobot.session.manager import SessionManager
-from nanobot.webui.transcript import append_transcript_object
+from nucleamind.legacy.agent.tools.context import RequestContext, request_context
+from nucleamind.legacy.agent.tools.loader import ToolLoader
+from nucleamind.legacy.agent.tools.registry import ToolRegistry
+from nucleamind.legacy.agent.tools.sessions import ReadSessionTool, SearchSessionsTool
+from nucleamind.legacy.runtime_context import RuntimeContextBlock, append_runtime_context
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.transcript import append_transcript_object
 
 
 def _save_session(
@@ -83,8 +83,8 @@ async def test_search_sessions_reads_the_full_webui_transcript_after_compaction(
     monkeypatch,
 ):
     webui_dir = tmp_path / "webui"
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr("nanobot.webui.session_list_index.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.session_list_index.get_webui_dir", lambda: webui_dir)
     manager = SessionManager(tmp_path)
     _save_session(
         manager,
@@ -109,8 +109,8 @@ async def test_search_sessions_reads_the_full_webui_transcript_after_compaction(
 @pytest.mark.asyncio
 async def test_search_sessions_has_no_hidden_content_scan_cutoff(tmp_path, monkeypatch):
     webui_dir = tmp_path / "webui"
-    monkeypatch.setattr("nanobot.webui.transcript.get_webui_dir", lambda: webui_dir)
-    monkeypatch.setattr("nanobot.webui.session_list_index.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.transcript.get_webui_dir", lambda: webui_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.session_list_index.get_webui_dir", lambda: webui_dir)
     manager = SessionManager(tmp_path)
     for index in range(200):
         _save_session(

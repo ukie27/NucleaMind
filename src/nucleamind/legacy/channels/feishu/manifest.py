@@ -1,10 +1,10 @@
 """Dependency-free Feishu/Lark management contract."""
 
-from nanobot.channels._manifest import DIRECT_GROUP_POLICIES, field, required_fields
-from nanobot.channels.contracts import ChannelSetupSpec
-from nanobot.channels.feishu.instances import FEISHU_MANAGEMENT
-from nanobot.channels.feishu.validation import validate
-from nanobot.channels.plugin import ChannelPlugin
+from nucleamind.legacy.channels._manifest import DIRECT_GROUP_POLICIES, field, required_fields
+from nucleamind.legacy.channels.contracts import ChannelSetupSpec
+from nucleamind.legacy.channels.feishu.instances import FEISHU_MANAGEMENT
+from nucleamind.legacy.channels.feishu.validation import validate
+from nucleamind.legacy.channels.plugin import ChannelPlugin
 
 SETUP_SPEC = ChannelSetupSpec(
     fields={

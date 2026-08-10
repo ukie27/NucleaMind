@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 def _read_pyproject_version() -> str | None:
     """Read the source-tree version when package metadata is unavailable."""
-    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
     if not pyproject.exists():
         return None
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
@@ -45,7 +45,7 @@ def _read_pyproject_version() -> str | None:
 
 def _resolve_version() -> str:
     try:
-        return _pkg_version("nanobot-ai")
+        return _pkg_version("nucleamind")
     except PackageNotFoundError:
         # Source checkouts often import nanobot without installed dist-info.
         return _read_pyproject_version() or "0.3.0"

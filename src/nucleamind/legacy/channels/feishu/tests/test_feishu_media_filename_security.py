@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.channels.feishu import runtime as feishu_module
-from nanobot.channels.feishu.runtime import FeishuChannel
+from nucleamind.legacy.channels.feishu import runtime as feishu_module
+from nucleamind.legacy.channels.feishu.runtime import FeishuChannel
 
 
 @pytest.mark.asyncio

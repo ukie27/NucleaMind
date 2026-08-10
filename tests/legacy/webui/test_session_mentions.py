@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 
-from nanobot.session.manager import SessionManager
-from nanobot.webui.session_access import (
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.session_access import (
     WebuiSessionAccess,
     session_mentions_runtime_context,
 )
-from nanobot.webui.transcript import normalize_session_mentions_metadata
+from nucleamind.legacy.webui.transcript import normalize_session_mentions_metadata
 
 
 def _save_session(manager: SessionManager, key: str, title: str) -> None:

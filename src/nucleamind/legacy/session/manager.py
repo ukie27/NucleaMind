@@ -16,13 +16,13 @@ from weakref import WeakValueDictionary
 
 from loguru import logger
 
-from nanobot.config.paths import get_legacy_sessions_dir
-from nanobot.providers.base import ProviderConversationState
-from nanobot.runtime_context import (
+from nucleamind.legacy.config.paths import get_legacy_sessions_dir
+from nucleamind.legacy.providers.base import ProviderConversationState
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     public_history_message,
 )
-from nanobot.utils.helpers import (
+from nucleamind.legacy.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
     estimate_message_tokens,
@@ -31,7 +31,7 @@ from nanobot.utils.helpers import (
     safe_filename,
     strip_think,
 )
-from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
+from nucleamind.legacy.utils.subagent_channel_display import scrub_subagent_announce_body
 
 FILE_MAX_MESSAGES = 2000
 SESSION_CACHE_MAX_SIZE = 128

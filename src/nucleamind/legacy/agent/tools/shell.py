@@ -17,9 +17,9 @@ from typing import Any
 from loguru import logger
 from pydantic import Field
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_session_key
-from nanobot.agent.tools.exec_session import (
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.context import ToolContext, current_request_session_key
+from nucleamind.legacy.agent.tools.exec_session import (
     DEFAULT_EXEC_SESSION_MANAGER,
     DEFAULT_MAX_OUTPUT_CHARS,
     DEFAULT_YIELD_MS,
@@ -29,17 +29,20 @@ from nanobot.agent.tools.exec_session import (
     clamp_session_int,
     format_session_poll,
 )
-from nanobot.agent.tools.sandbox import wrap_command
-from nanobot.agent.tools.schema import (
+from nucleamind.legacy.agent.tools.sandbox import wrap_command
+from nucleamind.legacy.agent.tools.schema import (
     BooleanSchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.config.paths import get_media_dir
-from nanobot.config_base import Base
-from nanobot.security.workspace_access import current_scope_allows_loopback, current_tool_workspace
-from nanobot.security.workspace_policy import is_path_within
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config_base import Base
+from nucleamind.legacy.security.workspace_access import (
+    current_scope_allows_loopback,
+    current_tool_workspace,
+)
+from nucleamind.legacy.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -795,7 +798,7 @@ class ExecTool(Tool):
             if self.allow_patterns:
                 return ToolResult.error("Error: Command blocked by allowlist filter (not in allowlist)")
 
-        from nanobot.security.network import contains_internal_url
+        from nucleamind.legacy.security.network import contains_internal_url
         if contains_internal_url(
             cmd,
             allow_loopback=current_scope_allows_loopback(

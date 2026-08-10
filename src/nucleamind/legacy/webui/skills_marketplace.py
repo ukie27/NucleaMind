@@ -17,9 +17,9 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from nanobot.agent.skills import SkillsLoader
-from nanobot.security.network import PinnedDNSAsyncTransport
-from nanobot.security.workspace_policy import WorkspaceBoundaryError, require_path_within
+from nucleamind.legacy.agent.skills import SkillsLoader
+from nucleamind.legacy.security.network import PinnedDNSAsyncTransport
+from nucleamind.legacy.security.workspace_policy import WorkspaceBoundaryError, require_path_within
 
 _PROVIDER_ALL = "all"
 _PROVIDER_SKILLS_SH = "skills_sh"

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.webui.dev import (
+from nucleamind.legacy.webui.dev import (
     WebUIDevError,
     WebUIDevServer,
     run_webui_dev_server,
@@ -75,7 +75,7 @@ def test_start_webui_dev_server_uses_vite_directly_and_sets_proxy_target(
         return process
 
     monkeypatch.setattr(
-        "nanobot.webui.dev.shutil.which",
+        "nucleamind.legacy.webui.dev.shutil.which",
         lambda name: "node" if name == "node" else None,
     )
 
@@ -167,7 +167,7 @@ def test_dev_server_context_stops_the_child(monkeypatch) -> None:
     server = type("Server", (), {"process": process})()
     stopped: list[bool] = []
     server.stop = lambda: stopped.append(True)
-    monkeypatch.setattr("nanobot.webui.dev.start_webui_dev_server", lambda **_kwargs: server)
+    monkeypatch.setattr("nucleamind.legacy.webui.dev.start_webui_dev_server", lambda **_kwargs: server)
 
     with run_webui_dev_server(target_url="unused", browser_url="unused") as running:
         assert running is server

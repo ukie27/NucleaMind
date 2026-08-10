@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import Field
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.command.builtin import build_help_text
-from nanobot.config.paths import get_media_dir
-from nanobot.config.schema import Base
-from nanobot.utils.helpers import safe_filename, split_message
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.command.builtin import build_help_text
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.utils.helpers import safe_filename, split_message
 
 DISCORD_AVAILABLE = importlib.util.find_spec("discord") is not None
 if TYPE_CHECKING:

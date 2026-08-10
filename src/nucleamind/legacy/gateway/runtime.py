@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nanobot.config.paths import get_data_dir
-from nanobot.process_runtime import (
+from nucleamind.legacy.config.paths import get_data_dir
+from nucleamind.legacy.process_runtime import (
     ManagedProcessRuntime,
     ProcessResult,
     ProcessRuntimePaths,

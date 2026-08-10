@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.command import CommandContext
-from nanobot.config.schema import AgentDefaults, Config
-from nanobot.providers.base import LLMResponse
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.command import CommandContext
+from nucleamind.legacy.config.schema import AgentDefaults, Config
+from nucleamind.legacy.providers.base import LLMResponse
 
 
 def _make_loop(
@@ -172,7 +172,7 @@ class TestSessionTTLConfig:
 
     def test_session_file_cap_is_internal_constant(self):
         """Session file cap should remain an internal constant, not a config field."""
-        from nanobot.session.manager import FILE_MAX_MESSAGES
+        from nucleamind.legacy.session.manager import FILE_MAX_MESSAGES
         assert FILE_MAX_MESSAGES == 2000
 
 
@@ -182,7 +182,7 @@ class TestIdleScanThrottling:
     def test_configured_idle_scan_interval_throttles_checks(self, tmp_path, monkeypatch):
         """The configured interval should reach the loop and gate session scans."""
         ticks = iter((1_000.0, 1_000.0, 1_009.999, 1_010.0))
-        monkeypatch.setattr("nanobot.agent.loop.time.monotonic", lambda: next(ticks))
+        monkeypatch.setattr("nucleamind.legacy.agent.loop.time.monotonic", lambda: next(ticks))
         config = Config.model_validate({
             "agents": {
                 "defaults": {
@@ -206,7 +206,7 @@ class TestIdleScanThrottling:
 
     def test_zero_idle_scan_interval_checks_every_tick(self, tmp_path, monkeypatch):
         """An explicit zero should leave each idle tick eligible to scan."""
-        monkeypatch.setattr("nanobot.agent.loop.time.monotonic", lambda: 1_000.0)
+        monkeypatch.setattr("nucleamind.legacy.agent.loop.time.monotonic", lambda: 1_000.0)
         loop = _make_loop(tmp_path)
         loop.auto_compact.check_expired = MagicMock()
 
@@ -267,11 +267,11 @@ class TestAgentLoopTTLParam:
             await loop._process_message(msg)
 
         session = loop.sessions.get_or_create("cli:direct")
-        from nanobot.session.manager import FILE_MAX_MESSAGES
+        from nucleamind.legacy.session.manager import FILE_MAX_MESSAGES
         assert len(session.messages) <= FILE_MAX_MESSAGES
 
     def test_session_enforce_file_cap_skips_archive_when_dropped_prefix_already_consolidated(self, tmp_path):
-        from nanobot.session.manager import Session
+        from nucleamind.legacy.session.manager import Session
         archive_fn = MagicMock()
         session = Session(key="cli:direct")
         for i in range(8):
@@ -284,7 +284,7 @@ class TestAgentLoopTTLParam:
         archive_fn.assert_not_called()
 
     def test_session_enforce_file_cap_archives_only_unconsolidated_dropped_prefix(self, tmp_path):
-        from nanobot.session.manager import Session
+        from nucleamind.legacy.session.manager import Session
         archive_fn = MagicMock()
         session = Session(key="cli:direct")
         for i in range(8):

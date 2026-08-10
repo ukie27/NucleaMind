@@ -10,15 +10,15 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.mattermost.manifest import SETUP_SPEC
-from nanobot.channels.mattermost.runtime import (
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.mattermost.manifest import SETUP_SPEC
+from nucleamind.legacy.channels.mattermost.runtime import (
     MATTERMOST_MAX_MESSAGE_LEN,
     MattermostChannel,
     MattermostConfig,
 )
-from nanobot.pairing import PAIRING_CODE_META_KEY
+from nucleamind.legacy.pairing import PAIRING_CODE_META_KEY
 
 
 class _FakeHTTPClient:
@@ -550,8 +550,8 @@ async def test_send_with_file_upload():
         "file_infos": [{"id": "file_abc", "name": "test.txt"}],
     })
 
-    with patch("nanobot.channels.mattermost.runtime.Path.exists", return_value=True):
-        with patch("nanobot.channels.mattermost.runtime.Path.read_bytes", return_value=b"data"):
+    with patch("nucleamind.legacy.channels.mattermost.runtime.Path.exists", return_value=True):
+        with patch("nucleamind.legacy.channels.mattermost.runtime.Path.read_bytes", return_value=b"data"):
             msg = OutboundMessage(
                 channel="mattermost",
                 chat_id="chan_1",
@@ -1045,7 +1045,7 @@ async def test_dm_allowlist_with_username_match():
 @pytest.mark.asyncio
 async def test_dm_allowlist_accepts_pairing_approval():
     channel, fake = _make_channel({"dm": {"policy": "allowlist", "allowFrom": ["u_allowed"]}})
-    with patch("nanobot.channels.mattermost.runtime.is_approved", return_value=True):
+    with patch("nucleamind.legacy.channels.mattermost.runtime.is_approved", return_value=True):
         assert await channel._is_allowed("u_paired", "dm_chan", "dm") is True
 
 
@@ -1113,7 +1113,7 @@ def test_is_mentioned_no_username():
 
 
 def test_message_splitting():
-    from nanobot.utils.helpers import split_message
+    from nucleamind.legacy.utils.helpers import split_message
     short = "short message"
     assert split_message(short, MATTERMOST_MAX_MESSAGE_LEN) == [short]
 

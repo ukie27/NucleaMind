@@ -15,7 +15,7 @@ from typing import Any, cast
 
 from loguru import logger
 
-from nanobot.config.paths import get_webui_dir
+from nucleamind.legacy.config.paths import get_webui_dir
 
 WEBUI_SIDEBAR_STATE_SCHEMA_VERSION = 1
 _MAX_STATE_FILE_BYTES = 256 * 1024

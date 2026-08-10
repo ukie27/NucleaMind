@@ -3,7 +3,7 @@
 This module owns nanobot's transcription behavior: config resolution,
 legacy channel fallback, upload validation, temporary-file handling, and
 dispatch to provider adapters. It deliberately does not know provider-specific
-HTTP details; those live in ``nanobot.providers.transcription``.
+HTTP details; those live in ``nucleamind.legacy.providers.transcription``.
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.audio.transcription_registry import (
+from nucleamind.legacy.audio.transcription_registry import (
     get_transcription_provider,
     resolve_transcription_provider,
 )
-from nanobot.config.loader import resolve_env_refs
-from nanobot.config.paths import get_media_dir
-from nanobot.config.schema import Config, ProviderConfig
-from nanobot.providers.registry import find_by_name
-from nanobot.utils.media_decode import FileSizeExceeded, save_base64_data_url
+from nucleamind.legacy.config.loader import resolve_env_refs
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config.schema import Config, ProviderConfig
+from nucleamind.legacy.providers.registry import find_by_name
+from nucleamind.legacy.utils.media_decode import FileSizeExceeded, save_base64_data_url
 
 TranscriptionProviderName = str
 

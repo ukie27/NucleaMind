@@ -7,10 +7,10 @@ from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
-from nanobot.agent import model_presets as preset_helpers
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.factory import ProviderSnapshot, build_provider_snapshot
-from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
+from nucleamind.legacy.agent import model_presets as preset_helpers
+from nucleamind.legacy.config.schema import Config, ModelPresetConfig
+from nucleamind.legacy.providers.factory import ProviderSnapshot, build_provider_snapshot
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
 
 class ModelRuntimeResolver:

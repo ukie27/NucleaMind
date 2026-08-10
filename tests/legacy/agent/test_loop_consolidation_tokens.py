@@ -2,15 +2,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import nanobot.agent.memory as memory_module
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse
-from nanobot.session.manager import replay_max_messages_for_context
+import nucleamind.legacy.agent.memory as memory_module
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.providers.base import LLMResponse
+from nucleamind.legacy.session.manager import replay_max_messages_for_context
 
 
 def _make_loop(tmp_path, *, estimated_tokens: int, context_window_tokens: int) -> AgentLoop:
-    from nanobot.providers.base import GenerationSettings
+    from nucleamind.legacy.providers.base import GenerationSettings
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings(max_tokens=0)

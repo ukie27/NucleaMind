@@ -30,13 +30,13 @@ import httpx
 from loguru import logger
 from pydantic import Field, model_validator
 
-from nanobot import __version__
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_media_dir, get_runtime_subdir
-from nanobot.config.schema import Base
+from nucleamind.legacy import __version__
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_media_dir, get_runtime_subdir
+from nucleamind.legacy.config.schema import Base
 
 # ---------------------------------------------------------------------------
 # Protocol constants (from openclaw-weixin types.ts)

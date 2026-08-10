@@ -2,8 +2,14 @@
 
 from typing import Any
 
-from nanobot.channels.contracts import ChannelValidationContext
-from nanobot.channels.validation import check, enabled, official_action, payload, string_value
+from nucleamind.legacy.channels.contracts import ChannelValidationContext
+from nucleamind.legacy.channels.validation import (
+    check,
+    enabled,
+    official_action,
+    payload,
+    string_value,
+)
 
 
 def validate(values: dict[str, Any], _context: ChannelValidationContext) -> dict[str, Any]:

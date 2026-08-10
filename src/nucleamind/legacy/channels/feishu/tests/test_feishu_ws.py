@@ -4,7 +4,7 @@ import asyncio
 import threading
 from typing import Any
 
-from nanobot.channels.feishu.websocket import FeishuWsRunner
+from nucleamind.legacy.channels.feishu.websocket import FeishuWsRunner
 
 
 class _CleanCloseError(Exception):

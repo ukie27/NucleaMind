@@ -5,7 +5,7 @@ COPY webui/package.json webui/package-lock.json ./webui/
 WORKDIR /app/webui
 RUN npm ci
 COPY webui/ ./
-RUN mkdir -p /app/nanobot/web && npm run build
+RUN mkdir -p /app/src/nucleamind/legacy/web && npm run build
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
@@ -25,7 +25,7 @@ RUN uv venv --seed "$VIRTUAL_ENV"
 # hook from hatch_build.py even for this metadata-only install.
 ARG NANOBOT_EXTRAS=
 COPY pyproject.toml README.md LICENSE THIRD_PARTY_NOTICES.md hatch_build.py ./
-RUN mkdir -p nanobot && touch nanobot/__init__.py && \
+RUN mkdir -p src/nucleamind && touch src/nucleamind/__init__.py && \
     if [ -n "$NANOBOT_EXTRAS" ]; then \
         NANOBOT_SKIP_WEBUI_BUILD=1 uv pip install \
             --python "$VIRTUAL_ENV/bin/python" --no-cache ".[${NANOBOT_EXTRAS}]"; \
@@ -33,12 +33,12 @@ RUN mkdir -p nanobot && touch nanobot/__init__.py && \
         NANOBOT_SKIP_WEBUI_BUILD=1 uv pip install \
             --python "$VIRTUAL_ENV/bin/python" --no-cache .; \
     fi && \
-    rm -rf nanobot
+    rm -rf src
 
 # Copy the full source and install
-COPY nanobot/ nanobot/
+COPY src/ src/
 COPY scripts/install_channel_dependencies.py scripts/
-COPY --from=webui-builder /app/nanobot/web/dist/ nanobot/web/dist/
+COPY --from=webui-builder /app/src/nucleamind/legacy/web/dist/ src/nucleamind/legacy/web/dist/
 RUN NANOBOT_SKIP_WEBUI_BUILD=1 uv pip install --python "$VIRTUAL_ENV/bin/python" --no-cache .
 
 # Preinstall selected channel dependencies from their manifests. A comma-separated
@@ -53,7 +53,7 @@ RUN useradd -m -u 1000 -s /bin/bash nanobot && \
     mkdir -p /home/nanobot/.nanobot && \
     chown -R nanobot:nanobot /home/nanobot /app/.venv
 
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 # Start as root so the entrypoint can fix ownership of a mounted data directory

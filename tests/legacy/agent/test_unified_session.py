@@ -19,16 +19,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.command.builtin import cmd_new, register_builtin_commands
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import AgentDefaults, Config
-from nanobot.providers.base import GenerationSettings
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.session.manager import Session, SessionManager
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.command.builtin import cmd_new, register_builtin_commands
+from nucleamind.legacy.command.router import CommandContext, CommandRouter
+from nucleamind.legacy.config.schema import AgentDefaults, Config
+from nucleamind.legacy.providers.base import GenerationSettings
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
+from nucleamind.legacy.session.manager import Session, SessionManager
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,8 +40,8 @@ def _make_loop(tmp_path: Path, unified_session: bool = False) -> AgentLoop:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
 
-    with patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr:
+    with patch("nucleamind.legacy.agent.loop.SessionManager"), \
+         patch("nucleamind.legacy.agent.loop.SubagentManager") as mock_sub_mgr:
         mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(
             bus=bus,
@@ -197,7 +197,7 @@ class TestUnifiedSessionConfig:
 
     def test_onboard_generated_config_contains_unified_session(self, tmp_path: Path):
         """save_config() writes 'unifiedSession' into config.json (simulates nanobot onboard)."""
-        from nanobot.config.loader import save_config
+        from nucleamind.legacy.config.loader import save_config
 
         config = Config()
         config_path = tmp_path / "config.json"
@@ -329,7 +329,7 @@ class TestConsolidationUnaffectedByUnifiedSession:
     @pytest.mark.asyncio
     async def test_consolidation_skips_empty_session_for_unified_key(self):
         """Empty unified:default session → consolidation exits immediately, archive not called."""
-        from nanobot.agent.memory import Consolidator, MemoryStore
+        from nucleamind.legacy.agent.memory import Consolidator, MemoryStore
 
         store = MagicMock(spec=MemoryStore)
         mock_provider = MagicMock()
@@ -359,7 +359,7 @@ class TestConsolidationUnaffectedByUnifiedSession:
     async def test_consolidation_behaviour_identical_for_any_key(self):
         """archive call count is the same for 'telegram:123' and 'unified:default'
         under identical token conditions."""
-        from nanobot.agent.memory import Consolidator, MemoryStore
+        from nucleamind.legacy.agent.memory import Consolidator, MemoryStore
 
         archive_calls: dict[str, int] = {}
 
@@ -394,7 +394,7 @@ class TestConsolidationUnaffectedByUnifiedSession:
     async def test_consolidation_triggers_when_over_budget_unified_key(self):
         """When tokens exceed budget, consolidation attempts to find a boundary —
         behaviour is identical to any other session key."""
-        from nanobot.agent.memory import Consolidator, MemoryStore
+        from nucleamind.legacy.agent.memory import Consolidator, MemoryStore
 
         store = MagicMock(spec=MemoryStore)
         mock_provider = MagicMock()
@@ -466,7 +466,7 @@ class TestStopCommandWithUnifiedSession:
     @pytest.mark.asyncio
     async def test_stop_command_finds_task_in_unified_mode(self, tmp_path: Path):
         """cmd_stop can cancel tasks when unified_session=True."""
-        from nanobot.command.builtin import cmd_stop
+        from nucleamind.legacy.command.builtin import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 
@@ -498,7 +498,7 @@ class TestStopCommandWithUnifiedSession:
     @pytest.mark.asyncio
     async def test_stop_command_uses_effective_key_without_session_override(self, tmp_path: Path):
         """Priority /stop must cancel the unified session even before dispatch rewrites the message."""
-        from nanobot.command.builtin import cmd_stop
+        from nucleamind.legacy.command.builtin import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 
@@ -523,7 +523,7 @@ class TestStopCommandWithUnifiedSession:
     @pytest.mark.asyncio
     async def test_stop_command_cross_channel_in_unified_mode(self, tmp_path: Path):
         """In unified mode, /stop from one channel cancels tasks from another channel."""
-        from nanobot.command.builtin import cmd_stop
+        from nucleamind.legacy.command.builtin import cmd_stop
 
         loop = _make_loop(tmp_path, unified_session=True)
 

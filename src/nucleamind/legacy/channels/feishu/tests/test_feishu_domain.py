@@ -1,8 +1,8 @@
 """Tests for Feishu/Lark domain configuration."""
 from unittest.mock import MagicMock
 
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.feishu.runtime import FeishuChannel, FeishuConfig
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.feishu.runtime import FeishuChannel, FeishuConfig
 
 
 def _make_channel(domain: str = "feishu") -> FeishuChannel:

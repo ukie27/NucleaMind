@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.channels.registry import load_channel_plugin
-from nanobot.optional_features import (
+from nucleamind.legacy.channels.registry import load_channel_plugin
+from nucleamind.legacy.optional_features import (
     OptionalFeatureError,
     disable_optional_feature,
     enable_optional_feature,
     optional_features_payload,
 )
-from nanobot.webui.http_utils import query_first
+from nucleamind.legacy.webui.http_utils import query_first
 
 QueryParams = dict[str, list[str]]
 

@@ -15,14 +15,14 @@ from urllib.parse import urljoin
 import httpx
 from loguru import logger
 
-from nanobot.config.schema import Config, ProviderConfig
-from nanobot.providers.registry import find_by_name
-from nanobot.security.network import (
+from nucleamind.legacy.config.schema import Config, ProviderConfig
+from nucleamind.legacy.providers.registry import find_by_name
+from nucleamind.legacy.security.network import (
     PinnedDNSAsyncTransport,
     UnsafeURLRequestError,
     resolve_url_target,
 )
-from nanobot.utils.helpers import detect_image_mime
+from nucleamind.legacy.utils.helpers import detect_image_mime
 
 _OPENROUTER_ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://github.com/HKUDS/nanobot",

@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.channels._setup import channel_setup_spec
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.contracts import (
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.channels._setup import channel_setup_spec
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.channels.contracts import (
     ChannelActivation,
     ChannelFieldSpec,
     ChannelInstanceSpec,
@@ -27,8 +27,8 @@ from nanobot.channels.contracts import (
     channel_update_instance_config,
     resolve_channel_action_target,
 )
-from nanobot.channels.plugin import ChannelPlugin
-from nanobot.channels.registry import discover_plugins, load_channel_plugin
+from nucleamind.legacy.channels.plugin import ChannelPlugin
+from nucleamind.legacy.channels.registry import discover_plugins, load_channel_plugin
 
 
 class _SingleChannel(BaseChannel):
@@ -137,12 +137,12 @@ def test_contract_module_is_not_discovered_as_a_channel() -> None:
 def test_settings_contract_import_does_not_eagerly_load_runtime_graph() -> None:
     code = """
 import sys
-import nanobot.channels.validation
+import nucleamind.legacy.channels.validation
 
 unexpected = {
-    "nanobot.channels.manager",
-    "nanobot.channels.websocket",
-    "nanobot.webui.gateway_services",
+    "nucleamind.legacy.channels.manager",
+    "nucleamind.legacy.channels.websocket",
+    "nucleamind.legacy.webui.gateway_services",
 } & sys.modules.keys()
 assert not unexpected, sorted(unexpected)
 """

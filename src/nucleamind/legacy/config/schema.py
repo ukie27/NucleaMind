@@ -7,17 +7,17 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from nanobot.config.timezone import detect_system_timezone
-from nanobot.config_base import Base
-from nanobot.cron.types import CronSchedule
+from nucleamind.legacy.config.timezone import detect_system_timezone
+from nucleamind.legacy.config_base import Base
+from nucleamind.legacy.cron.types import CronSchedule
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.cli_apps import CliAppsToolConfig
-    from nanobot.agent.tools.filesystem import FileToolsConfig
-    from nanobot.agent.tools.image_generation import ImageGenerationToolConfig
-    from nanobot.agent.tools.self import MyToolConfig
-    from nanobot.agent.tools.shell import ExecToolConfig
-    from nanobot.agent.tools.web import WebToolsConfig
+    from nucleamind.legacy.agent.tools.cli_apps import CliAppsToolConfig
+    from nucleamind.legacy.agent.tools.filesystem import FileToolsConfig
+    from nucleamind.legacy.agent.tools.image_generation import ImageGenerationToolConfig
+    from nucleamind.legacy.agent.tools.self import MyToolConfig
+    from nucleamind.legacy.agent.tools.shell import ExecToolConfig
+    from nucleamind.legacy.agent.tools.web import WebToolsConfig
 
 
 class ChannelsConfig(Base):
@@ -43,7 +43,7 @@ class TranscriptionConfig(Base):
     """Cross-channel audio transcription configuration."""
 
     enabled: bool = True
-    provider: str | None = None  # Validated by nanobot.audio.transcription_registry.
+    provider: str | None = None  # Validated by nucleamind.legacy.audio.transcription_registry.
     model: str | None = None
     language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")
     max_duration_sec: int = Field(default=120, ge=1, le=600)
@@ -106,7 +106,7 @@ class ModelPresetConfig(Base):
     reasoning_effort: str | None = None
 
     def to_generation_settings(self) -> Any:
-        from nanobot.providers.base import GenerationSettings
+        from nucleamind.legacy.providers.base import GenerationSettings
         return GenerationSettings(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -306,7 +306,7 @@ class ProvidersConfig(Base):
     def convert_extra_providers(self):
         """Convert extra fields (custom providers) to ProviderConfig objects."""
         if self.model_extra:
-            from nanobot.providers.registry import find_by_name
+            from nucleamind.legacy.providers.registry import find_by_name
 
             for key, value in self.model_extra.items():
                 if spec := find_by_name(key):
@@ -398,13 +398,13 @@ class ToolsConfig(Base):
     tool implementations.
     """
 
-    web: WebToolsConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.web", "WebToolsConfig"))
-    exec: ExecToolConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.shell", "ExecToolConfig"))
-    file: FileToolsConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.filesystem", "FileToolsConfig"))
-    cli_apps: CliAppsToolConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.cli_apps", "CliAppsToolConfig"))
-    my: MyToolConfig = Field(default_factory=lambda: _lazy_default("nanobot.agent.tools.self", "MyToolConfig"))
+    web: WebToolsConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.web", "WebToolsConfig"))
+    exec: ExecToolConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.shell", "ExecToolConfig"))
+    file: FileToolsConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.filesystem", "FileToolsConfig"))
+    cli_apps: CliAppsToolConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.cli_apps", "CliAppsToolConfig"))
+    my: MyToolConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.self", "MyToolConfig"))
     image_generation: ImageGenerationToolConfig = Field(
-        default_factory=lambda: _lazy_default("nanobot.agent.tools.image_generation", "ImageGenerationToolConfig"),
+        default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.image_generation", "ImageGenerationToolConfig"),
     )
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
     webui_allow_local_service_access: bool = Field(
@@ -492,7 +492,7 @@ class Config(BaseSettings):
         preset: ModelPresetConfig | None = None,
     ) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
-        from nanobot.providers.registry import (
+        from nucleamind.legacy.providers.registry import (
             PROVIDERS,
             find_by_name,
         )
@@ -644,7 +644,7 @@ class Config(BaseSettings):
         preset: ModelPresetConfig | None = None,
     ) -> str | None:
         """Get API base URL for the given model, falling back to the provider default when present."""
-        from nanobot.providers.registry import find_by_name
+        from nucleamind.legacy.providers.registry import find_by_name
 
         p, name = self._match_provider(model, preset=preset)
         if p and p.api_base:
@@ -666,16 +666,16 @@ def _resolve_tool_config_refs() -> None:
 
     Must be called after all modules are loaded (breaks circular imports).
     Re-exports the classes into this module's namespace so existing imports
-    like ``from nanobot.config.schema import ExecToolConfig`` continue to work.
+    like ``from nucleamind.legacy.config.schema import ExecToolConfig`` continue to work.
     """
     import sys
 
-    from nanobot.agent.tools.cli_apps import CliAppsToolConfig
-    from nanobot.agent.tools.filesystem import FileToolsConfig
-    from nanobot.agent.tools.image_generation import ImageGenerationToolConfig
-    from nanobot.agent.tools.self import MyToolConfig
-    from nanobot.agent.tools.shell import ExecToolConfig
-    from nanobot.agent.tools.web import WebFetchConfig, WebSearchConfig, WebToolsConfig
+    from nucleamind.legacy.agent.tools.cli_apps import CliAppsToolConfig
+    from nucleamind.legacy.agent.tools.filesystem import FileToolsConfig
+    from nucleamind.legacy.agent.tools.image_generation import ImageGenerationToolConfig
+    from nucleamind.legacy.agent.tools.self import MyToolConfig
+    from nucleamind.legacy.agent.tools.shell import ExecToolConfig
+    from nucleamind.legacy.agent.tools.web import WebFetchConfig, WebSearchConfig, WebToolsConfig
 
     # Re-export into this module's namespace
     mod = sys.modules[__name__]

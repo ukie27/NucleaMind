@@ -32,6 +32,10 @@ _SOURCE_TOP_LEVEL_FILES = (
 )
 _SOURCE_DIRS = ("src", "public")
 
+# 源码检出中包目录相对仓库根的位置（src 布局）。安装后的 wheel 里不适用，
+# 那条路径走 `nucleamind.legacy.web` 的包资源解析。
+_PACKAGE_DIR_FROM_ROOT = Path("src") / "nucleamind" / "legacy"
+
 
 class WebUIBuildError(RuntimeError):
     """Raised when the local WebUI bundle cannot be built."""
@@ -59,7 +63,7 @@ class WebUIBundleStatus:
 
 def default_project_root() -> Path:
     """Return the repository root when running from a source checkout."""
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[4]
 
 
 def default_webui_source_dir(project_root: Path | None = None) -> Path:
@@ -71,10 +75,10 @@ def default_webui_source_dir(project_root: Path | None = None) -> Path:
 def default_webui_dist_dir(project_root: Path | None = None) -> Path:
     """Return the bundled WebUI dist directory for the installed package."""
     try:
-        import nanobot.web as web_pkg  # type: ignore[import-not-found]
+        import nucleamind.legacy.web as web_pkg  # type: ignore[import-not-found]
     except ImportError:
         root = project_root or default_project_root()
-        return root / "nanobot" / "web" / "dist"
+        return root / _PACKAGE_DIR_FROM_ROOT / "web" / "dist"
     return Path(web_pkg.__file__).resolve().parent / "dist"
 
 
@@ -90,7 +94,7 @@ def iter_webui_source_files(source_dir: Path) -> list[Path]:
         if not root.is_dir():
             continue
         files.extend(path for path in root.rglob("*") if path.is_file())
-    channel_root = source_dir.parent / "nanobot" / "channels"
+    channel_root = source_dir.parent / _PACKAGE_DIR_FROM_ROOT / "channels"
     if channel_root.is_dir():
         for channel_webui in channel_root.glob("*/webui"):
             files.extend(path for path in channel_webui.rglob("*") if path.is_file())

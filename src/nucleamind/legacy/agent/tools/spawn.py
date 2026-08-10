@@ -6,19 +6,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import current_request_context
-from nanobot.agent.tools.schema import (
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.context import current_request_context
+from nucleamind.legacy.agent.tools.schema import (
     BooleanSchema,
     NumberSchema,
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.security.workspace_access import current_workspace_scope
+from nucleamind.legacy.security.workspace_access import current_workspace_scope
 
 if TYPE_CHECKING:
-    from nanobot.agent.subagent import SubagentManager
-    from nanobot.agent.tools.context import ToolContext
+    from nucleamind.legacy.agent.subagent import SubagentManager
+    from nucleamind.legacy.agent.tools.context import ToolContext
 
 
 @tool_parameters(

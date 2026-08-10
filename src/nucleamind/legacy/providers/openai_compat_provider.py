@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 from loguru import logger
 from pydantic.alias_generators import to_snake
 
-from nanobot.providers.base import (
+from nucleamind.legacy.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
@@ -33,7 +33,7 @@ from nanobot.providers.base import (
     resolve_stream_idle_timeout_s,
     tool_arguments_json_for_replay,
 )
-from nanobot.providers.openai_responses import (
+from nucleamind.legacy.providers.openai_responses import (
     ResponsesStreamCapture,
     build_responses_state,
     consume_sdk_stream,
@@ -49,7 +49,7 @@ from nanobot.providers.openai_responses import (
 if TYPE_CHECKING:
     from openai import AsyncOpenAI as AsyncOpenAIType
 
-    from nanobot.providers.registry import ProviderSpec
+    from nucleamind.legacy.providers.registry import ProviderSpec
 
 # Module-level placeholder — set lazily by _ensure_client on first real
 # use, or replaced by tests via ``patch(...)``.  Kept as a plain name so

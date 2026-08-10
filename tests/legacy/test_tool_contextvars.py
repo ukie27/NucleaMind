@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.cron.service import CronService
-from nanobot.providers.base import GenerationSettings, LLMProvider
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.agent.tools.context import RequestContext, request_context
+from nucleamind.legacy.agent.tools.cron import CronTool
+from nucleamind.legacy.agent.tools.message import MessageTool
+from nucleamind.legacy.agent.tools.spawn import SpawnTool
+from nucleamind.legacy.cron.service import CronService
+from nucleamind.legacy.providers.base import GenerationSettings, LLMProvider
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 
 def _runtime(model: str = "test-model") -> LLMRuntime:

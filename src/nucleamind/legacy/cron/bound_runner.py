@@ -8,16 +8,16 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Protocol
 
-from nanobot.agent.tools.cron import CronTool
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.cron.session_delivery import origin_delivery_context
-from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
-from nanobot.cron.types import CronJob
-from nanobot.cron.webui_metadata import cron_proactive_delivery_metadata
-from nanobot.utils.prompt_templates import render_template
+from nucleamind.legacy.agent.tools.cron import CronTool
+from nucleamind.legacy.bus.events import InboundMessage, OutboundMessage
+from nucleamind.legacy.cron.session_delivery import origin_delivery_context
+from nucleamind.legacy.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
+from nucleamind.legacy.cron.types import CronJob
+from nucleamind.legacy.cron.webui_metadata import cron_proactive_delivery_metadata
+from nucleamind.legacy.utils.prompt_templates import render_template
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.registry import ToolRegistry
+    from nucleamind.legacy.agent.tools.registry import ToolRegistry
 
 
 class BoundCronAgent(Protocol):

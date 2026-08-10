@@ -3,15 +3,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import GoalStatusEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import WebSocketChannel
-from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.session import webui_turns as wth
-from nanobot.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import GoalStatusEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.websocket.runtime import WebSocketChannel
+from nucleamind.legacy.providers.base import GenerationSettings, LLMResponse
+from nucleamind.legacy.session import webui_turns as wth
+from nucleamind.legacy.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
+from nucleamind.legacy.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 
 
 def _make_loop(tmp_path):
@@ -126,7 +126,7 @@ async def test_process_direct_reuses_existing_session_lock(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_process_direct_applies_per_run_hooks(tmp_path) -> None:
-    from nanobot.agent.hook import AgentHook, AgentRunHookContext
+    from nucleamind.legacy.agent.hook import AgentHook, AgentRunHookContext
 
     loop = _make_loop(tmp_path)
     events: list[tuple[str, str | None]] = []

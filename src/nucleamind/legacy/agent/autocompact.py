@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine, cast
 
 from loguru import logger
 
-from nanobot.session.manager import MIN_COMPACTED_REPLAY_MESSAGES, Session, SessionManager
+from nucleamind.legacy.session.manager import MIN_COMPACTED_REPLAY_MESSAGES, Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.agent.memory import Consolidator
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from nucleamind.legacy.agent.memory import Consolidator
+    from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 
 class AutoCompact:

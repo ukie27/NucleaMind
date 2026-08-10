@@ -17,12 +17,15 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
-from nanobot.config.paths import get_webui_dir
-from nanobot.runtime_context import public_history_message
-from nanobot.session.automation_turns import is_automation_kind
-from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.manager import SessionManager
-from nanobot.webui.metadata import WEBUI_MESSAGE_SOURCE_METADATA_KEY, WEBUI_TURN_METADATA_KEY
+from nucleamind.legacy.config.paths import get_webui_dir
+from nucleamind.legacy.runtime_context import public_history_message
+from nucleamind.legacy.session.automation_turns import is_automation_kind
+from nucleamind.legacy.session.history_visibility import is_hidden_history_message
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.metadata import (
+    WEBUI_MESSAGE_SOURCE_METADATA_KEY,
+    WEBUI_TURN_METADATA_KEY,
+)
 
 WEBUI_TRANSCRIPT_SCHEMA_VERSION = 3
 WEBUI_FORK_MARKER_EVENT = "fork_marker"

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from nanobot.gateway import GatewayStartOptions, build_gateway_command
+from nucleamind.legacy.gateway import GatewayStartOptions, build_gateway_command
 
 ServiceManagerKind = Literal["auto", "systemd", "launchd"]
 

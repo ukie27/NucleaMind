@@ -1,7 +1,7 @@
 import pytest
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from nanobot.utils.evaluator import (
+from nucleamind.legacy.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nucleamind.legacy.utils.evaluator import (
     EVALUATOR_PROMPT_MAX_CHARS,
     default_evaluator_prompt,
     evaluate_response,

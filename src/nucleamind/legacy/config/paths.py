@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nanobot.utils.helpers import ensure_dir
+from nucleamind.legacy.utils.helpers import ensure_dir
 
 
 def get_config_path() -> Path:
     """Get the configuration file path (lazy import to break circular dependency).
 
-    Delegates to ``nanobot.config.loader.get_config_path`` at call time so
+    Delegates to ``nucleamind.legacy.config.loader.get_config_path`` at call time so
     that importing this module never triggers a circular import during startup.
     """
-    from nanobot.config.loader import get_config_path as _loader_get_config_path
+    from nucleamind.legacy.config.loader import get_config_path as _loader_get_config_path
     return _loader_get_config_path()
 
 

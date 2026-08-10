@@ -12,20 +12,20 @@ import typer
 from loguru import logger
 from rich.console import Console
 
-from nanobot.config.schema import Config
-from nanobot.gateway import (
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.gateway import (
     GatewayRuntime,
     GatewayRuntimePaths,
     GatewayStartOptions,
     GatewayStatus,
 )
-from nanobot.gateway.service import (
+from nucleamind.legacy.gateway.service import (
     GatewayServiceInstaller,
     GatewayServiceOptions,
     GatewayServiceResult,
     ServiceManagerKind,
 )
-from nanobot.webui.build import BuildMode
+from nucleamind.legacy.webui.build import BuildMode
 
 RuntimeConfigLoader = Callable[[str | None, str | None], Config]
 GatewayRunner = Callable[..., None]

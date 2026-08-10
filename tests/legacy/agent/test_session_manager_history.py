@@ -1,10 +1,10 @@
-from nanobot.providers.base import ProviderConversationState
-from nanobot.runtime_context import (
+from nucleamind.legacy.providers.base import ProviderConversationState
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RuntimeContextBlock,
     append_runtime_context,
 )
-from nanobot.session.manager import Session, SessionManager
+from nucleamind.legacy.session.manager import Session, SessionManager
 
 
 def _assert_no_orphans(history: list[dict]) -> None:
@@ -728,7 +728,7 @@ def test_get_history_respects_max_tokens(monkeypatch):
 
     token_map = {"u1": 50, "a1": 50, "u2": 50, "a2": 50, "u3": 50, "a3": 50}
     monkeypatch.setattr(
-        "nanobot.session.manager.estimate_message_tokens",
+        "nucleamind.legacy.session.manager.estimate_message_tokens",
         lambda message: token_map.get(message.get("content"), 0),
     )
 
@@ -748,7 +748,7 @@ def test_get_history_recovers_user_when_token_slice_would_be_assistant_only(monk
     )
     token_map = {"u1": 100, "a1": 100, "u2": 100, "a2": 100}
     monkeypatch.setattr(
-        "nanobot.session.manager.estimate_message_tokens",
+        "nucleamind.legacy.session.manager.estimate_message_tokens",
         lambda message: token_map.get(message.get("content"), 0),
     )
 

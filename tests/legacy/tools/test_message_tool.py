@@ -2,10 +2,10 @@ import os
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.message import MessageTool
-from nanobot.bus.events import OutboundMessage
-from nanobot.config.paths import get_workspace_path
+from nucleamind.legacy.agent.tools.context import RequestContext, request_context
+from nucleamind.legacy.agent.tools.message import MessageTool
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.config.paths import get_workspace_path
 
 
 @pytest.mark.asyncio

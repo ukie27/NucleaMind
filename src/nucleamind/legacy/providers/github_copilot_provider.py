@@ -16,8 +16,8 @@ import httpx
 from oauth_cli_kit.models import OAuthToken
 from oauth_cli_kit.storage import FileTokenStorage
 
-from nanobot.providers.base import LLMResponse, ProviderCallContext
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from nucleamind.legacy.providers.base import LLMResponse, ProviderCallContext
+from nucleamind.legacy.providers.openai_compat_provider import OpenAICompatProvider
 
 DEFAULT_GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 DEFAULT_GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -175,7 +175,7 @@ class GitHubCopilotProvider(OpenAICompatProvider):
     """Provider that exchanges a stored GitHub OAuth token for Copilot access tokens."""
 
     def __init__(self, default_model: str = "github-copilot/gpt-4.1"):
-        from nanobot.providers.registry import find_by_name
+        from nucleamind.legacy.providers.registry import find_by_name
 
         self._copilot_access_token: str | None = None
         self._copilot_expires_at: float = 0.0

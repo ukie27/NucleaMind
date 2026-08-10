@@ -1,4 +1,4 @@
-"""Hatch build hook that bundles the webui (Vite) into nanobot/web/dist.
+"""Hatch build hook that bundles the webui (Vite) into src/nucleamind/legacy/web/dist.
 
 Triggered automatically by `python -m build` (and any other hatch-driven build)
 so published wheels and sdists ship a fresh webui without requiring developers
@@ -10,9 +10,9 @@ Behavior:
   development; webui contributors use `cd webui && bun run dev` (Vite HMR) and
   do not need a packaged `dist/`.
 - No-op when `webui/package.json` is absent (e.g. installing from an sdist that
-  already contains a prebuilt `nanobot/web/dist/`).
+  already contains a prebuilt `src/nucleamind/legacy/web/dist/`).
 - Skips when `NANOBOT_SKIP_WEBUI_BUILD=1` is set.
-- Reuses `nanobot/web/dist/` only when it is already fresh, unless
+- Reuses `src/nucleamind/legacy/web/dist/` only when it is already fresh, unless
   `NANOBOT_FORCE_WEBUI_BUILD=1` is set.
 - Uses `bun` when available, otherwise falls back to `npm`. The chosen tool
   performs `install` followed by `run build`.
@@ -33,7 +33,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 
 def _load_webui_build_module() -> ModuleType:
-    from nanobot.webui import build as webui_build
+    from nucleamind.legacy.webui import build as webui_build
 
     return webui_build
 
@@ -45,7 +45,7 @@ class WebUIBuildHook(BuildHookInterface):
         root = Path(self.root)
         webui_dir = root / "webui"
         package_json = webui_dir / "package.json"
-        dist_dir = root / "nanobot" / "web" / "dist"
+        dist_dir = root / "src" / "nucleamind" / "legacy" / "web" / "dist"
         index_html = dist_dir / "index.html"
 
         # `pip install -e .` builds an editable wheel; skip the (slow) webui
@@ -64,7 +64,7 @@ class WebUIBuildHook(BuildHookInterface):
 
         if not package_json.is_file():
             self.app.display_info(
-                "[webui-build] no webui/ source tree, assuming prebuilt nanobot/web/dist/"
+                "[webui-build] no webui/ source tree, assuming prebuilt src/nucleamind/legacy/web/dist/"
             )
             return
 

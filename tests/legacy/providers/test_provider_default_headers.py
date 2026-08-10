@@ -1,6 +1,6 @@
-from nanobot.config.schema import Config, ProviderConfig
-from nanobot.providers.factory import _provider_extra_headers, provider_signature
-from nanobot.providers.registry import find_by_name
+from nucleamind.legacy.config.schema import Config, ProviderConfig
+from nucleamind.legacy.providers.factory import _provider_extra_headers, provider_signature
+from nucleamind.legacy.providers.registry import find_by_name
 
 
 def test_kimi_coding_uses_default_user_agent_header() -> None:

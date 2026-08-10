@@ -9,12 +9,14 @@ from typing import Any, cast, overload
 from pydantic import BaseModel, ValidationError
 from pydantic_settings import SettingsError
 
-from nanobot.config.errors import ConfigIssue, ConfigLoadError, validation_issues
-from nanobot.config.schema import (
+from nucleamind.legacy.config.errors import ConfigIssue, ConfigLoadError, validation_issues
+from nucleamind.legacy.config.schema import (
     Config,
     _resolve_tool_config_refs,  # pyright: ignore[reportPrivateUsage]
 )
-from nanobot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
+from nucleamind.legacy.utils.helpers import (
+    _write_text_atomic,  # pyright: ignore[reportPrivateUsage]
+)
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
@@ -136,7 +138,7 @@ def load_config(config_path: Path | None = None) -> Config:
 
 def _apply_ssrf_whitelist(config: Config) -> None:
     """Apply SSRF whitelist from config to the network security module."""
-    from nanobot.security.network import configure_ssrf_whitelist
+    from nucleamind.legacy.security.network import configure_ssrf_whitelist
 
     configure_ssrf_whitelist(config.tools.ssrf_whitelist)
 

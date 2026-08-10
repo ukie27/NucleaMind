@@ -3,20 +3,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.goal_permission import goal_mutation_allowed
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.command.builtin import (
+from nucleamind.legacy.agent.goal_permission import goal_mutation_allowed
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.command.builtin import (
     build_help_text,
     builtin_command_palette,
     cmd_goal,
     cmd_model,
     register_builtin_commands,
 )
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.session.model_selection import (
+from nucleamind.legacy.command.router import CommandContext, CommandRouter
+from nucleamind.legacy.config.schema import ModelPresetConfig
+from nucleamind.legacy.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )

@@ -15,14 +15,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.channels.websocket.runtime import (
+from nucleamind.legacy.channels.websocket.runtime import (
     WebSocketChannel,
     WebSocketConfig,
 )
-from nanobot.runtime_context import RUNTIME_CONTEXT_INPUT_META
-from nanobot.session import webui_turns as wth
-from nanobot.session.manager import SessionManager
-from nanobot.webui.gateway_services import build_gateway_services
+from nucleamind.legacy.runtime_context import RUNTIME_CONTEXT_INPUT_META
+from nucleamind.legacy.session import webui_turns as wth
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.gateway_services import build_gateway_services
 
 
 def _tiny_png_data_url() -> str:
@@ -80,7 +80,7 @@ def isolate_websocket_turn_state() -> None:
 
 def test_max_message_bytes_default_supports_multi_image_frame() -> None:
     """Default 36 MB must comfortably hold 4 × 6 MB base64-encoded images."""
-    from nanobot.channels.websocket.runtime import WebSocketConfig
+    from nucleamind.legacy.channels.websocket.runtime import WebSocketConfig
 
     default = WebSocketConfig().max_message_bytes
     # 4 images × 6 MB × 1.37 base64 overhead ≈ 33 MB
@@ -241,7 +241,7 @@ async def test_message_with_single_image_forwards_saved_path(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -270,7 +270,7 @@ async def test_message_with_multiple_images(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -293,7 +293,7 @@ async def test_image_only_message_allows_empty_text(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -315,7 +315,7 @@ async def test_message_rejected_when_more_than_four_images(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -347,7 +347,7 @@ async def test_message_rejected_when_too_many_total_attachments(tmp_path) -> Non
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -370,7 +370,7 @@ async def test_message_rejected_on_oversize_payload(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -392,7 +392,7 @@ async def test_message_with_pdf_forwards_saved_path(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -420,7 +420,7 @@ async def test_message_with_csv_forwards_saved_path(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -444,7 +444,7 @@ async def test_message_rejected_on_unsupported_file_mime(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -467,7 +467,7 @@ async def test_message_rejected_on_svg_mime(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -488,7 +488,7 @@ async def test_message_rejected_on_malformed_data_url(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -509,7 +509,7 @@ async def test_message_rejected_on_broken_base64(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -531,7 +531,7 @@ async def test_message_rejected_when_media_item_shape_wrong(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
@@ -579,7 +579,7 @@ async def test_failed_media_does_not_partially_persist(tmp_path) -> None:
     }
 
     with patch(
-        "nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path
+        "nucleamind.legacy.webui.media_gateway.get_media_dir", return_value=tmp_path
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 

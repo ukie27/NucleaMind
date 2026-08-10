@@ -7,6 +7,6 @@ __all__ = ["_set_nanobot_logs"]
 
 def _set_nanobot_logs(enabled: bool) -> None:
     if enabled:
-        logger.enable("nanobot")
+        logger.enable("nucleamind.legacy")
     else:
-        logger.disable("nanobot")
+        logger.disable("nucleamind.legacy")

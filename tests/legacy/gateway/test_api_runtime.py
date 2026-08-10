@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from nanobot.api.runtime import ApiRuntime, ApiStartOptions, api_runtime_paths
+from nucleamind.legacy.api.runtime import ApiRuntime, ApiStartOptions, api_runtime_paths
 
 
 class FakeProcess:

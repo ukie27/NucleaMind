@@ -17,7 +17,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from pydantic import Field
 
-from nanobot.security.workspace_policy import is_path_within
+from nucleamind.legacy.security.workspace_policy import is_path_within
 
 try:
     import aiohttp
@@ -56,14 +56,14 @@ except ImportError as e:
         "Matrix dependencies not installed. Run: nanobot plugins enable matrix"
     ) from e
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_data_dir, get_media_dir
-from nanobot.config.schema import Base
-from nanobot.utils.helpers import safe_filename
-from nanobot.utils.logging_bridge import redirect_lib_logging
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_data_dir, get_media_dir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.utils.helpers import safe_filename
+from nucleamind.legacy.utils.logging_bridge import redirect_lib_logging
 
 TYPING_NOTICE_TIMEOUT_MS = 30_000
 # Must stay below TYPING_NOTICE_TIMEOUT_MS so the indicator doesn't expire mid-processing.
@@ -111,7 +111,7 @@ MATRIX_ALLOWED_HTML_ATTRIBUTES: dict[str, set[str]] = {
     "img": {"src", "alt", "title", "width", "height"},
 }
 MATRIX_ALLOWED_URL_SCHEMES = {"https", "http", "matrix", "mailto", "mxc"}
-_MXC_IMAGE_PLACEHOLDER_PREFIX = "https://nanobot.invalid/matrix-mxc/"
+_MXC_IMAGE_PLACEHOLDER_PREFIX = "https://nucleamind.legacy.invalid/matrix-mxc/"
 _MXC_MARKDOWN_IMAGE_RE = re.compile(
     r"(?P<prefix>!\[[^\]]*\]\()"
     r"(?P<value>mxc://[^\s)]+)"

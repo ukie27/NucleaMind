@@ -14,14 +14,14 @@ from slack_sdk.socket_mode.websockets import SocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 from slackify_markdown import slackify_markdown  # pyright: ignore[reportMissingTypeStubs]
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_media_dir
-from nanobot.config.schema import Base
-from nanobot.pairing import is_approved
-from nanobot.utils.helpers import safe_filename, split_message
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.pairing import is_approved
+from nucleamind.legacy.utils.helpers import safe_filename, split_message
 
 
 def _as_json_object(value: Any) -> dict[str, Any] | None:

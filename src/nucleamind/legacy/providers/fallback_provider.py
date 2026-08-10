@@ -11,7 +11,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.providers.base import (
+from nucleamind.legacy.providers.base import (
     GenerationSettings,
     LLMProvider,
     LLMResponse,

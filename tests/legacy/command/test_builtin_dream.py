@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.memory import MemoryStore
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.command.builtin import (
+from nucleamind.legacy.agent.memory import MemoryStore
+from nucleamind.legacy.bus.events import InboundMessage, OutboundMessage
+from nucleamind.legacy.command.builtin import (
     build_help_text,
     builtin_command_palette,
     cmd_dream,
@@ -15,8 +15,8 @@ from nanobot.command.builtin import (
     cmd_dream_prompt,
     cmd_dream_restore,
 )
-from nanobot.command.router import CommandContext
-from nanobot.utils.gitstore import CommitInfo
+from nucleamind.legacy.command.router import CommandContext
+from nucleamind.legacy.utils.gitstore import CommitInfo
 
 
 class _FakeStore:

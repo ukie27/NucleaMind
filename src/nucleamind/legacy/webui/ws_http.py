@@ -23,99 +23,99 @@ from loguru import logger
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
-from nanobot.command.builtin import builtin_command_palette
-from nanobot.cron.session_turns import is_bound_cron_job
-from nanobot.cron.types import CronJob, CronSchedule
-from nanobot.security.workspace_access import WorkspaceScope
-from nanobot.triggers.local_types import LocalTrigger
-from nanobot.webui.file_preview import (
+from nucleamind.legacy.command.builtin import builtin_command_palette
+from nucleamind.legacy.cron.session_turns import is_bound_cron_job
+from nucleamind.legacy.cron.types import CronJob, CronSchedule
+from nucleamind.legacy.security.workspace_access import WorkspaceScope
+from nucleamind.legacy.triggers.local_types import LocalTrigger
+from nucleamind.legacy.webui.file_preview import (
     WebUIFilePreviewError,
     file_preview_availability_payload,
     file_preview_payload,
 )
-from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.gateway_tokens import GatewayTokenStore, token_response_payload
+from nucleamind.legacy.webui.http_utils import (
     accepts_gzip as _accepts_gzip,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     case_insensitive_header as _case_insensitive_header,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     combined_list_header as _combined_list_header,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     host_for_url as _host_for_url,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     http_error as _http_error,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     http_json_response as _http_json_response,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     http_response as _http_response,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     is_local_browser_request as _is_local_browser_request,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     is_localhost as _is_localhost,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     is_trusted_proxy_authenticated_request as _is_trusted_proxy_authenticated_request,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     issue_route_secret_matches as _issue_route_secret_matches,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     normalize_config_path as _normalize_config_path,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     parse_query as _parse_query,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     parse_request_path as _parse_request_path,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     query_first as _query_first,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     safe_host_header as _safe_host_header,
 )
-from nanobot.webui.ingress_policy import WebUIIngressPolicy
-from nanobot.webui.media_gateway import WebUIMediaGateway
-from nanobot.webui.session_automations import (
+from nucleamind.legacy.webui.ingress_policy import WebUIIngressPolicy
+from nucleamind.legacy.webui.media_gateway import WebUIMediaGateway
+from nucleamind.legacy.webui.session_automations import (
     all_automations_payload,
     serialize_automation_jobs,
     session_automation_jobs,
     session_automations_payload,
 )
-from nanobot.webui.session_list_index import (
+from nucleamind.legacy.webui.session_list_index import (
     WEBUI_SESSION_INDEX_INTERNAL_FIELDS,
     indexed_workspace_scope,
     list_webui_sessions,
 )
-from nanobot.webui.sidebar_state import (
+from nucleamind.legacy.webui.sidebar_state import (
     read_webui_sidebar_state,
     write_webui_sidebar_state,
 )
-from nanobot.webui.skills_api import (
+from nucleamind.legacy.webui.skills_api import (
     SkillManagementError,
     delete_webui_skill,
     set_webui_skill_enabled,
     webui_skill_detail_payload,
     webui_skills_payload,
 )
-from nanobot.webui.skills_marketplace import (
+from nucleamind.legacy.webui.skills_marketplace import (
     SkillsMarketplaceError,
     install_marketplace_skill,
     marketplace_skill_trends,
     search_marketplace_skills,
     trending_marketplace_skills,
 )
-from nanobot.webui.thread_disk import delete_webui_thread
-from nanobot.webui.transcript import build_webui_thread_response
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from nucleamind.legacy.webui.thread_disk import delete_webui_thread
+from nucleamind.legacy.webui.transcript import build_webui_thread_response
+from nucleamind.legacy.webui.workspaces import WebUIWorkspaceController
 
 _SLOW_WEBUI_HTTP_LOG_MS = 1_000
 _AUTOMATION_VALUES_HEADER = "X-Nanobot-Automation-Values"
@@ -145,11 +145,11 @@ for _ext, _ctype in _MIME_FIXES.items():
 
 
 if TYPE_CHECKING:
-    from nanobot.bus.queue import MessageBus
-    from nanobot.channels.websocket.runtime import WebSocketConfig
-    from nanobot.cron.service import CronService
-    from nanobot.session.manager import SessionManager
-    from nanobot.triggers.local_store import LocalTriggerStore
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.channels.websocket.runtime import WebSocketConfig
+    from nucleamind.legacy.cron.service import CronService
+    from nucleamind.legacy.session.manager import SessionManager
+    from nucleamind.legacy.triggers.local_store import LocalTriggerStore
 
 def _decode_api_key(raw_key: str) -> str | None:
     key = unquote(raw_key)
@@ -161,7 +161,7 @@ def _decode_api_key(raw_key: str) -> str | None:
 
 def _default_model_name_from_config() -> str | None:
     try:
-        from nanobot.config.loader import load_config
+        from nucleamind.legacy.config.loader import load_config
         model = load_config().resolve_preset().model.strip()
         return model or None
     except Exception as e:
@@ -244,8 +244,8 @@ class GatewayHTTPHandler:
         self._log = log
         self._runtime_surface = runtime_surface
 
-        from nanobot.webui.settings_api import runtime_capabilities as _rc
-        from nanobot.webui.settings_routes import WebUISettingsRouter
+        from nucleamind.legacy.webui.settings_api import runtime_capabilities as _rc
+        from nucleamind.legacy.webui.settings_routes import WebUISettingsRouter
 
         self._capabilities = _rc(runtime_surface, runtime_capabilities_overrides or {})
         self.settings_routes = WebUISettingsRouter(
@@ -492,7 +492,7 @@ class GatewayHTTPHandler:
     def _sessions_list_payload(self) -> dict[str, Any]:
         assert self.session_manager is not None
         sessions = list_webui_sessions(self.session_manager)
-        from nanobot.session.webui_turns import websocket_turn_wall_started_at
+        from nucleamind.legacy.session.webui_turns import websocket_turn_wall_started_at
 
         cleaned: list[dict[str, Any]] = []
         default_scope: WorkspaceScope | None = None
@@ -557,7 +557,7 @@ class GatewayHTTPHandler:
         if direction is not None and direction not in {"latest"}:
             return _http_error(400, "invalid direction")
         before = _query_first(query, "before")
-        from nanobot.session.webui_turns import (
+        from nucleamind.legacy.session.webui_turns import (
             websocket_turn_id,
             websocket_turn_transcript_persistence_failed,
             websocket_turn_wall_started_at,
@@ -1005,7 +1005,7 @@ class GatewayHTTPHandler:
         if _is_local_browser_request(connection, request.headers):
             return True
         try:
-            from nanobot.config.loader import load_config
+            from nucleamind.legacy.config.loader import load_config
 
             return bool(load_config().tools.webui_allow_remote_package_install)
         except Exception:

@@ -1,6 +1,6 @@
 """Lightweight background runtime for the nanobot gateway."""
 
-from nanobot.gateway.runtime import (
+from nucleamind.legacy.gateway.runtime import (
     GatewayRuntime,
     GatewayRuntimePaths,
     GatewayStartOptions,

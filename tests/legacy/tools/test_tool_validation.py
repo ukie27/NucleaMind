@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from nanobot.agent.tools import (
+from nucleamind.legacy.agent.tools import (
     ArraySchema,
     IntegerSchema,
     ObjectSchema,
@@ -15,10 +15,10 @@ from nanobot.agent.tools import (
     tool_parameters,
     tool_parameters_schema,
 )
-from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool, ExecToolConfig
-from nanobot.security.network import configure_ssrf_whitelist
+from nucleamind.legacy.agent.tools.base import Tool
+from nucleamind.legacy.agent.tools.registry import ToolRegistry
+from nucleamind.legacy.agent.tools.shell import ExecTool, ExecToolConfig
+from nucleamind.legacy.security.network import configure_ssrf_whitelist
 
 
 class SampleTool(Tool):
@@ -344,7 +344,7 @@ def test_exec_guard_allows_media_path_outside_workspace(tmp_path, monkeypatch) -
     media_file = media_dir / "photo.jpg"
     media_file.write_text("ok", encoding="utf-8")
 
-    monkeypatch.setattr("nanobot.agent.tools.shell.get_media_dir", lambda: media_dir)
+    monkeypatch.setattr("nucleamind.legacy.agent.tools.shell.get_media_dir", lambda: media_dir)
 
     tool = ExecTool(restrict_to_workspace=True)
     error = tool._guard_command(f'cat "{media_file}"', str(tmp_path / "workspace"))
@@ -352,7 +352,7 @@ def test_exec_guard_allows_media_path_outside_workspace(tmp_path, monkeypatch) -
 
 
 def test_exec_guard_blocks_windows_drive_root_outside_workspace(monkeypatch) -> None:
-    import nanobot.agent.tools.shell as shell_mod
+    import nucleamind.legacy.agent.tools.shell as shell_mod
 
     class FakeWindowsPath:
         def __init__(self, raw: str) -> None:

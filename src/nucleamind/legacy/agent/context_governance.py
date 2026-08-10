@@ -13,18 +13,18 @@ from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
-from nanobot.utils.helpers import (
+from nucleamind.legacy.utils.helpers import (
     estimate_message_tokens,
     estimate_prompt_tokens_chain,
     find_legal_message_start,
     maybe_persist_tool_result,
     truncate_text,
 )
-from nanobot.utils.runtime import ensure_nonempty_tool_result
+from nucleamind.legacy.utils.runtime import ensure_nonempty_tool_result
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.providers.base import LLMProvider
+    from nucleamind.legacy.agent.tools.registry import ToolRegistry
+    from nucleamind.legacy.providers.base import LLMProvider
 
 SNIP_SAFETY_BUFFER = 1024
 MICROCOMPACT_MIN_CHARS = 500

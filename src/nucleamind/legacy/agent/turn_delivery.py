@@ -8,20 +8,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy.bus.events import InboundMessage, OutboundMessage
+from nucleamind.legacy.bus.outbound_events import (
     RetryWaitEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
     outbound_message_for_event,
 )
-from nanobot.bus.progress import build_bus_progress_callback
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeEventBus, RuntimeEventPublisher
+from nucleamind.legacy.bus.progress import build_bus_progress_callback
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.bus.runtime_events import RuntimeEventBus, RuntimeEventPublisher
 
 if TYPE_CHECKING:
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 
 @dataclass(frozen=True)

@@ -11,11 +11,11 @@ from uuid import uuid4
 
 from loguru import logger
 
-from nanobot.agent.tools.context import current_request_context
-from nanobot.agent.turn_delivery import TurnRoute
-from nanobot.bus import progress as bus_progress
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy.agent.tools.context import current_request_context
+from nucleamind.legacy.agent.turn_delivery import TurnRoute
+from nucleamind.legacy.bus import progress as bus_progress
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.outbound_events import (
     GoalStateSyncEvent,
     GoalStatusEvent,
     RuntimeModelUpdatedEvent,
@@ -24,8 +24,8 @@ from nanobot.bus.outbound_events import (
     TurnModelUpdatedEvent,
     outbound_message_for_event,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import (
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.bus.runtime_events import (
     GoalStateChanged,
     RuntimeEventBus,
     RuntimeEventContext,
@@ -34,15 +34,15 @@ from nanobot.bus.runtime_events import (
     TurnCompleted,
     TurnRunStatusChanged,
 )
-from nanobot.providers.base import LLMProvider
-from nanobot.providers.fallback_provider import FallbackModelObserver
-from nanobot.runtime_context import public_history_message
-from nanobot.session.goal_state import goal_state_ws_blob
-from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.manager import Session, SessionManager
-from nanobot.utils.helpers import strip_think, truncate_text
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.webui.metadata import (
+from nucleamind.legacy.providers.base import LLMProvider
+from nucleamind.legacy.providers.fallback_provider import FallbackModelObserver
+from nucleamind.legacy.runtime_context import public_history_message
+from nucleamind.legacy.session.goal_state import goal_state_ws_blob
+from nucleamind.legacy.session.history_visibility import is_hidden_history_message
+from nucleamind.legacy.session.manager import Session, SessionManager
+from nucleamind.legacy.utils.helpers import strip_think, truncate_text
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )

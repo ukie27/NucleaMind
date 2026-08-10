@@ -3,8 +3,13 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.cli.commands import app
-from nanobot.gateway import GatewayRuntime, GatewayStartOptions, GatewayStatus, RuntimeResult
+from nucleamind.legacy.cli.commands import app
+from nucleamind.legacy.gateway import (
+    GatewayRuntime,
+    GatewayStartOptions,
+    GatewayStatus,
+    RuntimeResult,
+)
 
 runner = CliRunner()
 
@@ -65,7 +70,7 @@ def test_status_validates_bedrock_without_constructing_provider(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from nanobot.providers.bedrock_provider import BedrockProvider
+    from nucleamind.legacy.providers.bedrock_provider import BedrockProvider
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -413,7 +418,7 @@ def test_gateway_missing_provider_managed_start_for_webui_setup(
     monkeypatch.setattr(GatewayRuntime, "start_background", fake_start_background)
     monkeypatch.setattr(GatewayRuntime, "restart", fake_restart)
     monkeypatch.setattr(
-        "nanobot.cli.webui_support.ensure_webui_bundle",
+        "nucleamind.legacy.cli.webui_support.ensure_webui_bundle",
         lambda **_kwargs: None,
     )
 

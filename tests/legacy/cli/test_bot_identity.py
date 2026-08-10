@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
-from nanobot.config.schema import AgentDefaults, Config
+from nucleamind.legacy.cli.stream import StreamRenderer, ThinkingSpinner
+from nucleamind.legacy.config.schema import AgentDefaults, Config
 
 
 def test_bot_name_and_icon_defaults_preserve_current_branding() -> None:

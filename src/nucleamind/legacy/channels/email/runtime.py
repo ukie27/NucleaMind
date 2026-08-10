@@ -22,13 +22,13 @@ from typing import Any, Literal, cast
 from loguru import logger
 from pydantic import Field
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_media_dir
-from nanobot.config.schema import Base
-from nanobot.utils.helpers import safe_filename
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.utils.helpers import safe_filename
 
 
 class EmailConfig(Base):

@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.queue import MessageBus
 
 
 def _provider() -> MagicMock:

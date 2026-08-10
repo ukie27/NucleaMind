@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any, Protocol, cast
 
-from nanobot.cron.types import CronJob
-from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.manager import _message_preview_text  # pyright: ignore[reportPrivateUsage]
-from nanobot.triggers.local_types import LocalTrigger
+from nucleamind.legacy.cron.types import CronJob
+from nucleamind.legacy.session.history_visibility import is_hidden_history_message
+from nucleamind.legacy.session.manager import (
+    _message_preview_text,  # pyright: ignore[reportPrivateUsage]
+)
+from nucleamind.legacy.triggers.local_types import LocalTrigger
 
 AutomationJob = CronJob | LocalTrigger
 

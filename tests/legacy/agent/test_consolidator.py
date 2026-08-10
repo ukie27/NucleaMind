@@ -5,24 +5,24 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.memory import (
+from nucleamind.legacy.agent.memory import (
     _ARCHIVE_SUMMARY_MAX_CHARS,
     Consolidator,
     MemoryStore,
 )
-from nanobot.providers.base import (
+from nucleamind.legacy.providers.base import (
     GenerationSettings,
     LLMResponse,
     ProviderConversationState,
 )
-from nanobot.runtime_context import (
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RuntimeContextBlock,
     append_runtime_context,
 )
-from nanobot.session.manager import Session
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.prompt_templates import render_template
+from nucleamind.legacy.session.manager import Session
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.utils.prompt_templates import render_template
 
 
 @pytest.fixture
@@ -332,7 +332,7 @@ class TestConsolidatorArchiveErrorHandling:
     ):
         consolidator.store.raw_archive = MagicMock()
         monkeypatch.setattr(
-            "nanobot.agent.memory.render_template",
+            "nucleamind.legacy.agent.memory.render_template",
             MagicMock(side_effect=RuntimeError("template failed")),
         )
 
@@ -628,7 +628,7 @@ class TestCompactIdleSession:
     @pytest.fixture
     def real_consolidator(self, store, mock_provider):
         """Create a Consolidator with a real SessionManager (not a mock)."""
-        from nanobot.session.manager import SessionManager
+        from nucleamind.legacy.session.manager import SessionManager
 
         sessions = SessionManager(store.workspace)
         return Consolidator(
@@ -1039,8 +1039,8 @@ class TestConsolidatorSessionRefresh:
     @pytest.mark.asyncio
     async def test_reloads_before_empty_session_guard(self, tmp_path):
         """A stale empty reference must not skip a non-empty cached session."""
-        from nanobot.agent.memory import Consolidator, MemoryStore
-        from nanobot.session.manager import Session, SessionManager
+        from nucleamind.legacy.agent.memory import Consolidator, MemoryStore
+        from nucleamind.legacy.session.manager import Session, SessionManager
 
         store = MemoryStore(tmp_path)
         provider = MagicMock()
@@ -1087,8 +1087,8 @@ class TestConsolidatorSessionRefresh:
         """After compact_idle_session replaces the session, a concurrent
         maybe_consolidate_by_tokens with the old reference should use the
         fresh session from cache instead of overwriting."""
-        from nanobot.agent.memory import Consolidator, MemoryStore
-        from nanobot.session.manager import SessionManager
+        from nucleamind.legacy.agent.memory import Consolidator, MemoryStore
+        from nucleamind.legacy.session.manager import SessionManager
 
         store = MemoryStore(tmp_path)
         provider = MagicMock()

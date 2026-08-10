@@ -6,9 +6,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.base import LLMProvider
-from nanobot.providers.factory import ProviderSnapshot, build_provider_snapshot
+from nucleamind.legacy.config.schema import Config, ModelPresetConfig
+from nucleamind.legacy.providers.base import LLMProvider
+from nucleamind.legacy.providers.factory import ProviderSnapshot, build_provider_snapshot
 
 PresetSnapshotLoader = Callable[[str], ProviderSnapshot]
 PresetCatalogLoader = Callable[[], Mapping[str, ModelPresetConfig]]
@@ -29,7 +29,7 @@ def load_model_preset_catalog(
     config_path: Path | None = None,
 ) -> dict[str, ModelPresetConfig]:
     """Load the current preset catalog from the configured file."""
-    from nanobot.config.loader import load_config, resolve_config_env_vars
+    from nucleamind.legacy.config.loader import load_config, resolve_config_env_vars
 
     return configured_model_presets(
         resolve_config_env_vars(

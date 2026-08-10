@@ -19,13 +19,13 @@ from pydantic import Field
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_media_dir
-from nanobot.config.schema import Base
-from nanobot.security.network import validate_url_target
-from nanobot.utils.helpers import safe_filename
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.security.network import validate_url_target
+from nucleamind.legacy.utils.helpers import safe_filename
 
 _DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _ACTION_TIMEOUT = 20.0

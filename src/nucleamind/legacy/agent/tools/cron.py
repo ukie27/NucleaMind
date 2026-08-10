@@ -8,16 +8,16 @@ from contextvars import ContextVar, Token
 from datetime import datetime
 from typing import Any
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_context
-from nanobot.agent.tools.schema import (
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.context import ToolContext, current_request_context
+from nucleamind.legacy.agent.tools.schema import (
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, CronJobState, CronSchedule
-from nanobot.session.keys import UNIFIED_SESSION_KEY
+from nucleamind.legacy.cron.service import CronService
+from nucleamind.legacy.cron.types import CronJob, CronJobState, CronSchedule
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
 
 _CRON_PARAMETERS = tool_parameters_schema(
     action=StringSchema("Action to perform", enum=["add", "list", "remove"]),

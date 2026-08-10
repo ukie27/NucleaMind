@@ -1,7 +1,7 @@
 """Agent core module."""
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.hook import (
+from nucleamind.legacy.agent.context import ContextBuilder
+from nucleamind.legacy.agent.hook import (
     AgentHook,
     AgentHookContext,
     AgentRunHookContext,
@@ -9,10 +9,10 @@ from nanobot.agent.hook import (
     AgentTurnHookFactory,
     CompositeHook,
 )
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.skills import SkillsLoader
-from nanobot.agent.subagent import SubagentManager
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.agent.memory import MemoryStore
+from nucleamind.legacy.agent.skills import SkillsLoader
+from nucleamind.legacy.agent.subagent import SubagentManager
 
 __all__ = [
     "AgentHook",

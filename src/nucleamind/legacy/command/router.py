@@ -8,13 +8,13 @@ from dataclasses import dataclass, field
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-from nanobot.bus.events import OutboundMessage
+from nucleamind.legacy.bus.events import OutboundMessage
 
 if TYPE_CHECKING:
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.events import InboundMessage
-    from nanobot.session.manager import Session
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.bus.events import InboundMessage
+    from nucleamind.legacy.session.manager import Session
+    from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 Handler = Callable[["CommandContext"], Awaitable["OutboundMessage | None"]]
 _BOT_SUFFIX_RE = re.compile(r"^[A-Za-z0-9_]+$")

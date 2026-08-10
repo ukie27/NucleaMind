@@ -15,8 +15,8 @@ from loguru import logger
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-from nanobot.channels._setup import channel_setup_spec
-from nanobot.channels.contracts import (
+from nucleamind.legacy.channels._setup import channel_setup_spec
+from nucleamind.legacy.channels.contracts import (
     ChannelSetupSpec,
     channel_feature_instances,
     channel_field_value,
@@ -28,8 +28,8 @@ from nanobot.channels.contracts import (
     resolve_channel_action_target,
     stringify_channel_value,
 )
-from nanobot.channels.registry import channel_default_enabled
-from nanobot.config.schema import Config
+from nucleamind.legacy.channels.registry import channel_default_enabled
+from nucleamind.legacy.config.schema import Config
 
 
 class OptionalFeatureError(Exception):
@@ -68,8 +68,8 @@ def optional_dependency_groups_from_metadata() -> dict[str, list[str] | None]:
     from importlib.metadata import metadata, requires
 
     try:
-        extras = metadata("nanobot-ai").get_all("Provides-Extra") or []
-        raw_requirements = requires("nanobot-ai") or []
+        extras = metadata("nucleamind").get_all("Provides-Extra") or []
+        raw_requirements = requires("nucleamind") or []
     except PackageNotFoundError:
         return {}
     groups: dict[str, list[str] | None] = {name: [] for name in extras if name != "dev"}
@@ -84,7 +84,7 @@ def optional_dependency_groups_from_metadata() -> dict[str, list[str] | None]:
 
 
 def optional_dependency_groups() -> dict[str, list[str] | None]:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[3]
     project = load_pyproject(root / "pyproject.toml").get("project", {})
     deps = project.get("optional-dependencies", {})
     if isinstance(deps, dict) and deps:
@@ -120,7 +120,7 @@ def install_args_for_extra(
         if install_args:
             return install_args, f"{extra} support"
         return [], f"{extra} support"
-    target = f"nanobot-ai[{extra}]"
+    target = f"nucleamind[{extra}]"
     return [target], f'"{target}"'
 
 
@@ -335,7 +335,7 @@ def channel_enabled(
     if section is None:
         return bool(default_enabled)
     if plugin is None:
-        from nanobot.channels.registry import load_channel_plugin
+        from nucleamind.legacy.channels.registry import load_channel_plugin
 
         plugin = load_channel_plugin(name)
     return bool(channel_instance_specs(plugin, section, enabled_only=True))
@@ -383,7 +383,7 @@ def channel_configured(
     """Return whether a channel has enough saved setup to be enabled directly."""
     section = getattr(config.channels, name, None)
     if plugin is None:
-        from nanobot.channels.registry import load_channel_plugin
+        from nucleamind.legacy.channels.registry import load_channel_plugin
 
         plugin = load_channel_plugin(name)
 
@@ -427,8 +427,8 @@ def optional_features_payload(
     config: Config | None = None,
     last_action: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from nanobot.channels.registry import discover_plugins
-    from nanobot.config.loader import load_config
+    from nucleamind.legacy.channels.registry import discover_plugins
+    from nucleamind.legacy.config.loader import load_config
 
     config = config or load_config()
     extras = optional_dependency_groups()
@@ -647,8 +647,8 @@ def enable_optional_feature(
     instance_id: str | None = None,
     runner: Any = run_install_command,
 ) -> dict[str, Any]:
-    from nanobot.channels.registry import discover_plugins
-    from nanobot.config.loader import get_config_path
+    from nucleamind.legacy.channels.registry import discover_plugins
+    from nucleamind.legacy.config.loader import get_config_path
 
     if name in _BUNDLED_FEATURE_ALIASES:
         payload = optional_features_payload(
@@ -722,7 +722,7 @@ def enable_optional_feature(
         except Exception as exc:
             logger.warning("Could not refresh {} channel metadata: {}", name, exc)
 
-    from nanobot.config.loader import load_config
+    from nucleamind.legacy.config.loader import load_config
 
     payload = optional_features_payload(
         config=load_config(config_path),
@@ -776,8 +776,8 @@ def disable_optional_feature(
     config_path: Path | None = None,
     instance_id: str | None = None,
 ) -> dict[str, Any]:
-    from nanobot.channels.registry import discover_plugins
-    from nanobot.config.loader import get_config_path, load_config
+    from nucleamind.legacy.channels.registry import discover_plugins
+    from nucleamind.legacy.config.loader import get_config_path, load_config
 
     config_path = config_path or get_config_path()
     requested_instance_id = (instance_id or "").strip() or None

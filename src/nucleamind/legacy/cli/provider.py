@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING, Protocol, cast
 import typer
 from rich.console import Console
 
-from nanobot import __logo__
-from nanobot.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
+from nucleamind.legacy import __logo__
+from nucleamind.legacy.providers.oauth_guidance import OAUTH_CLI_KIT_MISSING_MESSAGE
 
 if TYPE_CHECKING:
-    from nanobot.providers.registry import ProviderSpec
+    from nucleamind.legacy.providers.registry import ProviderSpec
 
 
 console = Console()
@@ -104,7 +104,7 @@ def _load_openai_oauth_storage() -> tuple[_OAuthProviderConfig, _FileTokenStorag
 
 def _resolve_oauth_provider(provider: str) -> ProviderSpec:
     """Resolve and validate an OAuth provider configuration."""
-    from nanobot.providers.registry import PROVIDERS
+    from nucleamind.legacy.providers.registry import PROVIDERS
 
     key = provider.replace("-", "_")
     spec = next((s for s in PROVIDERS if s.name == key and s.is_oauth), None)
@@ -122,7 +122,12 @@ def _set_oauth_provider_as_main(
     config_path: str | None = None,
 ) -> None:
     """Persist an OAuth provider as the active agent provider."""
-    from nanobot.config.loader import get_config_path, load_config, save_config, set_config_path
+    from nucleamind.legacy.config.loader import (
+        get_config_path,
+        load_config,
+        save_config,
+        set_config_path,
+    )
 
     resolved_config_path = Path(config_path).expanduser().resolve() if config_path else None
     if resolved_config_path is not None and get_config_path() != resolved_config_path:
@@ -175,7 +180,7 @@ def provider_login(
         raise typer.Exit(1)
 
     if config:
-        from nanobot.config.loader import set_config_path
+        from nucleamind.legacy.config.loader import set_config_path
 
         resolved_config_path = Path(config).expanduser().resolve()
         set_config_path(resolved_config_path)
@@ -204,7 +209,7 @@ def provider_logout(
         raise typer.Exit(1)
 
     if config:
-        from nanobot.config.loader import set_config_path
+        from nucleamind.legacy.config.loader import set_config_path
 
         resolved_config_path = Path(config).expanduser().resolve()
         set_config_path(resolved_config_path)
@@ -216,7 +221,7 @@ def provider_logout(
 
 def _login_openai_codex() -> None:
     try:
-        from nanobot.config.loader import load_config, resolve_config_env_vars
+        from nucleamind.legacy.config.loader import load_config, resolve_config_env_vars
 
         get_token, login_oauth_interactive = _load_openai_oauth_client()
         proxy = None
@@ -260,8 +265,8 @@ def _logout_openai_codex() -> None:
 
 def _login_xai_grok() -> None:
     """Authenticate with xAI using the Grok subscription OAuth contract."""
-    from nanobot.config.loader import load_config, resolve_config_env_vars
-    from nanobot.providers.xai_oauth import get_xai_oauth_token, login_xai_oauth
+    from nucleamind.legacy.config.loader import load_config, resolve_config_env_vars
+    from nucleamind.legacy.providers.xai_oauth import get_xai_oauth_token, login_xai_oauth
 
     try:
         proxy = resolve_config_env_vars(load_config()).providers.xai_grok.proxy or None
@@ -294,7 +299,7 @@ def _login_xai_grok() -> None:
 
 def _logout_xai_grok() -> None:
     """Clear local xAI OAuth credentials for this nanobot instance."""
-    from nanobot.providers.xai_oauth import get_xai_oauth_storage_path, logout_xai_oauth
+    from nucleamind.legacy.providers.xai_oauth import get_xai_oauth_storage_path, logout_xai_oauth
 
     token_path = get_xai_oauth_storage_path()
     provider_label = _PROVIDER_DISPLAY["xai_grok"]
@@ -308,7 +313,7 @@ def _logout_xai_grok() -> None:
 def _logout_github_copilot() -> None:
     """Clear local OAuth credentials for GitHub Copilot."""
     try:
-        from nanobot.providers.github_copilot_provider import get_storage
+        from nucleamind.legacy.providers.github_copilot_provider import get_storage
     except ImportError:
         console.print(f"[red]{OAUTH_CLI_KIT_MISSING_MESSAGE}[/red]")
         raise typer.Exit(1)
@@ -345,7 +350,7 @@ def _delete_oauth_files(token_path: Path, provider_label: str) -> None:
 
 def _login_github_copilot() -> None:
     try:
-        from nanobot.providers.github_copilot_provider import login_github_copilot
+        from nucleamind.legacy.providers.github_copilot_provider import login_github_copilot
 
         console.print("[cyan]Starting GitHub Copilot device flow...[/cyan]\n")
         token = login_github_copilot(

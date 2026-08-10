@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from prompt_toolkit.formatted_text import HTML
 
-from nanobot.cli import stream as stream_mod
-from nanobot.cli import terminal
+from nucleamind.legacy.cli import stream as stream_mod
+from nucleamind.legacy.cli import terminal
 
 
 @pytest.fixture
@@ -14,8 +14,8 @@ def mock_prompt_session():
     """Mock the global prompt session."""
     mock_session = MagicMock()
     mock_session.prompt_async = AsyncMock()
-    with patch("nanobot.cli.terminal._prompt_session", mock_session), \
-         patch("nanobot.cli.terminal.patch_stdout"):
+    with patch("nucleamind.legacy.cli.terminal._prompt_session", mock_session), \
+         patch("nucleamind.legacy.cli.terminal.patch_stdout"):
         yield mock_session
 
 
@@ -46,8 +46,8 @@ def test_init_prompt_session_creates_session():
     # Ensure global is None before test
     terminal._prompt_session = None
 
-    with patch("nanobot.cli.terminal.PromptSession") as mock_session_cls, \
-         patch("nanobot.cli.terminal.FileHistory"), \
+    with patch("nucleamind.legacy.cli.terminal.PromptSession") as mock_session_cls, \
+         patch("nucleamind.legacy.cli.terminal.FileHistory"), \
          patch("pathlib.Path.home") as mock_home:
 
         mock_home.return_value = MagicMock()
@@ -254,7 +254,7 @@ async def test_print_interactive_progress_line_pauses_spinner_before_printing():
     async def fake_print(_text: str) -> None:
         order.append("print")
 
-    with patch("nanobot.cli.terminal._print_interactive_line", side_effect=fake_print):
+    with patch("nucleamind.legacy.cli.terminal._print_interactive_line", side_effect=fake_print):
         thinking = stream_mod.ThinkingSpinner(console=mock_console)
         with thinking:
             await terminal._print_interactive_progress_line("tool running", thinking)

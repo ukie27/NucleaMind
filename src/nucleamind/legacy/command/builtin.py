@@ -11,17 +11,17 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from nanobot import __version__
-from nanobot.bus.events import OutboundMessage
-from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
-from nanobot.utils.helpers import build_status_content
-from nanobot.utils.restart import set_restart_notice_to_env
-from nanobot.utils.workspace_prompts import initialize_workspace_prompt
+from nucleamind.legacy import __version__
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.command.router import CommandContext, CommandRouter, normalize_command_text
+from nucleamind.legacy.utils.helpers import build_status_content
+from nucleamind.legacy.utils.restart import set_restart_notice_to_env
+from nucleamind.legacy.utils.workspace_prompts import initialize_workspace_prompt
 
 if TYPE_CHECKING:
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.session.manager import Session
-    from nanobot.utils.gitstore import CommitInfo
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.session.manager import Session
+    from nucleamind.legacy.utils.gitstore import CommitInfo
 
 # WebUI protocol contract for how a slash command participates in turn state:
 # - side_channel: returns control text without starting or ending an agent turn.
@@ -270,7 +270,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     search_usage_text: str | None = None
     # Never let usage fetch break /status
     with suppress(Exception):
-        from nanobot.utils.searchusage import fetch_search_usage
+        from nucleamind.legacy.utils.searchusage import fetch_search_usage
         search_cfg = loop.web_config.search
         usage = await fetch_search_usage(
             provider=search_cfg.provider,
@@ -422,7 +422,7 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
     msg = ctx.msg
 
     async def _run_dream():
-        from nanobot.agent.memory import DreamRunProgress, MemoryStore
+        from nucleamind.legacy.agent.memory import DreamRunProgress, MemoryStore
 
         dream_session_key = MemoryStore.dream_session_key
         build_dream_commit_message = MemoryStore.build_dream_commit_message
@@ -477,7 +477,7 @@ async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
             elapsed = time.monotonic() - t0
             content = f"Dream failed after {elapsed:.1f}s: {e}"
         finally:
-            from nanobot.webui.token_usage import record_response_token_usage
+            from nucleamind.legacy.webui.token_usage import record_response_token_usage
 
             record_response_token_usage(
                 resp,
@@ -546,7 +546,7 @@ async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
     """Show or set up the workspace heartbeat evaluator prompt."""
-    from nanobot.utils.evaluator import (
+    from nucleamind.legacy.utils.evaluator import (
         default_evaluator_prompt,
         evaluator_prompt_file,
         has_evaluator_prompt_override,
@@ -876,7 +876,7 @@ async def cmd_history(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
     """Mark this turn as an explicit sustained-goal request."""
-    from nanobot.agent.goal_permission import goal_mutation_permission
+    from nucleamind.legacy.agent.goal_permission import goal_mutation_permission
 
     goal = ctx.args.strip()
     if not goal:
@@ -918,7 +918,7 @@ async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
 
 async def cmd_pairing(ctx: CommandContext) -> OutboundMessage:
     """List, approve, deny or revoke pairing requests."""
-    from nanobot.pairing import PAIRING_COMMAND_META_KEY, handle_pairing_command
+    from nucleamind.legacy.pairing import PAIRING_COMMAND_META_KEY, handle_pairing_command
 
     reply = handle_pairing_command(ctx.msg.channel, ctx.args)
     return OutboundMessage(
@@ -963,14 +963,14 @@ async def cmd_trigger(ctx: CommandContext) -> OutboundMessage:
             metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
         )
 
-    from nanobot.triggers.local_store import LocalTriggerStore
+    from nucleamind.legacy.triggers.local_store import LocalTriggerStore
 
     loop = ctx.loop
     store = loop.local_trigger_store
     if store is None:
         store = LocalTriggerStore(loop.workspace)
 
-    from nanobot.session.keys import UNIFIED_SESSION_KEY
+    from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
 
     session_key = (
         ctx.msg.session_key

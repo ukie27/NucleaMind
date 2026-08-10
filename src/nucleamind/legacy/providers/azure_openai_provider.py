@@ -2,7 +2,7 @@
 
 Uses ``AsyncOpenAI`` pointed at ``https://{endpoint}/openai/v1/`` which
 routes to the Responses API (``/responses``).  Reuses shared conversion
-helpers from :mod:`nanobot.providers.openai_responses`.
+helpers from :mod:`nucleamind.legacy.providers.openai_responses`.
 
 Authentication
 --------------
@@ -26,13 +26,13 @@ from typing import Any, cast
 from loguru import logger
 from openai import AsyncOpenAI
 
-from nanobot.providers.base import (
+from nucleamind.legacy.providers.base import (
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
 )
-from nanobot.providers.openai_responses import (
+from nucleamind.legacy.providers.openai_responses import (
     ResponsesStreamCapture,
     build_responses_state,
     consume_sdk_stream,

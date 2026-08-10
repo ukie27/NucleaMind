@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import load_config
-from nanobot.config.schema import ApiConfig
+from nucleamind.legacy.config.errors import ConfigLoadError
+from nucleamind.legacy.config.loader import load_config
+from nucleamind.legacy.config.schema import ApiConfig
 
 
 def test_load_config_missing_file_uses_defaults(tmp_path) -> None:

@@ -1,4 +1,4 @@
-from nanobot.config.schema import DreamConfig
+from nucleamind.legacy.config.schema import DreamConfig
 
 
 def test_dream_config_defaults_to_interval_hours() -> None:

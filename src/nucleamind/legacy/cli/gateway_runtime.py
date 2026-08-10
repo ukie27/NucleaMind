@@ -11,12 +11,12 @@ import typer
 from loguru import logger
 from rich.console import Console
 
-from nanobot import __logo__, __version__
-from nanobot.agent.hooks import create_file_edit_activity_hook
-from nanobot.agent.loop import AgentLoop
-from nanobot.cli import terminal as cli_terminal
-from nanobot.cli.runtime_config import _migrate_cron_store
-from nanobot.cli.webui_support import (
+from nucleamind.legacy import __logo__, __version__
+from nucleamind.legacy.agent.hooks import create_file_edit_activity_hook
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.cli import terminal as cli_terminal
+from nucleamind.legacy.cli.runtime_config import _migrate_cron_store
+from nucleamind.legacy.cli.webui_support import (
     _gateway_health_bind_note,
     _gateway_health_url,
     _host_for_local_browser,
@@ -28,15 +28,15 @@ from nanobot.cli.webui_support import (
     _webui_display_url,
     _webui_endpoint_reachable,
 )
-from nanobot.config.paths import is_default_workspace
-from nanobot.config.schema import Config
-from nanobot.security.network import is_loopback_host
-from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
-from nanobot.utils.evaluator import evaluate_response, resolve_evaluator_prompt
-from nanobot.utils.helpers import sync_workspace_templates
-from nanobot.webui.build import BuildMode
-from nanobot.webui.dev import WebUIDevError, WebUIDevServer
-from nanobot.webui.sidebar_state import read_webui_sidebar_state
+from nucleamind.legacy.config.paths import is_default_workspace
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.security.network import is_loopback_host
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
+from nucleamind.legacy.utils.evaluator import evaluate_response, resolve_evaluator_prompt
+from nucleamind.legacy.utils.helpers import sync_workspace_templates
+from nucleamind.legacy.webui.build import BuildMode
+from nucleamind.legacy.webui.dev import WebUIDevError, WebUIDevServer
+from nucleamind.legacy.webui.sidebar_state import read_webui_sidebar_state
 
 __all__ = ["_run_gateway"]
 
@@ -298,34 +298,34 @@ def _run_gateway(
     webui_dev_server: WebUIDevServer | None = None,
 ) -> None:
     """Shared gateway runtime; ``open_browser_url`` opens a tab once channels are up."""
-    from nanobot.agent.model_presets import load_model_preset_catalog
-    from nanobot.agent.tools.message import MessageTool
-    from nanobot.agent.turn_delivery import TurnDeliveryFactory
-    from nanobot.bus.queue import MessageBus
-    from nanobot.bus.runtime_events import RuntimeEventBus
-    from nanobot.channels.manager import ChannelManager
-    from nanobot.config.watcher import watch_config_file
-    from nanobot.cron.bound_runner import run_bound_cron_job
-    from nanobot.cron.service import CronJobSkippedError, CronService
-    from nanobot.cron.session_turns import is_bound_cron_job
-    from nanobot.cron.types import CronJob
-    from nanobot.providers.factory import (
+    from nucleamind.legacy.agent.model_presets import load_model_preset_catalog
+    from nucleamind.legacy.agent.tools.message import MessageTool
+    from nucleamind.legacy.agent.turn_delivery import TurnDeliveryFactory
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.bus.runtime_events import RuntimeEventBus
+    from nucleamind.legacy.channels.manager import ChannelManager
+    from nucleamind.legacy.config.watcher import watch_config_file
+    from nucleamind.legacy.cron.bound_runner import run_bound_cron_job
+    from nucleamind.legacy.cron.service import CronJobSkippedError, CronService
+    from nucleamind.legacy.cron.session_turns import is_bound_cron_job
+    from nucleamind.legacy.cron.types import CronJob
+    from nucleamind.legacy.providers.factory import (
         ProviderSnapshot,
         build_provider_snapshot,
         build_unconfigured_provider_snapshot,
         load_provider_snapshot,
     )
-    from nanobot.providers.fallback_provider import FallbackProvider
-    from nanobot.providers.image_generation import image_gen_provider_configs
-    from nanobot.session.manager import SessionManager
-    from nanobot.session.webui_turns import (
+    from nucleamind.legacy.providers.fallback_provider import FallbackProvider
+    from nucleamind.legacy.providers.image_generation import image_gen_provider_configs
+    from nucleamind.legacy.session.manager import SessionManager
+    from nucleamind.legacy.session.webui_turns import (
         WebuiTurnCoordinator,
         WebuiTurnRoutePolicy,
         build_webui_fallback_model_observer,
     )
-    from nanobot.triggers.local_runner import run_local_trigger_queue
-    from nanobot.triggers.local_store import LocalTriggerStore
-    from nanobot.webui.token_usage import TokenUsageHook
+    from nucleamind.legacy.triggers.local_runner import run_local_trigger_queue
+    from nucleamind.legacy.triggers.local_store import LocalTriggerStore
+    from nucleamind.legacy.webui.token_usage import TokenUsageHook
 
     port = port if port is not None else config.gateway.port
     webui_url = _webui_browser_url(config)
@@ -386,8 +386,8 @@ def _run_gateway(
     session_manager = SessionManager(config.workspace_path)
 
     # Self-heal the gateway state file with the current PID after any restart.
-    from nanobot.config.loader import get_config_path
-    from nanobot.gateway.runtime import GatewayRuntime, GatewayRuntimePaths
+    from nucleamind.legacy.config.loader import get_config_path
+    from nucleamind.legacy.gateway.runtime import GatewayRuntime, GatewayRuntimePaths
 
     config_path = str(get_config_path().resolve(strict=False))
     GatewayRuntime.refresh_state_pid(
@@ -441,8 +441,8 @@ def _run_gateway(
         schedule_background=_schedule_webui_background,
     )
     webui_turn_coordinator.subscribe(runtime_events)
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.session.keys import session_key_for_channel
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.session.keys import session_key_for_channel
 
     def _channel_session_key(channel: str, chat_id: str) -> str:
         return session_key_for_channel(
@@ -495,7 +495,7 @@ def _run_gateway(
 
         # Dream is an internal job — run directly, not through the agent loop.
         if job.name == "dream":
-            from nanobot.agent.memory import DreamRunProgress, MemoryStore
+            from nucleamind.legacy.agent.memory import DreamRunProgress, MemoryStore
 
             dream_session_key = MemoryStore.dream_session_key
             prune_dream_sessions = MemoryStore.prune_dream_sessions
@@ -548,7 +548,7 @@ def _run_gateway(
             except Exception:
                 logger.exception("Dream cron job failed")
             finally:
-                from nanobot.webui.token_usage import record_response_token_usage
+                from nucleamind.legacy.webui.token_usage import record_response_token_usage
 
                 record_response_token_usage(
                     resp,
@@ -758,7 +758,7 @@ def _run_gateway(
         async with server:
             await server.serve_forever()
     # Register Dream system job (idempotent on restart)
-    from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+    from nucleamind.legacy.cron.types import CronJob, CronPayload, CronSchedule
     dream_cfg = config.agents.defaults.dream
     if dream_cfg.enabled:
         cron.register_system_job(CronJob(

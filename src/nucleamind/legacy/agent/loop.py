@@ -20,38 +20,46 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, cast
 
 from loguru import logger
 
-from nanobot.agent import context as agent_context
-from nanobot.agent import model_presets as preset_helpers
-from nanobot.agent.autocompact import AutoCompact
-from nanobot.agent.automation_turns import publish_next_deferred_turn
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.cron_turns import CronTurnCoordinator
-from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
-from nanobot.agent.memory import Consolidator
-from nanobot.agent.model_runtime import ModelRuntimeResolver
-from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
-from nanobot.agent.subagent import SubagentManager
-from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
-from nanobot.agent.tools.exec_session import ExecSessionManager
-from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.self import MyTool
-from nanobot.agent.turn_delivery import (
+from nucleamind.legacy.agent import context as agent_context
+from nucleamind.legacy.agent import model_presets as preset_helpers
+from nucleamind.legacy.agent.autocompact import AutoCompact
+from nucleamind.legacy.agent.automation_turns import publish_next_deferred_turn
+from nucleamind.legacy.agent.context import ContextBuilder
+from nucleamind.legacy.agent.cron_turns import CronTurnCoordinator
+from nucleamind.legacy.agent.hook import AgentHook, AgentTurnHookFactory
+from nucleamind.legacy.agent.memory import Consolidator
+from nucleamind.legacy.agent.model_runtime import ModelRuntimeResolver
+from nucleamind.legacy.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
+from nucleamind.legacy.agent.subagent import SubagentManager
+from nucleamind.legacy.agent.tools.context import (
+    RequestContext,
+    bind_request_context,
+    reset_request_context,
+)
+from nucleamind.legacy.agent.tools.exec_session import ExecSessionManager
+from nucleamind.legacy.agent.tools.file_state import (
+    FileStateStore,
+    bind_file_states,
+    reset_file_states,
+)
+from nucleamind.legacy.agent.tools.message import MessageTool
+from nucleamind.legacy.agent.tools.registry import ToolRegistry
+from nucleamind.legacy.agent.tools.self import MyTool
+from nucleamind.legacy.agent.turn_delivery import (
     TurnDelivery,
     TurnDeliveryFactory,
 )
-from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
-from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
-from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import StreamedResponseEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeEventBus
-from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
-from nanobot.config.schema import AgentDefaults, ModelPresetConfig
-from nanobot.providers.base import LLMProvider, ProviderConversationState
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.runtime_context import (
+from nucleamind.legacy.agent.turn_delivery import TurnRoute as TurnRoute
+from nucleamind.legacy.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
+from nucleamind.legacy.bus.events import InboundMessage, OutboundMessage
+from nucleamind.legacy.bus.outbound_events import StreamedResponseEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.bus.runtime_events import RuntimeEventBus
+from nucleamind.legacy.command import CommandContext, CommandRouter, register_builtin_commands
+from nucleamind.legacy.config.schema import AgentDefaults, ModelPresetConfig
+from nucleamind.legacy.providers.base import LLMProvider, ProviderConversationState
+from nucleamind.legacy.providers.factory import ProviderSnapshot
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_MESSAGE_META,
     RuntimeContextBlock,
@@ -60,50 +68,50 @@ from nanobot.runtime_context import (
     resolve_runtime_context,
     runtime_context_blocks_from_metadata,
 )
-from nanobot.security.workspace_access import (
+from nucleamind.legacy.security.workspace_access import (
     WorkspaceScopeResolver,
     bind_workspace_scope,
     reset_workspace_scope,
 )
-from nanobot.session import turn_continuation
-from nanobot.session.automation_turns import automation_history_overrides
-from nanobot.session.goal_state import (
+from nucleamind.legacy.session import turn_continuation
+from nucleamind.legacy.session.automation_turns import automation_history_overrides
+from nucleamind.legacy.session.goal_state import (
     goal_state_runtime_lines,
     runner_wall_llm_timeout_s,
     sustained_goal_active,
 )
-from nanobot.session.history_visibility import HIDDEN_HISTORY_META
-from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
-from nanobot.session.manager import (
+from nucleamind.legacy.session.history_visibility import HIDDEN_HISTORY_META
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
+from nucleamind.legacy.session.manager import (
     Session,
     SessionManager,
     replay_max_messages_for_context,
 )
-from nanobot.session.model_selection import (
+from nucleamind.legacy.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )
-from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
-from nanobot.utils.cancellation import task_is_cancelling
-from nanobot.utils.document import reference_non_image_attachments
-from nanobot.utils.helpers import image_placeholder_text
-from nanobot.utils.helpers import truncate_text as truncate_text_fn
-from nanobot.utils.llm_runtime import LLMRuntime
-from nanobot.utils.runtime import (
+from nucleamind.legacy.triggers.local_turns import LocalTriggerTurnCoordinator
+from nucleamind.legacy.utils.cancellation import task_is_cancelling
+from nucleamind.legacy.utils.document import reference_non_image_attachments
+from nucleamind.legacy.utils.helpers import image_placeholder_text
+from nucleamind.legacy.utils.helpers import truncate_text as truncate_text_fn
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
 )
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.mcp import MCPConnection
-    from nanobot.config.schema import (
+    from nucleamind.legacy.agent.tools.mcp import MCPConnection
+    from nucleamind.legacy.config.schema import (
         ChannelsConfig,
         Config,
         MCPServerConfig,
         ProviderConfig,
         ToolsConfig,
     )
-    from nanobot.cron.service import CronService
-    from nanobot.triggers.local_store import LocalTriggerStore
+    from nucleamind.legacy.cron.service import CronService
+    from nucleamind.legacy.triggers.local_store import LocalTriggerStore
 
 _T = TypeVar("_T")
 _SUBAGENT_PROVIDER_TASK_META = "subagent_provider_task_id"
@@ -291,7 +299,7 @@ class AgentLoop:
         local_trigger_store: LocalTriggerStore | None = None,
         idle_compact_check_interval_seconds: int = 0,
     ):
-        from nanobot.config.schema import ToolsConfig
+        from nucleamind.legacy.config.schema import ToolsConfig
 
         _tc = tools_config or ToolsConfig()
         defaults = AgentDefaults()
@@ -465,7 +473,7 @@ class AgentLoop:
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
-        from nanobot.providers.factory import make_provider
+        from nucleamind.legacy.providers.factory import make_provider
 
         if bus is None:
             bus = MessageBus()
@@ -602,8 +610,8 @@ class AgentLoop:
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None,
     ) -> None:
         """Register the default set of tools via plugin loader."""
-        from nanobot.agent.tools.context import ToolContext
-        from nanobot.agent.tools.loader import ToolLoader
+        from nucleamind.legacy.agent.tools.context import ToolContext
+        from nucleamind.legacy.agent.tools.loader import ToolLoader
 
         ctx = ToolContext(
             config=self.tools_config,

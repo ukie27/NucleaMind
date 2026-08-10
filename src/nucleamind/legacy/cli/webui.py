@@ -6,15 +6,15 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 
-from nanobot.cli import terminal as cli_terminal
-from nanobot.cli.gateway_runtime import _run_gateway
-from nanobot.cli.runtime_config import (
+from nucleamind.legacy.cli import terminal as cli_terminal
+from nucleamind.legacy.cli.gateway_runtime import _run_gateway
+from nucleamind.legacy.cli.runtime_config import (
     _load_runtime_config,
     _print_config_error,
     _print_runtime_config_validation_error,
     _provider_setup_error,
 )
-from nanobot.cli.webui_support import (
+from nucleamind.legacy.cli.webui_support import (
     _attach_to_background_gateway,
     _confirm_webui_action,
     _ensure_local_webui_channel,
@@ -37,9 +37,9 @@ from nanobot.cli.webui_support import (
     _webui_display_url,
     _webui_endpoint_reachable,
 )
-from nanobot.config.paths import get_workspace_path
-from nanobot.utils.helpers import sync_workspace_templates
-from nanobot.webui.dev import (
+from nucleamind.legacy.config.paths import get_workspace_path
+from nucleamind.legacy.utils.helpers import sync_workspace_templates
+from nucleamind.legacy.webui.dev import (
     WebUIDevError,
     WebUIDevServer,
     run_webui_dev_server,
@@ -100,8 +100,8 @@ def webui(
     ),
 ) -> None:
     """Prepare the local WebUI, start the gateway, and open the browser workbench."""
-    from nanobot.config.loader import resolve_config_env_vars, save_config
-    from nanobot.gateway import GatewayRuntime, GatewayRuntimePaths, GatewayStartOptions
+    from nucleamind.legacy.config.loader import resolve_config_env_vars, save_config
+    from nucleamind.legacy.gateway import GatewayRuntime, GatewayRuntimePaths, GatewayStartOptions
 
     cli_terminal._ensure_interactive_tty_mode()
     if dev and background:

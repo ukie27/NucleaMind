@@ -9,41 +9,41 @@ from typing import TYPE_CHECKING, Any, cast
 from loguru import logger
 from pydantic import Field
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.schema import (
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.registry import ToolRegistry
+from nucleamind.legacy.agent.tools.schema import (
     ArraySchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.bus.events import (
+from nucleamind.legacy.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
     RUNTIME_CONTROL_ACK,
     RUNTIME_CONTROL_IMAGE_GENERATION_RELOAD,
     InboundMessage,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.config.paths import get_media_dir
-from nanobot.config_base import Base
-from nanobot.providers.image_generation import (
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config_base import Base
+from nucleamind.legacy.providers.image_generation import (
     ImageGenerationError,
     ImageGenerationProvider,
     get_image_gen_provider,
     image_gen_provider_configs,
 )
-from nanobot.security.workspace_access import current_tool_workspace
-from nanobot.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
-from nanobot.utils.artifacts import (
+from nucleamind.legacy.security.workspace_access import current_tool_workspace
+from nucleamind.legacy.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
+from nucleamind.legacy.utils.artifacts import (
     ArtifactError,
     generated_image_tool_result,
     store_generated_image_artifact,
 )
-from nanobot.utils.helpers import detect_image_mime
+from nucleamind.legacy.utils.helpers import detect_image_mime
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.context import ToolContext
-    from nanobot.config.schema import ProviderConfig
+    from nucleamind.legacy.agent.tools.context import ToolContext
+    from nucleamind.legacy.config.schema import ProviderConfig
 
 
 class ImageGenerationToolConfig(Base):
@@ -227,7 +227,7 @@ class ImageGenerationTool(Tool):
 async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> dict[str, Any]:
     """Apply the persisted image configuration to the running agent."""
     try:
-        from nanobot.config.loader import load_config, resolve_config_env_vars
+        from nucleamind.legacy.config.loader import load_config, resolve_config_env_vars
 
         config = resolve_config_env_vars(load_config())
         tool_config = config.tools.image_generation

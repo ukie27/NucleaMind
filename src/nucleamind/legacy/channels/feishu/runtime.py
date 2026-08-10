@@ -24,13 +24,13 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.contracts import ChannelInstanceSpec
-from nanobot.channels.feishu.config import FeishuConfig, feishu_default_config
-from nanobot.channels.feishu.instances import (
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.channels.contracts import ChannelInstanceSpec
+from nucleamind.legacy.channels.feishu.config import FeishuConfig, feishu_default_config
+from nucleamind.legacy.channels.feishu.instances import (
     DEFAULT_INSTANCE_ID,
     feishu_app_identity_key,
     feishu_instance_specs,
@@ -38,12 +38,12 @@ from nanobot.channels.feishu.instances import (
     update_feishu_instance_preserving_shape,
     upsert_feishu_instance,
 )
-from nanobot.channels.feishu.websocket import get_feishu_ws_runner
-from nanobot.command.router import normalize_command_text
-from nanobot.config.paths import get_media_dir
-from nanobot.pairing import clear_channel
-from nanobot.utils.helpers import safe_filename
-from nanobot.utils.logging_bridge import redirect_lib_logging
+from nucleamind.legacy.channels.feishu.websocket import get_feishu_ws_runner
+from nucleamind.legacy.command.router import normalize_command_text
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.pairing import clear_channel
+from nucleamind.legacy.utils.helpers import safe_filename
+from nucleamind.legacy.utils.logging_bridge import redirect_lib_logging
 
 if TYPE_CHECKING:
     from lark_oapi.api.im.v1.model import (  # pyright: ignore[reportMissingTypeStubs]
@@ -700,7 +700,7 @@ def sync_saved_feishu_identity_boundary(
     if not current_identity_key:
         return False
 
-    from nanobot.config.loader import load_config, save_config
+    from nucleamind.legacy.config.loader import load_config, save_config
 
     full_config = load_config()
     feishu_cfg = _as_json_object(getattr(full_config.channels, "feishu", None)) or {}
@@ -741,7 +741,7 @@ def save_registration_result(
     name: str | None = None,
 ) -> str:
     """Persist a successful Feishu/Lark registration result to config.json."""
-    from nanobot.config.loader import load_config, save_config
+    from nucleamind.legacy.config.loader import load_config, save_config
 
     full_config = load_config()
     feishu_cfg = _as_json_object(getattr(full_config.channels, "feishu", None)) or {}
@@ -816,7 +816,7 @@ def refresh_saved_feishu_identities(
     if not FEISHU_AVAILABLE:
         return False
 
-    from nanobot.config.loader import load_config, save_config
+    from nucleamind.legacy.config.loader import load_config, save_config
 
     full_config = config or load_config()
     feishu_cfg = getattr(full_config.channels, "feishu", None)
@@ -973,7 +973,7 @@ class FeishuChannel(BaseChannel):
         *,
         instance_id: str = DEFAULT_INSTANCE_ID,
     ) -> bool:
-        from nanobot.config.loader import load_config
+        from nucleamind.legacy.config.loader import load_config
 
         return refresh_saved_feishu_identities(
             load_config(config_path),

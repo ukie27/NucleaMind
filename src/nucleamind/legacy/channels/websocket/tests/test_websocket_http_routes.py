@@ -13,17 +13,17 @@ from urllib.parse import quote, urlencode
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
-from nanobot.optional_features import InstallResult
-from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.session.manager import Session, SessionManager
-from nanobot.triggers.local_store import LocalTriggerStore
-from nanobot.webui.gateway_services import GatewayServices, build_gateway_services
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
+from nucleamind.legacy.cron.service import CronService
+from nucleamind.legacy.cron.types import CronJob, CronPayload, CronSchedule
+from nucleamind.legacy.optional_features import InstallResult
+from nucleamind.legacy.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
+from nucleamind.legacy.session.manager import Session, SessionManager
+from nucleamind.legacy.triggers.local_store import LocalTriggerStore
+from nucleamind.legacy.webui.gateway_services import GatewayServices, build_gateway_services
 
 from .ws_test_client import InProcessHttpChannel
 from .ws_test_client import http_get as _http_get
@@ -172,9 +172,9 @@ def _stub_matrix_feature(
     install_calls: list[str] | None = None,
     channels: list[str] | None = None,
 ) -> None:
-    from nanobot.channels.plugin import ChannelPlugin, load_channel_package
+    from nucleamind.legacy.channels.plugin import ChannelPlugin, load_channel_package
 
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
     requested = channels or ["matrix"]
     matrix = ChannelPlugin(
         name="matrix",
@@ -188,7 +188,7 @@ def _stub_matrix_feature(
         assert websocket is not None
         plugins["websocket"] = websocket
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_plugins",
+        "nucleamind.legacy.channels.registry.discover_plugins",
         lambda enabled_names=None: {
             name: plugin
             for name, plugin in plugins.items()
@@ -196,13 +196,13 @@ def _stub_matrix_feature(
         },
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.optional_dependency_groups",
+        "nucleamind.legacy.optional_features.optional_dependency_groups",
         lambda: {"matrix": deps if deps is not None else []},
     )
-    monkeypatch.setattr("nanobot.optional_features.extra_installed", lambda _name, _deps: installed)
+    monkeypatch.setattr("nucleamind.legacy.optional_features.extra_installed", lambda _name, _deps: installed)
     if install_calls is not None:
         monkeypatch.setattr(
-            "nanobot.optional_features.install_extra",
+            "nucleamind.legacy.optional_features.install_extra",
             lambda name, _deps, *, runner: install_calls.append(name)
             or InstallResult(True, f"{name} support", ["python", "-m", "pip", "install", name]),
         )
@@ -600,8 +600,8 @@ async def test_webui_skill_management_routes(
         skill_dir.rmdir()
         return {"name": name, "enabled": False, "deleted": True}
 
-    monkeypatch.setattr("nanobot.webui.ws_http.set_webui_skill_enabled", set_enabled)
-    monkeypatch.setattr("nanobot.webui.ws_http.delete_webui_skill", delete)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.set_webui_skill_enabled", set_enabled)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.delete_webui_skill", delete)
 
     port = _free_port()
     channel = _ch(
@@ -703,10 +703,10 @@ async def test_webui_skills_marketplace_routes_search_and_install(
         return {"installed": True, "already_installed": False, "name": skill_id}
 
     install_mock = AsyncMock(side_effect=install)
-    monkeypatch.setattr("nanobot.webui.ws_http.search_marketplace_skills", search)
-    monkeypatch.setattr("nanobot.webui.ws_http.trending_marketplace_skills", trending)
-    monkeypatch.setattr("nanobot.webui.ws_http.marketplace_skill_trends", trends)
-    monkeypatch.setattr("nanobot.webui.ws_http.install_marketplace_skill", install_mock)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.search_marketplace_skills", search)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.trending_marketplace_skills", trending)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.marketplace_skill_trends", trends)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.install_marketplace_skill", install_mock)
 
     port = _free_port()
     channel = _ch(
@@ -803,7 +803,7 @@ async def test_webui_skill_install_rejects_overlapping_requests(
         return {"installed": True, "already_installed": False, "name": skill_id}
 
     install_mock = AsyncMock(side_effect=install)
-    monkeypatch.setattr("nanobot.webui.ws_http.install_marketplace_skill", install_mock)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.install_marketplace_skill", install_mock)
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
@@ -846,8 +846,8 @@ async def test_webui_skill_delete_remains_local_only(
     delete = MagicMock()
     policy = MagicMock()
     policy.tools.webui_allow_remote_package_install = True
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda: policy)
-    monkeypatch.setattr("nanobot.webui.ws_http.delete_webui_skill", delete)
+    monkeypatch.setattr("nucleamind.legacy.config.loader.load_config", lambda: policy)
+    monkeypatch.setattr("nucleamind.legacy.webui.ws_http.delete_webui_skill", delete)
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
@@ -876,7 +876,7 @@ async def test_webui_skill_install_honors_remote_install_opt_in(
 ) -> None:
     policy = MagicMock()
     policy.tools.webui_allow_remote_package_install = True
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda: policy)
+    monkeypatch.setattr("nucleamind.legacy.config.loader.load_config", lambda: policy)
 
     async def install(
         source: str,
@@ -895,7 +895,7 @@ async def test_webui_skill_install_honors_remote_install_opt_in(
         return {"installed": True, "already_installed": False, "name": skill_id}
 
     monkeypatch.setattr(
-        "nanobot.webui.ws_http.install_marketplace_skill",
+        "nucleamind.legacy.webui.ws_http.install_marketplace_skill",
         AsyncMock(side_effect=install),
     )
     channel = _ch(
@@ -951,11 +951,11 @@ async def test_cli_apps_routes_require_token_and_return_payload(
         }
 
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.cli_apps_payload",
+        "nucleamind.legacy.webui.settings_routes.cli_apps_payload",
         payload,
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.cli_apps_action",
+        "nucleamind.legacy.webui.settings_routes.cli_apps_action",
         lambda action, query: {
             "apps": [],
             "installed_count": 1,
@@ -1122,13 +1122,13 @@ async def test_pairing_routes_require_token_and_approve_or_deny(
     approved: list[str] = []
     denied: list[str] = []
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.list_pending", lambda: list(pending))
+    monkeypatch.setattr("nucleamind.legacy.webui.settings_routes.list_pending", lambda: list(pending))
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.approve_code",
+        "nucleamind.legacy.webui.settings_routes.approve_code",
         lambda code: approved.append(code) or ("feishu", "ou_123") if code == "ABCD-EFGH" else None,
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.deny_code",
+        "nucleamind.legacy.webui.settings_routes.deny_code",
         lambda code: denied.append(code) or code == "ABCD-EFGH",
     )
 
@@ -1208,7 +1208,7 @@ def test_api_service_settings_read_api_key_from_private_header(bus: MagicMock) -
 
 
 def test_api_service_settings_reject_invalid_private_header(bus: MagicMock) -> None:
-    from nanobot.webui.settings_api import WebUISettingsError
+    from nucleamind.legacy.webui.settings_api import WebUISettingsError
 
     channel = _ch(bus)
     request = _FakeReq(
@@ -1376,7 +1376,7 @@ async def test_channel_connect_runtime_import_error_is_not_reported_as_unsupport
             return BrokenConnector()
 
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.load_channel_plugin",
+        "nucleamind.legacy.webui.settings_routes.load_channel_plugin",
         lambda _name: FakePlugin(),
     )
     channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
@@ -1401,9 +1401,9 @@ async def test_feishu_connect_routes_write_config_and_hot_reload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.channels.feishu import runtime as feishu_module
-    from nanobot.config import loader
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.channels.feishu import runtime as feishu_module
+    from nucleamind.legacy.config import loader
+    from nucleamind.legacy.config.schema import Config
 
     config_path = tmp_path / "config.json"
     loader.save_config(Config(), config_path)
@@ -1439,7 +1439,7 @@ async def test_feishu_connect_routes_write_config_and_hot_reload(
         },
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.nanobot_features_action",
+        "nucleamind.legacy.webui.settings_routes.nanobot_features_action",
         lambda _action, _query, *, allow_install=True: {
             "features": [{
                 "name": "feishu",
@@ -1523,9 +1523,9 @@ def test_feishu_connect_create_appends_instance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.channels.feishu import runtime as feishu_module
-    from nanobot.channels.feishu.connect import FeishuConnectStore
-    from nanobot.config import loader
+    from nucleamind.legacy.channels.feishu import runtime as feishu_module
+    from nucleamind.legacy.channels.feishu.connect import FeishuConnectStore
+    from nucleamind.legacy.config import loader
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -1607,8 +1607,8 @@ async def test_channel_configure_route_saves_discord_config_and_hot_reloads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.config import loader
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.config import loader
+    from nucleamind.legacy.config.schema import Config
 
     config_path = tmp_path / "config.json"
     loader.save_config(Config(), config_path)
@@ -1644,7 +1644,7 @@ async def test_channel_configure_route_saves_discord_config_and_hot_reloads(
             "last_action": {"ok": True, "message": "Enabled channel 'discord'", "enabled": True},
         }
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.nanobot_features_action", fake_feature_action)
+    monkeypatch.setattr("nucleamind.legacy.webui.settings_routes.nanobot_features_action", fake_feature_action)
     calls: list[tuple[str, str, str]] = []
 
     async def channel_feature_action(action: str, name: str, instance_id: str) -> dict[str, Any]:
@@ -1707,8 +1707,8 @@ async def test_channel_configure_route_preserves_existing_channel_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.config import loader
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.config import loader
+    from nucleamind.legacy.config.schema import Config
 
     config_path = tmp_path / "config.json"
     config = Config()
@@ -1775,8 +1775,8 @@ async def test_channel_configure_route_saves_matrix_device_id_without_replacing_
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.config import loader
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.config import loader
+    from nucleamind.legacy.config.schema import Config
 
     config_path = tmp_path / "config.json"
     config = Config()
@@ -1826,8 +1826,8 @@ async def test_channel_configure_route_saves_mattermost_setup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.config import loader
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.config import loader
+    from nucleamind.legacy.config.schema import Config
 
     config_path = tmp_path / "config.json"
     loader.save_config(Config(), config_path)
@@ -1884,7 +1884,7 @@ async def test_nanobot_feature_loopback_reverse_proxy_install_requires_opt_in(
     request = _FakeReq(
         {
             "Authorization": f"Bearer {token}",
-            "Host": "nanobot.example",
+            "Host": "nucleamind.legacy.example",
             "X-Forwarded-For": "203.0.113.42",
         },
         path="/api/settings/nanobot-features/enable?name=matrix",
@@ -2001,7 +2001,7 @@ async def test_cli_apps_catalog_does_not_block_other_webui_http_routes(
             await asyncio.wait_for(release.wait(), 2.0)
         return {"apps": [], "installed_count": 0, "catalog_updated_at": None}
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.cli_apps_payload", slow_payload)
+    monkeypatch.setattr("nucleamind.legacy.webui.settings_routes.cli_apps_payload", slow_payload)
     channel = _ch(bus, session_manager=_seed_session(tmp_path), port=29935)
     server_task = asyncio.create_task(channel.start())
     try:
@@ -2041,7 +2041,7 @@ async def test_cli_apps_route_supports_installed_only_payload(
         calls.append(installed_only)
         return {"apps": [], "installed_count": 0, "catalog_updated_at": None}
 
-    monkeypatch.setattr("nanobot.webui.settings_routes.cli_apps_payload", payload)
+    monkeypatch.setattr("nucleamind.legacy.webui.settings_routes.cli_apps_payload", payload)
     channel = _ch(bus, session_manager=_seed_session(tmp_path), port=29936)
     server_task = asyncio.create_task(channel.start())
     try:
@@ -2068,7 +2068,7 @@ async def test_mcp_presets_routes_require_token_and_return_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.mcp_presets_api.mcp_presets_payload",
+        "nucleamind.legacy.webui.mcp_presets_api.mcp_presets_payload",
         lambda: {
             "presets": [
                 {
@@ -2119,11 +2119,11 @@ async def test_mcp_presets_routes_require_token_and_return_payload(
         }
 
     monkeypatch.setattr(
-        "nanobot.webui.mcp_presets_api.mcp_presets_action",
+        "nucleamind.legacy.webui.mcp_presets_api.mcp_presets_action",
         _mcp_preset_action,
     )
     monkeypatch.setattr(
-        "nanobot.webui.mcp_presets_api.custom_mcp_action",
+        "nucleamind.legacy.webui.mcp_presets_api.custom_mcp_action",
         _custom_action,
     )
 
@@ -2131,7 +2131,7 @@ async def test_mcp_presets_routes_require_token_and_return_payload(
         return {"ok": True, "message": "MCP config reloaded.", "requires_restart": False}
 
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.request_mcp_reload",
+        "nucleamind.legacy.webui.settings_routes.request_mcp_reload",
         _hot_reload,
     )
     channel = _ch(bus, session_manager=_seed_session(tmp_path), port=29913)
@@ -2268,7 +2268,7 @@ async def test_sessions_list_only_returns_websocket_sessions_by_default(
 async def test_webui_sidebar_state_routes_are_config_dir_scoped(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sm = _seed_session(tmp_path, key="websocket:sidebar")
     channel = _ch(bus, session_manager=sm, port=29911)
     server_task = asyncio.create_task(channel.start())
@@ -2317,9 +2317,9 @@ async def test_webui_sidebar_state_routes_are_config_dir_scoped(
 async def test_session_delete_removes_file(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sm = _seed_session(tmp_path, key="websocket:doomed")
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
     append_transcript_object("websocket:doomed", {"event": "user", "chat_id": "doomed", "text": "x"})
     channel = _ch(bus, session_manager=sm, port=29903)
@@ -2682,7 +2682,7 @@ async def test_webui_automations_route_manages_local_triggers(
 async def test_session_delete_blocks_when_bound_automation_exists(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sm = _seed_session(tmp_path, key="websocket:doomed")
     cron = CronService(tmp_path / "cron" / "jobs.json")
     cron.add_job(
@@ -2721,7 +2721,7 @@ async def test_session_delete_blocks_when_bound_automation_exists(
 async def test_session_delete_blocks_and_cascades_local_triggers(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     port = _free_port()
     base_url = f"http://127.0.0.1:{port}"
     sm = _seed_session(tmp_path, key="websocket:doomed")
@@ -2767,7 +2767,7 @@ async def test_session_delete_blocks_and_cascades_local_triggers(
 async def test_session_delete_can_cascade_bound_automations(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sm = _seed_session(tmp_path, key="websocket:doomed")
     cron = CronService(tmp_path / "cron" / "jobs.json")
     cron.add_job(
@@ -2811,7 +2811,7 @@ async def test_session_delete_can_cascade_bound_automations(
 async def test_session_delete_blocks_origin_automation_when_unified_enabled(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sm = _seed_session(tmp_path, key="websocket:doomed")
     cron = CronService(tmp_path / "cron" / "jobs.json")
     cron.add_job(
@@ -2882,9 +2882,9 @@ async def test_session_delete_accepts_percent_encoded_websocket_keys(
 async def test_webui_thread_resigns_assistant_media_urls(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     media_root = tmp_path / "media"
     websocket_media = media_root / "websocket"
     websocket_media.mkdir(parents=True)
@@ -2894,7 +2894,7 @@ async def test_webui_thread_resigns_assistant_media_urls(
     def fake_media_dir(channel: str | None = None) -> Path:
         return websocket_media if channel == "websocket" else media_root
 
-    monkeypatch.setattr("nanobot.webui.media_gateway.get_media_dir", fake_media_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.media_gateway.get_media_dir", fake_media_dir)
 
     append_transcript_object(
         "websocket:video-replay",
@@ -2979,9 +2979,9 @@ async def test_sessions_list_negotiates_gzip_across_repeated_headers(
 async def test_webui_thread_complete_transcript_skips_session_history_read(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:fast-thread"
     sm = _seed_session(tmp_path, key=key)
     for event in (
@@ -3026,9 +3026,9 @@ async def test_webui_thread_complete_transcript_skips_session_history_read(
 async def test_webui_thread_negotiates_gzip_for_large_payloads(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sm = SessionManager(tmp_path)
     append_transcript_object(
         "websocket:gzip-thread",
@@ -3244,7 +3244,7 @@ _LOCAL_BROWSER_REQ = _FakeReq({"Host": "127.0.0.1:8765"})
 
 
 def test_local_browser_request_requires_loopback_host_and_forwarded_origin() -> None:
-    from nanobot.webui.http_utils import is_local_browser_request
+    from nucleamind.legacy.webui.http_utils import is_local_browser_request
 
     assert is_local_browser_request(_LOCAL, {"Host": "127.0.0.1:8765"}) is True
     assert is_local_browser_request(_LOCAL, {"Host": "localhost:8765"}) is True
@@ -3256,7 +3256,7 @@ def test_local_browser_request_requires_loopback_host_and_forwarded_origin() -> 
         is True
     )
     assert is_local_browser_request(_REMOTE, {"Host": "127.0.0.1:8765"}) is False
-    assert is_local_browser_request(_LOCAL, {"Host": "nanobot.example"}) is False
+    assert is_local_browser_request(_LOCAL, {"Host": "nucleamind.legacy.example"}) is False
     assert (
         is_local_browser_request(
             _LOCAL,
@@ -3267,14 +3267,14 @@ def test_local_browser_request_requires_loopback_host_and_forwarded_origin() -> 
     assert (
         is_local_browser_request(
             _LOCAL,
-            {"Host": "127.0.0.1:8765", "X-Forwarded-Host": "nanobot.example"},
+            {"Host": "127.0.0.1:8765", "X-Forwarded-Host": "nucleamind.legacy.example"},
         )
         is False
     )
     assert (
         is_local_browser_request(
             _LOCAL,
-            {"Host": "127.0.0.1:8765", "Forwarded": "for=203.0.113.42;host=nanobot.example"},
+            {"Host": "127.0.0.1:8765", "Forwarded": "for=203.0.113.42;host=nucleamind.legacy.example"},
         )
         is False
     )
@@ -3321,11 +3321,11 @@ def test_trusted_proxy_bootstrap_has_no_tokens(
         _LOCAL,
         _FakeReq(
             {
-                "Host": "nanobot.example",
+                "Host": "nucleamind.legacy.example",
                 "X-Forwarded-For": "203.0.113.42",
-                "Forwarded": "for=203.0.113.42;host=nanobot.example",
+                "Forwarded": "for=203.0.113.42;host=nucleamind.legacy.example",
                 "X-Real-IP": "203.0.113.42",
-                "X-Forwarded-Host": "nanobot.example",
+                "X-Forwarded-Host": "nucleamind.legacy.example",
                 "Cf-Access-Jwt-Assertion": assertion,
             }
         ),
@@ -3347,7 +3347,7 @@ async def test_trusted_proxy_authorizes_rest_without_api_token(bus: MagicMock) -
         _LOCAL,
         _FakeReq(
             {
-                "Host": "nanobot.example",
+                "Host": "nucleamind.legacy.example",
                 "Cf-Access-Jwt-Assertion": "present",
             },
             path="/api/sessions",
@@ -3373,7 +3373,7 @@ def test_forwarding_headers_alone_never_authorize_bootstrap(bus: MagicMock) -> N
         _REMOTE,
         _FakeReq(
             {
-                "Host": "nanobot.example",
+                "Host": "nucleamind.legacy.example",
                 "X-Forwarded-For": "127.0.0.1",
                 "Forwarded": "for=127.0.0.1",
                 "X-Real-IP": "127.0.0.1",
@@ -3413,7 +3413,7 @@ def test_trusted_proxy_matches_ip_versions_and_mapped_peers(
     peer: str,
     cidr: str,
 ) -> None:
-    from nanobot.webui.http_utils import is_trusted_proxy_authenticated_request
+    from nucleamind.legacy.webui.http_utils import is_trusted_proxy_authenticated_request
 
     config = WebSocketConfig.model_validate(_trusted_proxy_config([cidr]))
     request = _FakeReq({"Cf-Access-Jwt-Assertion": "present"})
@@ -3501,14 +3501,14 @@ def test_bootstrap_ws_url_uses_forwarded_https_host(bus: MagicMock) -> None:
         _FakeReq(
             {
                 "Authorization": "Bearer s3cret",
-                "Host": "nanobot.example",
+                "Host": "nucleamind.legacy.example",
                 "X-Forwarded-Proto": "https",
             }
         ),
     )
     assert resp.status_code == 200
     body = json.loads(resp.body)
-    assert body["ws_url"] == "wss://nanobot.example/"
+    assert body["ws_url"] == "wss://nucleamind.legacy.example/"
 
 
 def test_bootstrap_ws_url_uses_configured_public_url(bus: MagicMock) -> None:
@@ -3555,7 +3555,7 @@ def test_bootstrap_without_auth_rejects_reverse_proxy_remote_headers(bus: MagicM
     channel = _ch(bus, host="127.0.0.1")
     resp = channel.gateway.http._handle_bootstrap(
         _LOCAL,
-        _FakeReq({"Host": "nanobot.example", "X-Forwarded-For": "203.0.113.42"}),
+        _FakeReq({"Host": "nucleamind.legacy.example", "X-Forwarded-For": "203.0.113.42"}),
     )
     assert resp.status_code == 403
 
@@ -3596,7 +3596,7 @@ def test_authenticated_bootstrap_returns_distinct_api_token(bus: MagicMock) -> N
 
 def test_bootstrap_prefers_runtime_model_name(bus: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.ws_http._default_model_name_from_config",
+        "nucleamind.legacy.webui.ws_http._default_model_name_from_config",
         lambda: "from-disk",
     )
     channel = _ch(bus, host="127.0.0.1", runtime_model_name=lambda: "  live/model  ")
@@ -3608,7 +3608,7 @@ def test_bootstrap_prefers_runtime_model_name(bus: MagicMock, monkeypatch: pytes
 
 def test_bootstrap_falls_back_when_runtime_returns_empty(bus: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.ws_http._default_model_name_from_config",
+        "nucleamind.legacy.webui.ws_http._default_model_name_from_config",
         lambda: "from-disk",
     )
     channel = _ch(bus, host="127.0.0.1", runtime_model_name=lambda: "   ")
@@ -3620,7 +3620,7 @@ def test_bootstrap_falls_back_when_runtime_returns_empty(bus: MagicMock, monkeyp
 
 def test_bootstrap_falls_back_when_runtime_raises(bus: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "nanobot.webui.ws_http._default_model_name_from_config",
+        "nucleamind.legacy.webui.ws_http._default_model_name_from_config",
         lambda: "from-disk",
     )
 

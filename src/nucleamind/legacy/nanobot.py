@@ -7,18 +7,18 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.hook import AgentHook, SDKCaptureHook
-from nanobot.agent.hooks import create_file_edit_activity_hook
-from nanobot.agent.loop import AgentLoop
-from nanobot.config.schema import Config
-from nanobot.providers.image_generation import image_gen_provider_configs
-from nanobot.sdk.clients import MemoryClient, RuntimeClient, SessionClient
-from nanobot.sdk.runtime import (
+from nucleamind.legacy.agent.hook import AgentHook, SDKCaptureHook
+from nucleamind.legacy.agent.hooks import create_file_edit_activity_hook
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.providers.image_generation import image_gen_provider_configs
+from nucleamind.legacy.sdk.clients import MemoryClient, RuntimeClient, SessionClient
+from nucleamind.legacy.sdk.runtime import (
     build_process_direct_kwargs,
     ensure_single_model_selector,
 )
-from nanobot.sdk.streaming import RunStream, SDKStreamEmitter, SDKStreamingHook
-from nanobot.sdk.types import (
+from nucleamind.legacy.sdk.streaming import RunStream, SDKStreamEmitter, SDKStreamingHook
+from nucleamind.legacy.sdk.types import (
     STREAM_EVENT_REASONING_COMPLETED,
     STREAM_EVENT_REASONING_DELTA,
     STREAM_EVENT_RUN_COMPLETED,
@@ -37,7 +37,7 @@ from nanobot.sdk.types import (
     StreamEventType,
     result_from_response,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 __all__ = [
     "Nanobot",
@@ -96,7 +96,7 @@ class Nanobot:
             model: Override the instance default model.
             model_preset: Override the instance default model preset.
         """
-        from nanobot.config.loader import load_config, resolve_config_env_vars
+        from nucleamind.legacy.config.loader import load_config, resolve_config_env_vars
 
         ensure_single_model_selector(model=model, model_preset=model_preset)
         resolved: Path | None = None

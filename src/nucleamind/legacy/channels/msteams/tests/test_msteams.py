@@ -5,7 +5,7 @@ import pytest
 
 # Check optional msteams dependencies before running tests
 try:
-    import nanobot.channels.msteams.runtime as msteams_module
+    import nucleamind.legacy.channels.msteams.runtime as msteams_module
 
     MSTEAMS_AVAILABLE = msteams_module.MSTEAMS_AVAILABLE
 except ImportError:
@@ -21,8 +21,8 @@ if not MSTEAMS_AVAILABLE:
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.channels.msteams.runtime import ConversationRef, MSTeamsChannel
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.channels.msteams.runtime import ConversationRef, MSTeamsChannel
 
 
 class DummyBus:
@@ -63,7 +63,7 @@ class FakeHttpClient:
 
 @pytest.fixture
 def make_channel(tmp_path, monkeypatch):
-    monkeypatch.setattr("nanobot.channels.msteams.runtime.get_workspace_path", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.channels.msteams.runtime.get_workspace_path", lambda: tmp_path)
 
     def _make_channel(**config_overrides):
         config = {

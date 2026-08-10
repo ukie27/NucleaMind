@@ -17,12 +17,12 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import Field
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_media_dir, get_runtime_subdir
-from nanobot.config.schema import Base
-from nanobot.security.network import PinnedDNSAsyncTransport
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_media_dir, get_runtime_subdir
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.security.network import PinnedDNSAsyncTransport
 
 
 class WhatsAppConfig(Base):

@@ -36,15 +36,15 @@ import aiohttp
 from loguru import logger
 from pydantic import Field
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.schema import Base
-from nanobot.security.network import validate_url_target
-from nanobot.utils.logging_bridge import redirect_lib_logging
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.security.network import validate_url_target
+from nucleamind.legacy.utils.logging_bridge import redirect_lib_logging
 
 try:
-    from nanobot.config.paths import get_media_dir
+    from nucleamind.legacy.config.paths import get_media_dir
 except Exception:  # pragma: no cover
     get_media_dir = None  # type: ignore
 

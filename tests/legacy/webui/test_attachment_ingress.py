@@ -7,11 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.webui.attachment_ingress import (
+from nucleamind.legacy.webui.attachment_ingress import (
     extract_data_url_mime,
     store_inbound_attachments,
 )
-from nanobot.webui.ingress_policy import AttachmentIngressLimits
+from nucleamind.legacy.webui.ingress_policy import AttachmentIngressLimits
 
 
 def _data_url(mime: str, payload: bytes) -> str:

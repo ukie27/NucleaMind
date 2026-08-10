@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from nanobot.channels.contracts import channel_field_value
-from nanobot.config.paths import get_config_path
+from nucleamind.legacy.channels.contracts import channel_field_value
+from nucleamind.legacy.config.paths import get_config_path
 
 
 def local_state_present(section: Any) -> bool:

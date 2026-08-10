@@ -1,8 +1,8 @@
 import os
 import plistlib
 
-from nanobot.gateway import GatewayStartOptions
-from nanobot.gateway.service import GatewayServiceInstaller, GatewayServiceOptions
+from nucleamind.legacy.gateway import GatewayStartOptions
+from nucleamind.legacy.gateway.service import GatewayServiceInstaller, GatewayServiceOptions
 
 
 def _expected_launchd_domain() -> str:

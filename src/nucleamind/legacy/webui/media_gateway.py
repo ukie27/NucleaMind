@@ -10,19 +10,19 @@ from typing import Any
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
-from nanobot.config.paths import get_media_dir
-from nanobot.webui.attachment_ingress import (
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.webui.attachment_ingress import (
     AttachmentIngressResult,
     store_inbound_attachments,
 )
-from nanobot.webui.ingress_policy import AttachmentIngressLimits
-from nanobot.webui.media_api import (
+from nucleamind.legacy.webui.ingress_policy import AttachmentIngressLimits
+from nucleamind.legacy.webui.media_api import (
     serve_signed_media,
     sign_media_path,
     sign_or_stage_media_path,
     signed_media_attachments,
 )
-from nanobot.webui.transcript import rewrite_local_markdown_images
+from nucleamind.legacy.webui.transcript import rewrite_local_markdown_images
 
 
 def _default_media_dir(channel: str | None) -> Path:

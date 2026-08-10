@@ -10,32 +10,32 @@ from typing import Any
 import typer
 from rich.console import Console
 
-from nanobot import __logo__
-from nanobot.agent.hooks import create_file_edit_activity_hook
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy import __logo__
+from nucleamind.legacy.agent.hooks import create_file_edit_activity_hook
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.outbound_events import (
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
     outbound_event_from_message,
 )
-from nanobot.cli import terminal as cli_terminal
-from nanobot.cli.log_control import _set_nanobot_logs
-from nanobot.cli.runtime_config import (
+from nucleamind.legacy.cli import terminal as cli_terminal
+from nucleamind.legacy.cli.log_control import _set_nanobot_logs
+from nucleamind.legacy.cli.runtime_config import (
     _load_runtime_config,
     _migrate_cron_store,
     _model_display,
     _print_agent_start_error,
 )
-from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
-from nanobot.config.paths import is_default_workspace
-from nanobot.utils.helpers import (
+from nucleamind.legacy.cli.stream import StreamRenderer, ThinkingSpinner
+from nucleamind.legacy.config.paths import is_default_workspace
+from nucleamind.legacy.utils.helpers import (
     sanitize_surrogates as _sanitize_surrogates,
 )
-from nanobot.utils.helpers import (
+from nucleamind.legacy.utils.helpers import (
     sync_workspace_templates,
 )
-from nanobot.utils.restart import (
+from nucleamind.legacy.utils.restart import (
     consume_restart_notice_from_env,
     format_restart_completed_message,
     should_show_cli_restart_notice,
@@ -61,10 +61,10 @@ def agent(
     ),
 ):
     """Interact with the agent directly."""
-    from nanobot.bus.queue import MessageBus
-    from nanobot.cron.service import CronService
-    from nanobot.providers.factory import make_provider
-    from nanobot.providers.image_generation import image_gen_provider_configs
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.cron.service import CronService
+    from nucleamind.legacy.providers.factory import make_provider
+    from nucleamind.legacy.providers.image_generation import image_gen_provider_configs
 
     runtime_config = _load_runtime_config(config, workspace)
     try:
@@ -177,7 +177,7 @@ def agent(
         asyncio.run(run_once())
     else:
         # Interactive mode — route through bus like other channels
-        from nanobot.bus.events import InboundMessage
+        from nucleamind.legacy.bus.events import InboundMessage
 
         cli_terminal._init_prompt_session()
         _model, _preset_tag = _model_display(runtime_config)

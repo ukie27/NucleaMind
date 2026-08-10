@@ -17,21 +17,21 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 from aiohttp import web
 from loguru import logger
 
-from nanobot.config.paths import get_media_dir
-from nanobot.utils.helpers import safe_filename
-from nanobot.utils.media_decode import (
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.utils.helpers import safe_filename
+from nucleamind.legacy.utils.media_decode import (
     MAX_FILE_SIZE,
 )
-from nanobot.utils.media_decode import (
+from nucleamind.legacy.utils.media_decode import (
     FileSizeExceeded as _FileSizeExceeded,
 )
-from nanobot.utils.media_decode import (
+from nucleamind.legacy.utils.media_decode import (
     save_base64_data_url as _save_base64_data_url,
 )
-from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from nucleamind.legacy.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
-    from nanobot.agent.loop import AgentLoop
+    from nucleamind.legacy.agent.loop import AgentLoop
 
 __all__ = (
     "MAX_FILE_SIZE",

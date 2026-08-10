@@ -7,13 +7,13 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.runner_helpers import make_run_spec
-from nanobot.config.schema import AgentDefaults
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nucleamind.legacy.config.schema import AgentDefaults
+from nucleamind.legacy.providers.base import LLMResponse, ToolCallRequest
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
 async def test_runner_persists_large_tool_results_for_follow_up_calls(tmp_path):
-    from nanobot.agent.runner import AgentRunner
+    from nucleamind.legacy.agent.runner import AgentRunner
 
     provider = MagicMock()
     captured_second_call: list[dict] = []
@@ -54,7 +54,7 @@ async def test_runner_persists_large_tool_results_for_follow_up_calls(tmp_path):
 
 
 def test_persist_tool_result_prunes_old_session_buckets(tmp_path):
-    from nanobot.utils.helpers import maybe_persist_tool_result
+    from nucleamind.legacy.utils.helpers import maybe_persist_tool_result
 
     root = tmp_path / ".nanobot" / "tool-results"
     old_bucket = root / "old_session"
@@ -83,7 +83,7 @@ def test_persist_tool_result_prunes_old_session_buckets(tmp_path):
 
 
 def test_persist_tool_result_leaves_no_temp_files(tmp_path):
-    from nanobot.utils.helpers import maybe_persist_tool_result
+    from nucleamind.legacy.utils.helpers import maybe_persist_tool_result
 
     root = tmp_path / ".nanobot" / "tool-results"
     maybe_persist_tool_result(
@@ -99,16 +99,16 @@ def test_persist_tool_result_leaves_no_temp_files(tmp_path):
 
 
 def test_persist_tool_result_logs_cleanup_failures(monkeypatch, tmp_path):
-    from nanobot.utils.helpers import maybe_persist_tool_result
+    from nucleamind.legacy.utils.helpers import maybe_persist_tool_result
 
     warnings: list[str] = []
 
     monkeypatch.setattr(
-        "nanobot.utils.helpers._cleanup_tool_result_buckets",
+        "nucleamind.legacy.utils.helpers._cleanup_tool_result_buckets",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("busy")),
     )
     monkeypatch.setattr(
-        "nanobot.utils.helpers.logger.exception",
+        "nucleamind.legacy.utils.helpers.logger.exception",
         lambda message, *args: warnings.append(message.format(*args)),
     )
 
@@ -126,7 +126,7 @@ def test_persist_tool_result_logs_cleanup_failures(monkeypatch, tmp_path):
 
 async def test_read_file_result_is_not_offloaded(tmp_path):
     """read_file must not trigger generic offloading (prevents persist->read->persist loops)."""
-    from nanobot.agent.runner import AgentRunner
+    from nucleamind.legacy.agent.runner import AgentRunner
 
     provider = MagicMock()
     captured_second_call: list[dict] = []
@@ -171,7 +171,7 @@ async def test_read_file_result_is_not_offloaded(tmp_path):
 
 
 async def test_runner_keeps_going_when_tool_result_persistence_fails():
-    from nanobot.agent.runner import AgentRunner
+    from nucleamind.legacy.agent.runner import AgentRunner
 
     provider = MagicMock()
     captured_second_call: list[dict] = []
@@ -195,7 +195,7 @@ async def test_runner_keeps_going_when_tool_result_persistence_fails():
 
     runner = AgentRunner()
     with patch(
-        "nanobot.agent.context_governance.maybe_persist_tool_result",
+        "nucleamind.legacy.agent.context_governance.maybe_persist_tool_result",
         side_effect=RuntimeError("disk full"),
     ):
         result = await runner.run(make_run_spec(provider,

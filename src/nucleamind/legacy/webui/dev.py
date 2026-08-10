@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from nanobot.webui.build import default_webui_source_dir, pick_webui_build_runner
+from nucleamind.legacy.webui.build import default_webui_source_dir, pick_webui_build_runner
 
 WEBUI_DEV_HOST = "127.0.0.1"
 WEBUI_DEV_PORT = 5173

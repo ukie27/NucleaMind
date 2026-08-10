@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.utils.helpers import build_status_content
-from nanobot.utils.searchusage import (
+from nucleamind.legacy.utils.helpers import build_status_content
+from nucleamind.legacy.utils.searchusage import (
     SearchUsageInfo,
     _parse_tavily_usage,
     fetch_search_usage,

@@ -5,10 +5,10 @@ import typer
 from rich.console import Console
 from typer.testing import CliRunner
 
-from nanobot.cli.gateway import create_gateway_app
-from nanobot.config.schema import Config
-from nanobot.gateway import GatewayStartOptions, GatewayStatus, RuntimeResult
-from nanobot.gateway.service import GatewayServiceOptions, GatewayServiceResult
+from nucleamind.legacy.cli.gateway import create_gateway_app
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.gateway import GatewayStartOptions, GatewayStatus, RuntimeResult
+from nucleamind.legacy.gateway.service import GatewayServiceOptions, GatewayServiceResult
 
 runner = CliRunner()
 

@@ -35,11 +35,11 @@ except ImportError:  # pragma: no cover
 import httpx
 from pydantic import Field
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_workspace_path
-from nanobot.config.schema import Base
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_workspace_path
+from nucleamind.legacy.config.schema import Base
 
 MSTEAMS_AVAILABLE = (
     importlib.util.find_spec("jwt") is not None

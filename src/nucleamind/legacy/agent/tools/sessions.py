@@ -10,11 +10,11 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_session_key
-from nanobot.agent.tools.schema import StringSchema, tool_parameters_schema
-from nanobot.session.manager import SessionManager
-from nanobot.webui.session_access import WebuiSessionAccess
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.context import ToolContext, current_request_session_key
+from nucleamind.legacy.agent.tools.schema import StringSchema, tool_parameters_schema
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.session_access import WebuiSessionAccess
 
 _SEARCH_LIMIT = 5
 _READ_LIMIT = 8

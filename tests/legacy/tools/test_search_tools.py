@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.subagent import SubagentManager, SubagentStatus
-from nanobot.agent.tools.search import FindFilesTool, GrepTool
-from nanobot.agent.tools.web import WebSearchTool
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import WebSearchConfig
-from nanobot.providers.base import GenerationSettings
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.agent.subagent import SubagentManager, SubagentStatus
+from nucleamind.legacy.agent.tools.search import FindFilesTool, GrepTool
+from nucleamind.legacy.agent.tools.web import WebSearchTool
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.config.schema import WebSearchConfig
+from nucleamind.legacy.providers.base import GenerationSettings
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 
 @pytest.mark.asyncio

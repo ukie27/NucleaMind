@@ -71,7 +71,7 @@ def _start_gateway(config_path: Path, log_path: Path) -> subprocess.Popen[bytes]
                 "--config",
                 str(config_path),
             ],
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=Path(__file__).resolve().parents[3],
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )

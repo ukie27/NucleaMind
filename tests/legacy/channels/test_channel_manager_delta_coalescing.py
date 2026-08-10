@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import (
     ProgressEvent,
     RetryWaitEvent,
     StreamDeltaEvent,
@@ -14,11 +14,11 @@ from nanobot.bus.outbound_events import (
     outbound_event_from_message,
     outbound_message_for_event,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.channels.manager import ChannelManager
-from nanobot.channels.mattermost.runtime import MattermostChannel
-from nanobot.config.schema import Config
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.channels.manager import ChannelManager
+from nucleamind.legacy.channels.mattermost.runtime import MattermostChannel
+from nucleamind.legacy.config.schema import Config
 
 
 class MockChannel(BaseChannel):

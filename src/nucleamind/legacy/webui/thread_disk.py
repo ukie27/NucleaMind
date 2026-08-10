@@ -6,9 +6,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from nanobot.config.paths import get_webui_dir
-from nanobot.session.manager import SessionManager
-from nanobot.webui.transcript import delete_webui_transcript
+from nucleamind.legacy.config.paths import get_webui_dir
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.transcript import delete_webui_transcript
 
 
 def webui_thread_file_path(session_key: str) -> Path:

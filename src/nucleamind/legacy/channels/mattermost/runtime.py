@@ -11,13 +11,18 @@ from typing import Any, cast
 import httpx
 from pydantic import Field, model_validator
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_media_dir
-from nanobot.config_base import Base
-from nanobot.pairing import PAIRING_CODE_META_KEY, format_pairing_reply, generate_code, is_approved
-from nanobot.utils.helpers import safe_filename, split_message
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.config_base import Base
+from nucleamind.legacy.pairing import (
+    PAIRING_CODE_META_KEY,
+    format_pairing_reply,
+    generate_code,
+    is_approved,
+)
+from nucleamind.legacy.utils.helpers import safe_filename, split_message
 
 MATTERMOST_MAX_MESSAGE_LEN = 16383
 MATTERMOST_WS_RECONNECT_BASE_DELAY = 1

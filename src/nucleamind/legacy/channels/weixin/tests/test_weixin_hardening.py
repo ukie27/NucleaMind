@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.manager import ChannelManager
-from nanobot.channels.weixin.manifest import SETUP_SPEC
-from nanobot.channels.weixin.runtime import (
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.manager import ChannelManager
+from nucleamind.legacy.channels.weixin.manifest import SETUP_SPEC
+from nucleamind.legacy.channels.weixin.runtime import (
     ITEM_TOOL_CALL_RESULT,
     ITEM_TOOL_CALL_START,
     WEIXIN_MAX_MESSAGE_LEN,
@@ -25,7 +25,7 @@ from nanobot.channels.weixin.runtime import (
     sanitize_weixin_markdown,
     split_weixin_message,
 )
-from nanobot.config.schema import Config
+from nucleamind.legacy.config.schema import Config
 
 
 def _channel(**config: object) -> WeixinChannel:
@@ -112,7 +112,7 @@ async def test_channel_manager_does_not_retry_permanent_weixin_error(monkeypatch
         )
     )
     sleep = AsyncMock()
-    monkeypatch.setattr("nanobot.channels.manager.asyncio.sleep", sleep)
+    monkeypatch.setattr("nucleamind.legacy.channels.manager.asyncio.sleep", sleep)
 
     await manager._send_with_retry(
         channel,
@@ -135,7 +135,7 @@ async def test_weixin_http_clients_ignore_system_proxy(tmp_path, monkeypatch) ->
         captured.append(kwargs)
         return FakeClient()
 
-    monkeypatch.setattr("nanobot.channels.weixin.runtime.httpx.AsyncClient", make_client)
+    monkeypatch.setattr("nucleamind.legacy.channels.weixin.runtime.httpx.AsyncClient", make_client)
 
     connect_channel = _channel(stateDir=str(tmp_path / "connect"))
     connect_channel.connect_open_client()

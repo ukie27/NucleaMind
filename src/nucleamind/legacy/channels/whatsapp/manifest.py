@@ -1,10 +1,10 @@
 """WhatsApp management contract."""
 
-from nanobot.channels._manifest import DIRECT_GROUP_POLICIES, field
-from nanobot.channels.contracts import ChannelManagementSpec, ChannelSetupSpec
-from nanobot.channels.plugin import ChannelPlugin
-from nanobot.channels.whatsapp.state import local_state_present
-from nanobot.channels.whatsapp.validation import validate
+from nucleamind.legacy.channels._manifest import DIRECT_GROUP_POLICIES, field
+from nucleamind.legacy.channels.contracts import ChannelManagementSpec, ChannelSetupSpec
+from nucleamind.legacy.channels.plugin import ChannelPlugin
+from nucleamind.legacy.channels.whatsapp.state import local_state_present
+from nucleamind.legacy.channels.whatsapp.validation import validate
 
 SETUP_SPEC = ChannelSetupSpec(
     fields={

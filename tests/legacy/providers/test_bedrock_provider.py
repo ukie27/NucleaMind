@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from nanobot.config.schema import Config, ProvidersConfig
-from nanobot.providers.bedrock_provider import BedrockProvider
-from nanobot.providers.registry import find_by_name
+from nucleamind.legacy.config.schema import Config, ProvidersConfig
+from nucleamind.legacy.providers.bedrock_provider import BedrockProvider
+from nucleamind.legacy.providers.registry import find_by_name
 
 
 class FakeClient:

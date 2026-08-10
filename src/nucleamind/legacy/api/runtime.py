@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from nanobot.process_runtime import (
+from nucleamind.legacy.process_runtime import (
     ManagedProcessRuntime,
     ProcessRuntimePaths,
     ProcessStartOptions,

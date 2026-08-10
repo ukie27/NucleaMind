@@ -1,4 +1,4 @@
-"""Tests for nanobot.agent.skills.SkillsLoader."""
+"""Tests for nucleamind.legacy.agent.skills.SkillsLoader."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.skills import SkillsLoader
+from nucleamind.legacy.agent.skills import SkillsLoader
 
 
 def _write_skill(
@@ -143,7 +143,7 @@ def test_list_skills_filter_unavailable_excludes_unmet_bin_requirement(
             return None
         return "/usr/bin/true"
 
-    monkeypatch.setattr("nanobot.agent.skills.shutil.which", fake_which)
+    monkeypatch.setattr("nucleamind.legacy.agent.skills.shutil.which", fake_which)
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     assert loader.list_skills(filter_unavailable=True) == []
@@ -168,7 +168,7 @@ def test_list_skills_filter_unavailable_includes_when_bin_requirement_met(
             return "/fake/nanobot_test_fake_binary"
         return None
 
-    monkeypatch.setattr("nanobot.agent.skills.shutil.which", fake_which)
+    monkeypatch.setattr("nucleamind.legacy.agent.skills.shutil.which", fake_which)
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     entries = loader.list_skills(filter_unavailable=True)
@@ -191,7 +191,7 @@ def test_list_skills_filter_unavailable_false_keeps_unmet_requirements(
     builtin = tmp_path / "builtin"
     builtin.mkdir()
 
-    monkeypatch.setattr("nanobot.agent.skills.shutil.which", lambda _cmd: None)
+    monkeypatch.setattr("nucleamind.legacy.agent.skills.shutil.which", lambda _cmd: None)
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     entries = loader.list_skills(filter_unavailable=False)
@@ -237,13 +237,13 @@ def test_list_skills_openclaw_metadata_parsed_for_requirements(
     builtin = tmp_path / "builtin"
     builtin.mkdir()
 
-    monkeypatch.setattr("nanobot.agent.skills.shutil.which", lambda _cmd: None)
+    monkeypatch.setattr("nucleamind.legacy.agent.skills.shutil.which", lambda _cmd: None)
 
     loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
     assert loader.list_skills(filter_unavailable=True) == []
 
     monkeypatch.setattr(
-        "nanobot.agent.skills.shutil.which",
+        "nucleamind.legacy.agent.skills.shutil.which",
         lambda cmd: "/x" if cmd == "nanobot_oc_bin" else None,
     )
     entries = loader.list_skills(filter_unavailable=True)

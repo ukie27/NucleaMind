@@ -20,12 +20,12 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools import mcp as mcp_module
-from nanobot.agent.tools.mcp import MCPToolWrapper
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import MCPServerConfig
-from nanobot.security import network as security_network
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.agent.tools import mcp as mcp_module
+from nucleamind.legacy.agent.tools.mcp import MCPToolWrapper
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.config.schema import MCPServerConfig
+from nucleamind.legacy.security import network as security_network
 
 # Leave enough headroom for reconnect handshakes on slower CI hosts; each test
 # still waits beyond this deadline explicitly before exercising recovery.

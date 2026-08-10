@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.events import InboundMessage
-from nanobot.command.builtin import build_help_text, register_builtin_commands
-from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.triggers.local_store import LocalTriggerStore
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.command.builtin import build_help_text, register_builtin_commands
+from nucleamind.legacy.command.router import CommandContext, CommandRouter
+from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
+from nucleamind.legacy.triggers.local_store import LocalTriggerStore
 
 
 @pytest.mark.asyncio

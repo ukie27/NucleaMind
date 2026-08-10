@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-import nanobot.channels.whatsapp.runtime as whatsapp_module
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.whatsapp.runtime import (
+import nucleamind.legacy.channels.whatsapp.runtime as whatsapp_module
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.whatsapp.runtime import (
     WhatsAppChannel,
     _legacy_bridge_config_fields,
     _NeonizeAPI,
@@ -731,8 +731,8 @@ async def test_unauthorized_voice_message_does_not_download_or_transcribe(
 @pytest.mark.asyncio
 async def test_unauthorized_dm_uses_base_pairing_flow(monkeypatch) -> None:
     _patch_neonize_api(monkeypatch)
-    monkeypatch.setattr("nanobot.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH")
-    monkeypatch.setattr("nanobot.channels.base.is_approved", lambda _ch, _sid: False)
+    monkeypatch.setattr("nucleamind.legacy.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH")
+    monkeypatch.setattr("nucleamind.legacy.channels.base.is_approved", lambda _ch, _sid: False)
     client = SimpleNamespace(send_message=AsyncMock(), download_any=AsyncMock())
     ch = WhatsAppChannel({"enabled": True, "allowFrom": []}, MagicMock())
     ch._client = client

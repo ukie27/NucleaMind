@@ -9,7 +9,7 @@ from zipfile import BadZipFile, ZipFile
 
 from loguru import logger
 
-from nanobot.utils.helpers import detect_image_mime
+from nucleamind.legacy.utils.helpers import detect_image_mime
 
 # Supported file extensions for text extraction
 SUPPORTED_EXTENSIONS: set[str] = {

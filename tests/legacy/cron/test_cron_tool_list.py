@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.agent.tools.cron import CronTool
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule
+from nucleamind.legacy.agent.tools.context import RequestContext, request_context
+from nucleamind.legacy.agent.tools.cron import CronTool
+from nucleamind.legacy.cron.service import CronService
+from nucleamind.legacy.cron.types import CronJob, CronJobState, CronPayload, CronSchedule
 
 
 def _make_tool(tmp_path) -> CronTool:

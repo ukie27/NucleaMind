@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.session.manager import (
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.providers.base import LLMResponse
+from nucleamind.legacy.providers.factory import ProviderSnapshot
+from nucleamind.legacy.session.manager import (
     FILE_MAX_MESSAGES,
     Session,
     replay_max_messages_for_context,

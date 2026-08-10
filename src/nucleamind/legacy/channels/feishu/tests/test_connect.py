@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from nanobot.channels.feishu import runtime as feishu
-from nanobot.channels.feishu.connect import FeishuConnectStore
+from nucleamind.legacy.channels.feishu import runtime as feishu
+from nucleamind.legacy.channels.feishu.connect import FeishuConnectStore
 
 
 @pytest.mark.asyncio

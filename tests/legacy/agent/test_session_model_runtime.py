@@ -2,18 +2,18 @@ import asyncio
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ModelPresetConfig
-from nanobot.nanobot import Nanobot
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.sdk.types import SessionSnapshot
-from nanobot.session.model_selection import (
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.config.schema import ModelPresetConfig
+from nucleamind.legacy.nanobot import Nanobot
+from nucleamind.legacy.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from nucleamind.legacy.providers.factory import ProviderSnapshot
+from nucleamind.legacy.sdk.types import SessionSnapshot
+from nucleamind.legacy.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )
-from nanobot.utils.llm_runtime import LLMRuntime
+from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 
 class RecordingProvider(LLMProvider):

@@ -14,19 +14,19 @@ from typing import Any, cast
 import httpx
 from loguru import logger
 
-from nanobot import __version__
-from nanobot.providers.base import (
+from nucleamind.legacy import __version__
+from nucleamind.legacy.providers.base import (
     LLMProvider,
     LLMResponse,
     ToolCallRequest,
     resolve_stream_idle_timeout_s,
 )
-from nanobot.providers.openai_responses import (
+from nucleamind.legacy.providers.openai_responses import (
     consume_sse_with_reasoning,
     convert_messages,
     convert_tools,
 )
-from nanobot.providers.xai_oauth import (
+from nucleamind.legacy.providers.xai_oauth import (
     XAI_CLIENT_VERSION,
     XAIToken,
     get_xai_oauth_token,

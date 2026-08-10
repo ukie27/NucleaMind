@@ -861,7 +861,7 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
     from importlib.resources import files as pkg_files
 
     try:
-        tpl = pkg_files("nanobot") / "templates"
+        tpl = pkg_files("nucleamind.legacy") / "templates"
     except Exception:
         return []
     if not tpl.is_dir():
@@ -893,7 +893,7 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
 
     # Initialize git for memory version control
     try:
-        from nanobot.utils.gitstore import GitStore
+        from nucleamind.legacy.utils.gitstore import GitStore
 
         gs = GitStore(
             workspace,
@@ -915,7 +915,7 @@ def load_bundled_template(template_name: str) -> str | None:
     from importlib.resources import files as pkg_files
 
     with suppress(Exception):
-        tpl = pkg_files("nanobot") / "templates" / template_name
+        tpl = pkg_files("nucleamind.legacy") / "templates" / template_name
         if tpl.is_file():
             return tpl.read_text(encoding="utf-8")
     return None

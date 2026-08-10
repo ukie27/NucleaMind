@@ -1,4 +1,4 @@
-"""Persistence tests for ``nanobot.cron.service.CronService``.
+"""Persistence tests for ``nucleamind.legacy.cron.service.CronService``.
 
 These tests target the specific failure mode where a corrupt or partially
 written ``jobs.json`` would silently turn into an empty job list on the next
@@ -15,8 +15,8 @@ from typing import Callable
 
 import pytest
 
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+from nucleamind.legacy.cron.service import CronService
+from nucleamind.legacy.cron.types import CronJob, CronPayload, CronSchedule
 
 
 def _seeded_store(tmp_path: Path) -> tuple[CronService, Path]:

@@ -12,9 +12,13 @@ try:
 except ImportError:
     pytest.skip("Slack dependencies not installed (slack-sdk)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.slack.runtime import SLACK_MAX_MESSAGE_LEN, SlackChannel, SlackConfig
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.slack.runtime import (
+    SLACK_MAX_MESSAGE_LEN,
+    SlackChannel,
+    SlackConfig,
+)
 
 
 class _FakeAsyncWebClient:

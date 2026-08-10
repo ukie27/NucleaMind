@@ -4,8 +4,8 @@ from zoneinfo import ZoneInfoNotFoundError
 import pytest
 import tiktoken
 
-from nanobot.utils import helpers
-from nanobot.utils.helpers import (
+from nucleamind.legacy.utils import helpers
+from nucleamind.legacy.utils.helpers import (
     _write_text_atomic,
     content_with_media_breadcrumbs,
     current_time_str,

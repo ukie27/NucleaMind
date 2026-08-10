@@ -2,15 +2,15 @@ import json
 
 import pytest
 
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import (
+from nucleamind.legacy.config.errors import ConfigLoadError
+from nucleamind.legacy.config.loader import (
     _resolve_env_vars,
     load_config,
     resolve_config_env_vars,
     resolve_env_refs,
     save_config,
 )
-from nanobot.config.schema import Config
+from nucleamind.legacy.config.schema import Config
 
 
 class TestResolveEnvVars:

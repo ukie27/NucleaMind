@@ -1,8 +1,8 @@
 """Configuration module for nanobot."""
 
-from nanobot.config.errors import ConfigIssue, ConfigLoadError
-from nanobot.config.loader import get_config_path, load_config
-from nanobot.config.paths import (
+from nucleamind.legacy.config.errors import ConfigIssue, ConfigLoadError
+from nucleamind.legacy.config.loader import get_config_path, load_config
+from nucleamind.legacy.config.paths import (
     get_cli_history_path,
     get_cron_dir,
     get_data_dir,
@@ -14,7 +14,7 @@ from nanobot.config.paths import (
     get_workspace_path,
     is_default_workspace,
 )
-from nanobot.config.schema import Config
+from nucleamind.legacy.config.schema import Config
 
 __all__ = [
     "Config",

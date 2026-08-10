@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, cast
 
 from loguru import logger
 
-from nanobot.runtime_context import public_history_messages
-from nanobot.session.manager import MIN_COMPACTED_REPLAY_MESSAGES, Session, SessionManager
-from nanobot.utils.gitstore import GitStore
-from nanobot.utils.helpers import (
+from nucleamind.legacy.runtime_context import public_history_messages
+from nucleamind.legacy.session.manager import MIN_COMPACTED_REPLAY_MESSAGES, Session, SessionManager
+from nucleamind.legacy.utils.gitstore import GitStore
+from nucleamind.legacy.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
     estimate_message_tokens,
@@ -34,8 +34,8 @@ from nanobot.utils.helpers import (
     truncate_text,
     truncate_text_to_tokens,
 )
-from nanobot.utils.prompt_templates import render_template
-from nanobot.utils.workspace_prompts import (
+from nucleamind.legacy.utils.prompt_templates import render_template
+from nucleamind.legacy.utils.workspace_prompts import (
     WORKSPACE_PROMPT_MAX_CHARS,
     has_workspace_prompt_override,
     load_workspace_prompt_override,
@@ -43,8 +43,8 @@ from nanobot.utils.workspace_prompts import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.agent.tools.registry import ToolRegistry
-    from nanobot.utils.llm_runtime import LLMRuntime
+    from nucleamind.legacy.agent.tools.registry import ToolRegistry
+    from nucleamind.legacy.utils.llm_runtime import LLMRuntime
 
 # ---------------------------------------------------------------------------
 # MemoryStore — pure file I/O layer
@@ -555,7 +555,7 @@ class MemoryStore:
 
     @staticmethod
     def default_dream_prompt() -> str:
-        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+        from nucleamind.legacy.agent.skills import BUILTIN_SKILLS_DIR
 
         return render_template(
             "agent/dream.md",
@@ -641,11 +641,15 @@ class MemoryStore:
 
     def build_dream_tools(self) -> ToolRegistry:
         """Build the restricted tool registry used by Dream runs."""
-        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-        from nanobot.agent.tools.apply_patch import ApplyPatchTool
-        from nanobot.agent.tools.file_state import FileStates
-        from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
-        from nanobot.agent.tools.registry import ToolRegistry
+        from nucleamind.legacy.agent.skills import BUILTIN_SKILLS_DIR
+        from nucleamind.legacy.agent.tools.apply_patch import ApplyPatchTool
+        from nucleamind.legacy.agent.tools.file_state import FileStates
+        from nucleamind.legacy.agent.tools.filesystem import (
+            EditFileTool,
+            ReadFileTool,
+            WriteFileTool,
+        )
+        from nucleamind.legacy.agent.tools.registry import ToolRegistry
 
         tools = ToolRegistry()
         file_states = FileStates()

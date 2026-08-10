@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.providers.base import LLMProvider, LLMResponse
+from nucleamind.legacy.providers.base import LLMProvider, LLMResponse
 
 
 class UnconfiguredProvider(LLMProvider):

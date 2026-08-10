@@ -17,8 +17,10 @@ from typing import Any, cast
 
 from loguru import logger
 
-from nanobot.config.paths import get_data_dir
-from nanobot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
+from nucleamind.legacy.config.paths import get_data_dir
+from nucleamind.legacy.utils.helpers import (
+    _write_text_atomic,  # pyright: ignore[reportPrivateUsage]
+)
 
 # threading.Lock is used so store functions remain callable from both sync CLI
 # and async channel handlers.  At private-assistant scale (small JSON file,

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from nanobot.config.schema import Base
+from nucleamind.legacy.config.schema import Base
 
 
 class FeishuConfig(Base):

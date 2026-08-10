@@ -20,9 +20,9 @@ from urllib.parse import urlparse
 import httpx
 from loguru import logger
 
-from nanobot.apps.protocol import app_manifest, compact_dict
-from nanobot.config.paths import get_runtime_subdir
-from nanobot.security.workspace_policy import is_path_within
+from nucleamind.legacy.apps.protocol import app_manifest, compact_dict
+from nucleamind.legacy.config.paths import get_runtime_subdir
+from nucleamind.legacy.security.workspace_policy import is_path_within
 
 CLI_ANYTHING_REGISTRY_URL = "https://hkuds.github.io/CLI-Anything/registry.json"
 CLI_ANYTHING_PUBLIC_REGISTRY_URL = "https://hkuds.github.io/CLI-Anything/public_registry.json"
@@ -1032,7 +1032,7 @@ class CliAppManager:
         name = str(app.get("name") or "unknown")
         display = str(app.get("display_name") or name)
         entry = str(app.get("entry_point") or f"cli-anything-{name}")
-        description = _catalog_description(app) or f"Use {display} from nanobot."
+        description = _catalog_description(app) or f"Use {display} from nucleamind.legacy."
         return f"""---
 name: {_safe_skill_name(name)}
 description: >-
@@ -1215,7 +1215,7 @@ Use the `run_cli_app` tool with `name="{name}"` for command execution. Do not in
         self.remove_skill(str(app["name"]))
         if strategy == "bundled" and still_available:
             message = (
-                f"Removed {app['display_name']} from nanobot. {entry_point} "
+                f"Removed {app['display_name']} from nucleamind.legacy. {entry_point} "
                 "is still available because it is managed outside nanobot."
             )
         elif still_available:

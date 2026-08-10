@@ -1,8 +1,8 @@
 """MoChat management contract."""
 
-from nanobot.channels._manifest import field, required
-from nanobot.channels.contracts import ChannelSetupSpec
-from nanobot.channels.plugin import ChannelPlugin
+from nucleamind.legacy.channels._manifest import field, required
+from nucleamind.legacy.channels.contracts import ChannelSetupSpec
+from nucleamind.legacy.channels.plugin import ChannelPlugin
 
 SETUP_SPEC = ChannelSetupSpec(
     fields={

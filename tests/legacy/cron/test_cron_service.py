@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from nanobot.cron.service import CronJobSkippedError, CronService
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+from nucleamind.legacy.cron.service import CronJobSkippedError, CronService
+from nucleamind.legacy.cron.types import CronJob, CronPayload, CronSchedule
 
 
 async def _wait_until(predicate, *, timeout: float = 1.0, interval: float = 0.01) -> None:

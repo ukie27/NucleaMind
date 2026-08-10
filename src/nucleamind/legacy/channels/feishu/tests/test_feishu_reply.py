@@ -9,7 +9,7 @@ import pytest
 
 # Check optional Feishu dependencies before running tests
 try:
-    from nanobot.channels.feishu import runtime as feishu
+    from nucleamind.legacy.channels.feishu import runtime as feishu
     FEISHU_AVAILABLE = getattr(feishu, "FEISHU_AVAILABLE", False)
 except ImportError:
     FEISHU_AVAILABLE = False
@@ -17,10 +17,10 @@ except ImportError:
 if not FEISHU_AVAILABLE:
     pytest.skip("Feishu dependencies not installed (lark-oapi)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.feishu.runtime import FeishuChannel, FeishuConfig
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.outbound_events import ProgressEvent
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.feishu.runtime import FeishuChannel, FeishuConfig
 
 # ---------------------------------------------------------------------------
 # Helpers

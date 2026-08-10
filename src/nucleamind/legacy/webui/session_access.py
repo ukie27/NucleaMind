@@ -7,15 +7,15 @@ from collections.abc import Mapping
 from functools import cache
 from typing import Any, TypedDict, cast
 
-from nanobot.runtime_context import (
+from nucleamind.legacy.runtime_context import (
     RuntimeContextBlock,
     public_history_message,
     wrap_runtime_context_lines,
 )
-from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.manager import SessionManager
-from nanobot.webui.session_list_index import list_webui_sessions
-from nanobot.webui.transcript import (
+from nucleamind.legacy.session.history_visibility import is_hidden_history_message
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.session_list_index import list_webui_sessions
+from nucleamind.legacy.webui.transcript import (
     build_webui_thread_response,
     normalize_session_mentions_metadata,
 )

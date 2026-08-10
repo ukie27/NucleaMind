@@ -1,7 +1,7 @@
 import pytest
 
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.runtime_events import (
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.runtime_events import (
     RuntimeEventBus,
     RuntimeEventContext,
     RuntimeEventPublisher,

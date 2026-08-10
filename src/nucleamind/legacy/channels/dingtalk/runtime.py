@@ -17,11 +17,11 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from pydantic import Field
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.base import BaseChannel
-from nanobot.config.schema import Base
-from nanobot.security.network import validate_resolved_url, validate_url_target
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.base import BaseChannel
+from nucleamind.legacy.config.schema import Base
+from nucleamind.legacy.security.network import validate_resolved_url, validate_url_target
 
 DINGTALK_MAX_REMOTE_MEDIA_BYTES = 20 * 1024 * 1024
 DINGTALK_MAX_REMOTE_MEDIA_REDIRECTS = 3
@@ -848,7 +848,7 @@ class DingTalkChannel(BaseChannel):
         sender_id: str,
     ) -> str | None:
         """Download a DingTalk file to the media directory, return local path."""
-        from nanobot.config.paths import get_media_dir
+        from nucleamind.legacy.config.paths import get_media_dir
 
         try:
             token = await self._get_access_token()

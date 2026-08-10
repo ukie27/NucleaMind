@@ -6,19 +6,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeModelChanged
-from nanobot.config.errors import ConfigLoadError
-from nanobot.config.loader import save_config
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.providers.base import GenerationSettings
-from nanobot.providers.factory import ProviderSnapshot, load_provider_snapshot
-from nanobot.session.model_selection import (
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.bus.runtime_events import RuntimeModelChanged
+from nucleamind.legacy.config.errors import ConfigLoadError
+from nucleamind.legacy.config.loader import save_config
+from nucleamind.legacy.config.schema import Config, ModelPresetConfig
+from nucleamind.legacy.providers.base import GenerationSettings
+from nucleamind.legacy.providers.factory import ProviderSnapshot, load_provider_snapshot
+from nucleamind.legacy.session.model_selection import (
     SESSION_MODEL_PRESET_METADATA_KEY,
     model_preset_from_metadata,
 )
-from nanobot.webui.settings_api import update_agent_settings
+from nucleamind.legacy.webui.settings_api import update_agent_settings
 
 
 def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
@@ -307,7 +307,7 @@ def test_settings_context_window_refreshes_runtime_state(
     config.agents.defaults.context_window_tokens = 65_536
     config.providers.openai.api_key = "sk-test"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
 
     def loader(*, preset_name: str | None = None) -> ProviderSnapshot:
         return load_provider_snapshot(config_path, preset_name=preset_name)

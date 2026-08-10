@@ -10,7 +10,7 @@ import pytest
 
 # Check optional dingtalk dependencies before running tests
 try:
-    import nanobot.channels.dingtalk.runtime as dingtalk_module
+    import nucleamind.legacy.channels.dingtalk.runtime as dingtalk_module
 
     DINGTALK_AVAILABLE = dingtalk_module.DINGTALK_AVAILABLE
 except ImportError:
@@ -19,9 +19,9 @@ except ImportError:
 if not DINGTALK_AVAILABLE:
     pytest.skip("DingTalk dependencies not installed (dingtalk-stream)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.dingtalk.runtime import (
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.dingtalk.runtime import (
     DingTalkChannel,
     DingTalkConfig,
     NanobotDingTalkHandler,
@@ -674,7 +674,7 @@ async def test_download_dingtalk_file(tmp_path, monkeypatch) -> None:
 
     # Redirect media dir to tmp_path
     monkeypatch.setattr(
-        "nanobot.config.paths.get_media_dir",
+        "nucleamind.legacy.config.paths.get_media_dir",
         lambda channel_name=None: tmp_path / channel_name if channel_name else tmp_path,
     )
 

@@ -10,7 +10,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.nanobot import (
+from nucleamind.legacy.nanobot import (
     STREAM_EVENT_REASONING_COMPLETED,
     STREAM_EVENT_REASONING_DELTA,
     STREAM_EVENT_RUN_COMPLETED,
@@ -30,13 +30,13 @@ from nanobot.nanobot import (
     StreamEvent,
     StreamEventType,
 )
-from nanobot.runtime_context import (
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RuntimeContextBlock,
     append_runtime_context,
 )
-from nanobot.session.manager import FILE_MAX_MESSAGES
-from nanobot.utils.llm_runtime import runtime_from_provider_snapshot
+from nucleamind.legacy.session.manager import FILE_MAX_MESSAGES
+from nucleamind.legacy.utils.llm_runtime import runtime_from_provider_snapshot
 
 
 def _write_config(tmp_path: Path, overrides: dict | None = None) -> Path:
@@ -78,7 +78,7 @@ def test_from_config_missing_env_reports_explicit_config_path(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from nanobot.config.errors import ConfigLoadError
+    from nucleamind.legacy.config.errors import ConfigLoadError
 
     name = "NANOBOT_TEST_SDK_MISSING_KEY"
     monkeypatch.delenv(name, raising=False)
@@ -146,10 +146,10 @@ def test_from_config_rejects_multiple_model_selectors(tmp_path):
 
 
 def test_from_config_default_path():
-    from nanobot.config.schema import Config
+    from nucleamind.legacy.config.schema import Config
 
-    with patch("nanobot.config.loader.load_config") as mock_load, \
-         patch("nanobot.providers.factory.make_provider") as mock_prov:
+    with patch("nucleamind.legacy.config.loader.load_config") as mock_load, \
+         patch("nucleamind.legacy.providers.factory.make_provider") as mock_prov:
         mock_load.return_value = Config()
         mock_prov.return_value = MagicMock()
         mock_prov.return_value.get_default_model.return_value = "test"
@@ -163,7 +163,7 @@ async def test_run_returns_result(tmp_path):
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
 
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     mock_response = OutboundMessage(
         channel="cli", chat_id="direct", content="Hello back!"
@@ -183,8 +183,8 @@ async def test_run_returns_result(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_with_hooks(tmp_path):
-    from nanobot.agent.hook import AgentHook, AgentHookContext, SDKCaptureHook
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext, SDKCaptureHook
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -213,7 +213,7 @@ async def test_run_hooks_restored_on_error(tmp_path):
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
 
-    from nanobot.agent.hook import AgentHook
+    from nucleamind.legacy.agent.hook import AgentHook
 
     bot._loop.process_direct = AsyncMock(side_effect=RuntimeError("boom"))
     original_hooks = bot._loop._extra_hooks
@@ -244,8 +244,8 @@ def test_workspace_override(tmp_path):
 
 
 def test_sdk_make_provider_uses_github_copilot_backend():
-    from nanobot.config.schema import Config
-    from nanobot.providers.factory import make_provider
+    from nucleamind.legacy.config.schema import Config
+    from nucleamind.legacy.providers.factory import make_provider
 
     config = Config.model_validate(
         {
@@ -258,7 +258,7 @@ def test_sdk_make_provider_uses_github_copilot_backend():
         }
     )
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+    with patch("nucleamind.legacy.providers.openai_compat_provider.AsyncOpenAI"):
         provider = make_provider(config)
 
     assert provider.__class__.__name__ == "GitHubCopilotProvider"
@@ -266,7 +266,7 @@ def test_sdk_make_provider_uses_github_copilot_backend():
 
 @pytest.mark.asyncio
 async def test_run_custom_session_key(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -285,7 +285,7 @@ async def test_run_custom_session_key(tmp_path):
 
 
 def test_request_context_preserves_legacy_positional_arguments(tmp_path):
-    from nanobot.agent.tools.context import RequestContext
+    from nucleamind.legacy.agent.tools.context import RequestContext
 
     context = RequestContext(
         "cli",
@@ -309,10 +309,10 @@ def test_request_context_preserves_legacy_positional_arguments(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_exposes_attributes_to_context_provider_without_persisting_them(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.agent.tools.context import RequestContext
-    from nanobot.bus.queue import MessageBus
-    from nanobot.providers.base import LLMResponse
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.agent.tools.context import RequestContext
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.providers.base import LLMResponse
 
     provider = _fake_provider("test-model")
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -356,10 +356,10 @@ async def test_run_exposes_attributes_to_context_provider_without_persisting_the
 
 @pytest.mark.asyncio
 async def test_persisted_turn_callback_is_best_effort_and_reads_display_safe_session(tmp_path):
-    from nanobot import SessionTurnPersisted
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.providers.base import LLMResponse
+    from nucleamind.legacy import SessionTurnPersisted
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.providers.base import LLMResponse
 
     provider = _fake_provider("test-model")
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -426,9 +426,9 @@ async def test_persisted_turn_callback_is_best_effort_and_reads_display_safe_ses
 
 @pytest.mark.asyncio
 async def test_persisted_turn_callback_observes_saved_command_turn(tmp_path):
-    from nanobot import SessionTurnPersisted
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+    from nucleamind.legacy import SessionTurnPersisted
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.bus.queue import MessageBus
 
     bot = Nanobot(AgentLoop(
         bus=MessageBus(),
@@ -452,10 +452,10 @@ async def test_persisted_turn_callback_observes_saved_command_turn(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ephemeral_run_does_not_invoke_persisted_turn_callback(tmp_path):
-    from nanobot import SessionTurnPersisted
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.providers.base import LLMResponse
+    from nucleamind.legacy import SessionTurnPersisted
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.providers.base import LLMResponse
 
     provider = _fake_provider("test-model")
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -477,29 +477,29 @@ async def test_ephemeral_run_does_not_invoke_persisted_turn_callback(tmp_path):
 
 
 def test_runtime_client_does_not_expose_generic_event_subscription():
-    from nanobot.sdk.clients import RuntimeClient
+    from nucleamind.legacy.sdk.clients import RuntimeClient
 
     assert hasattr(RuntimeClient, "on_session_turn_persisted")
     assert not hasattr(RuntimeClient, "subscribe")
 
 
 def test_import_from_top_level():
-    import nanobot
+    import nucleamind.legacy as legacy_pkg
 
-    assert nanobot.Nanobot is Nanobot
-    assert nanobot.RequestContext.__name__ == "RequestContext"
-    assert nanobot.RuntimeContextBlock.__name__ == "RuntimeContextBlock"
-    assert nanobot.RuntimeContextProvider is not None
-    assert nanobot.SessionTurnPersisted.__name__ == "SessionTurnPersisted"
-    assert nanobot.RunResult is RunResult
-    assert nanobot.RunStream is RunStream
-    assert nanobot.SessionInfo is SessionInfo
-    assert nanobot.SessionSnapshot is SessionSnapshot
-    assert nanobot.StreamEvent is StreamEvent
-    assert nanobot.StreamEventType is StreamEventType
-    assert nanobot.STREAM_EVENT_TEXT_DELTA == STREAM_EVENT_TEXT_DELTA
-    assert nanobot.STREAM_EVENT_RUN_COMPLETED == STREAM_EVENT_RUN_COMPLETED
-    assert nanobot.STREAM_EVENT_TYPES == STREAM_EVENT_TYPES
+    assert legacy_pkg.Nanobot is Nanobot
+    assert legacy_pkg.RequestContext.__name__ == "RequestContext"
+    assert legacy_pkg.RuntimeContextBlock.__name__ == "RuntimeContextBlock"
+    assert legacy_pkg.RuntimeContextProvider is not None
+    assert legacy_pkg.SessionTurnPersisted.__name__ == "SessionTurnPersisted"
+    assert legacy_pkg.RunResult is RunResult
+    assert legacy_pkg.RunStream is RunStream
+    assert legacy_pkg.SessionInfo is SessionInfo
+    assert legacy_pkg.SessionSnapshot is SessionSnapshot
+    assert legacy_pkg.StreamEvent is StreamEvent
+    assert legacy_pkg.StreamEventType is StreamEventType
+    assert legacy_pkg.STREAM_EVENT_TEXT_DELTA == STREAM_EVENT_TEXT_DELTA
+    assert legacy_pkg.STREAM_EVENT_RUN_COMPLETED == STREAM_EVENT_RUN_COMPLETED
+    assert legacy_pkg.STREAM_EVENT_TYPES == STREAM_EVENT_TYPES
 
 
 def test_stream_event_constants_are_stable():
@@ -537,9 +537,9 @@ def test_stream_event_constants_are_stable():
 @pytest.mark.asyncio
 async def test_run_populates_tools_used_across_iterations(tmp_path):
     """tools_used collects every tool name fired across all iterations, in order."""
-    from nanobot.agent.hook import AgentHookContext
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.base import ToolCallRequest
+    from nucleamind.legacy.agent.hook import AgentHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.base import ToolCallRequest
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -569,8 +569,8 @@ async def test_run_populates_tools_used_across_iterations(tmp_path):
 @pytest.mark.asyncio
 async def test_run_populates_final_messages(tmp_path):
     """messages reflects the agent's message list at the last iteration."""
-    from nanobot.agent.hook import AgentHookContext
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.agent.hook import AgentHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -596,7 +596,7 @@ async def test_run_populates_final_messages(tmp_path):
 @pytest.mark.asyncio
 async def test_run_no_iterations_leaves_defaults_empty(tmp_path):
     """If process_direct never triggers after_iteration, tools_used/messages stay []."""
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -613,8 +613,8 @@ async def test_run_no_iterations_leaves_defaults_empty(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_populates_observability_fields(tmp_path):
-    from nanobot.agent.hook import AgentRunHookContext
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.agent.hook import AgentRunHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -654,9 +654,9 @@ async def test_run_populates_observability_fields(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_ephemeral_still_captures_runner_observability(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.providers.base import LLMResponse
+    from nucleamind.legacy.agent.loop import AgentLoop
+    from nucleamind.legacy.bus.queue import MessageBus
+    from nucleamind.legacy.providers.base import LLMResponse
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -681,7 +681,7 @@ async def test_run_ephemeral_still_captures_runner_observability(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_forwards_non_default_runtime_options(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -714,7 +714,7 @@ async def test_run_forwards_non_default_runtime_options(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_allows_parallel_sessions_without_model_override(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -742,8 +742,8 @@ async def test_run_allows_parallel_sessions_without_model_override(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_model_overrides_can_overlap_without_default_mutation(tmp_path):
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.factory import ProviderSnapshot
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.factory import ProviderSnapshot
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -809,8 +809,8 @@ async def test_run_model_overrides_can_overlap_without_default_mutation(tmp_path
 
 @pytest.mark.asyncio
 async def test_run_model_override_is_per_run_without_default_mutation(tmp_path):
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.factory import ProviderSnapshot
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.factory import ProviderSnapshot
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -851,8 +851,8 @@ async def test_run_model_override_is_per_run_without_default_mutation(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_model_preset_override_is_per_run(tmp_path):
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.factory import ProviderSnapshot
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.factory import ProviderSnapshot
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -899,8 +899,8 @@ async def test_run_rejects_multiple_model_selectors(tmp_path):
 @pytest.mark.asyncio
 async def test_run_user_hooks_still_fire_alongside_capture(tmp_path):
     """Capture hook must not displace user-provided hooks."""
-    from nanobot.agent.hook import AgentHook, AgentHookContext
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -925,9 +925,9 @@ async def test_run_user_hooks_still_fire_alongside_capture(tmp_path):
 
 @pytest.mark.asyncio
 async def test_concurrent_run_hooks_are_isolated_per_call(tmp_path):
-    from nanobot.agent.hook import AgentHook, AgentHookContext
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.base import ToolCallRequest
+    from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.base import ToolCallRequest
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -978,8 +978,8 @@ async def test_concurrent_run_hooks_are_isolated_per_call(tmp_path):
 @pytest.mark.asyncio
 async def test_run_restores_extra_hooks_even_on_populated_iterations(tmp_path):
     """Previously-installed _extra_hooks must be restored regardless of capture state."""
-    from nanobot.agent.hook import AgentHook, AgentHookContext
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1000,7 +1000,7 @@ async def test_run_restores_extra_hooks_even_on_populated_iterations(tmp_path):
 
 @pytest.mark.asyncio
 async def test_stream_yields_text_events_in_order(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1038,8 +1038,8 @@ async def test_stream_yields_text_events_in_order(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_wait_returns_full_result_without_consuming_events(tmp_path):
-    from nanobot.agent.hook import AgentRunHookContext
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.agent.hook import AgentRunHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1085,7 +1085,7 @@ async def test_run_streamed_wait_returns_full_result_without_consuming_events(tm
 
 @pytest.mark.asyncio
 async def test_run_streamed_cancel_releases_full_queue_without_consuming(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1112,7 +1112,7 @@ async def test_run_streamed_cancel_releases_full_queue_without_consuming(tmp_pat
 
 @pytest.mark.asyncio
 async def test_run_streamed_text_returns_final_content(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1127,7 +1127,7 @@ async def test_run_streamed_text_returns_final_content(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_forwards_runtime_options(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1166,8 +1166,8 @@ async def test_run_streamed_forwards_runtime_options(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_model_override_reports_admitted_runtime(tmp_path):
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.factory import ProviderSnapshot
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.factory import ProviderSnapshot
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1229,9 +1229,9 @@ async def test_stream_rejects_multiple_model_selectors(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_emits_tool_events(tmp_path):
-    from nanobot.agent.hook import AgentHookContext
-    from nanobot.bus.events import OutboundMessage
-    from nanobot.providers.base import ToolCallRequest
+    from nucleamind.legacy.agent.hook import AgentHookContext
+    from nucleamind.legacy.bus.events import OutboundMessage
+    from nucleamind.legacy.providers.base import ToolCallRequest
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1281,7 +1281,7 @@ async def test_run_streamed_emits_tool_events(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_emits_reasoning_events(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1311,7 +1311,7 @@ async def test_run_streamed_emits_reasoning_events(tmp_path):
 
 @pytest.mark.asyncio
 async def test_stream_generator_break_cancels_underlying_run(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1340,7 +1340,7 @@ async def test_stream_generator_break_cancels_underlying_run(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_restores_hooks_and_reports_failure(tmp_path):
-    from nanobot.agent.hook import AgentHook
+    from nucleamind.legacy.agent.hook import AgentHook
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1364,7 +1364,7 @@ async def test_run_streamed_restores_hooks_and_reports_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_streamed_stream_events_is_single_consumer(tmp_path):
-    from nanobot.bus.events import OutboundMessage
+    from nucleamind.legacy.bus.events import OutboundMessage
 
     config_path = _write_config(tmp_path)
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
@@ -1383,8 +1383,8 @@ async def test_run_streamed_stream_events_is_single_consumer(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sdk_capture_prefers_run_level_snapshot():
-    from nanobot.agent.hook import AgentHookContext, AgentRunHookContext, SDKCaptureHook
-    from nanobot.providers.base import ToolCallRequest
+    from nucleamind.legacy.agent.hook import AgentHookContext, AgentRunHookContext, SDKCaptureHook
+    from nucleamind.legacy.providers.base import ToolCallRequest
 
     hook = SDKCaptureHook()
     iter_messages = [{"role": "user", "content": "work"}]

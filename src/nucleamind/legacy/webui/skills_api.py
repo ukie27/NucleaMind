@@ -8,9 +8,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
-from nanobot.agent.skills import SkillsLoader
-from nanobot.config.loader import load_config, save_config
-from nanobot.security.workspace_policy import WorkspaceBoundaryError, require_path_within
+from nucleamind.legacy.agent.skills import SkillsLoader
+from nucleamind.legacy.config.loader import load_config, save_config
+from nucleamind.legacy.security.workspace_policy import WorkspaceBoundaryError, require_path_within
 
 
 class SkillManagementError(Exception):

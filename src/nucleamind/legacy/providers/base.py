@@ -18,7 +18,7 @@ from typing import Any, cast
 import json_repair
 from loguru import logger
 
-from nanobot.utils.helpers import sanitize_surrogates_deep
+from nucleamind.legacy.utils.helpers import sanitize_surrogates_deep
 
 STREAM_IDLE_TIMEOUT_ENV = "NANOBOT_STREAM_IDLE_TIMEOUT_S"
 DEFAULT_STREAM_IDLE_TIMEOUT_S = 90.0

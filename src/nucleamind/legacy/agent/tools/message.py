@@ -8,13 +8,13 @@ from typing import Any, Awaitable, Callable, cast
 
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_context
-from nanobot.agent.tools.path_utils import resolve_workspace_path
-from nanobot.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
-from nanobot.bus.events import OutboundMessage
-from nanobot.config.paths import get_workspace_path
-from nanobot.security.workspace_access import current_tool_workspace
+from nucleamind.legacy.agent.tools.base import Tool, ToolResult, tool_parameters
+from nucleamind.legacy.agent.tools.context import ToolContext, current_request_context
+from nucleamind.legacy.agent.tools.path_utils import resolve_workspace_path
+from nucleamind.legacy.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
+from nucleamind.legacy.bus.events import OutboundMessage
+from nucleamind.legacy.config.paths import get_workspace_path
+from nucleamind.legacy.security.workspace_access import current_tool_workspace
 
 
 @tool_parameters(
@@ -153,7 +153,7 @@ class MessageTool(Tool):
         buttons: Any = None,
         **kwargs: Any,
     ) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-        from nanobot.utils.helpers import strip_think
+        from nucleamind.legacy.utils.helpers import strip_think
 
         content = strip_think(content)
 

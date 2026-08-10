@@ -7,40 +7,40 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from loguru import logger
 
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext, request_context
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy.agent.context import ContextBuilder
+from nucleamind.legacy.agent.loop import AgentLoop
+from nucleamind.legacy.agent.tools.context import RequestContext, request_context
+from nucleamind.legacy.bus.events import InboundMessage
+from nucleamind.legacy.bus.outbound_events import (
     GoalStatusEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
     TurnEndEvent,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.cron.session_turns import CRON_HISTORY_META, CRON_TRIGGER_META
-from nanobot.providers.base import LLMProvider, LLMResponse, ProviderConversationState
-from nanobot.providers.factory import ProviderSnapshot
-from nanobot.runtime_context import (
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.cron.session_turns import CRON_HISTORY_META, CRON_TRIGGER_META
+from nucleamind.legacy.providers.base import LLMProvider, LLMResponse, ProviderConversationState
+from nucleamind.legacy.providers.factory import ProviderSnapshot
+from nucleamind.legacy.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_MESSAGE_META,
     RuntimeContextBlock,
     append_runtime_context,
     public_history_message,
 )
-from nanobot.session.automation_turns import AUTOMATION_HISTORY_META
-from nanobot.session.goal_state import GOAL_STATE_KEY
-from nanobot.session.keys import (
+from nucleamind.legacy.session.automation_turns import AUTOMATION_HISTORY_META
+from nucleamind.legacy.session.goal_state import GOAL_STATE_KEY
+from nucleamind.legacy.session.keys import (
     LAST_CHANNEL_METADATA_KEY,
     UNIFIED_SESSION_KEY,
 )
-from nanobot.session.manager import Session
-from nanobot.session.turn_continuation import (
+from nucleamind.legacy.session.manager import Session
+from nucleamind.legacy.session.turn_continuation import (
     INTERNAL_CONTINUATION_META,
     INTERNAL_CONTINUATION_RUN_STARTED_AT_META,
 )
-from nanobot.session.webui_turns import (
+from nucleamind.legacy.session.webui_turns import (
     TITLE_GENERATION_MAX_TOKENS,
     TITLE_GENERATION_REASONING_EFFORT,
     WEBUI_SESSION_METADATA_KEY,
@@ -49,12 +49,12 @@ from nanobot.session.webui_turns import (
     clean_generated_title,
     maybe_generate_webui_title,
 )
-from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
+from nucleamind.legacy.triggers.local_session_turns import LOCAL_TRIGGER_META
 
 
 def _mk_loop() -> AgentLoop:
     loop = AgentLoop.__new__(AgentLoop)
-    from nanobot.config.schema import AgentDefaults
+    from nucleamind.legacy.config.schema import AgentDefaults
 
     loop.max_tool_result_chars = AgentDefaults().max_tool_result_chars
     return loop
@@ -1484,7 +1484,7 @@ async def test_process_message_uses_explicit_session_for_goal_context(
 async def test_run_agent_loop_goal_continue_message_reads_latest_metadata(
     tmp_path: Path,
 ) -> None:
-    from nanobot.agent.runner import AgentRunResult
+    from nucleamind.legacy.agent.runner import AgentRunResult
 
     loop = _make_full_loop(tmp_path)
     session = loop.sessions.get_or_create("websocket:late-goal")
@@ -1629,8 +1629,8 @@ async def test_next_turn_after_crash_closes_pending_user_turn_before_new_input(t
 
 @pytest.mark.asyncio
 async def test_stop_preserves_runtime_checkpoint_for_next_turn(tmp_path: Path) -> None:
-    from nanobot.command.builtin import cmd_stop
-    from nanobot.command.router import CommandContext
+    from nucleamind.legacy.command.builtin import cmd_stop
+    from nucleamind.legacy.command.router import CommandContext
 
     loop = _make_full_loop(tmp_path)
     loop.consolidator.maybe_consolidate_by_tokens = AsyncMock(return_value=False)  # type: ignore[method-assign]

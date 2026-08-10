@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.webui.skills_api import (
+from nucleamind.legacy.webui.skills_api import (
     SkillManagementError,
     delete_webui_skill,
     set_webui_skill_enabled,
@@ -79,8 +79,8 @@ def test_set_webui_skill_enabled_persists_and_updates_runtime(
     _write_skill(tmp_path, "custom-skill")
     config = _config()
     saved: list[object] = []
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda: config)
-    monkeypatch.setattr("nanobot.webui.skills_api.save_config", saved.append)
+    monkeypatch.setattr("nucleamind.legacy.webui.skills_api.load_config", lambda: config)
+    monkeypatch.setattr("nucleamind.legacy.webui.skills_api.save_config", saved.append)
     disabled: set[str] = set()
 
     action = set_webui_skill_enabled(
@@ -107,8 +107,8 @@ def test_delete_webui_skill_only_deletes_workspace_skills(
     directory = _write_skill(tmp_path, "custom-skill")
     config = _config("custom-skill")
     saved: list[object] = []
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda: config)
-    monkeypatch.setattr("nanobot.webui.skills_api.save_config", saved.append)
+    monkeypatch.setattr("nucleamind.legacy.webui.skills_api.load_config", lambda: config)
+    monkeypatch.setattr("nucleamind.legacy.webui.skills_api.save_config", saved.append)
     disabled = {"custom-skill"}
 
     action = delete_webui_skill(
@@ -158,12 +158,12 @@ def test_delete_webui_skill_restores_directory_when_config_save_fails(
 ) -> None:
     directory = _write_skill(tmp_path, "custom-skill")
     config = _config("custom-skill")
-    monkeypatch.setattr("nanobot.webui.skills_api.load_config", lambda: config)
+    monkeypatch.setattr("nucleamind.legacy.webui.skills_api.load_config", lambda: config)
 
     def fail_save(_config: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("nanobot.webui.skills_api.save_config", fail_save)
+    monkeypatch.setattr("nucleamind.legacy.webui.skills_api.save_config", fail_save)
     disabled = {"custom-skill"}
 
     with pytest.raises(OSError, match="disk full"):

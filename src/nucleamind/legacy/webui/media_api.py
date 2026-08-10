@@ -18,15 +18,15 @@ from typing import Any
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
-from nanobot.config.paths import get_media_dir
-from nanobot.utils.helpers import safe_filename
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.config.paths import get_media_dir
+from nucleamind.legacy.utils.helpers import safe_filename
+from nucleamind.legacy.webui.http_utils import (
     case_insensitive_header as _case_insensitive_header,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     http_error as _http_error,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     http_response as _http_response,
 )
 

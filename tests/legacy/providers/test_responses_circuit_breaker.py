@@ -4,13 +4,13 @@ import time
 
 import pytest
 
-from nanobot.providers.base import ProviderCallContext
-from nanobot.providers.openai_compat_provider import (
+from nucleamind.legacy.providers.base import ProviderCallContext
+from nucleamind.legacy.providers.openai_compat_provider import (
     _RESPONSES_FAILURE_THRESHOLD,
     _RESPONSES_PROBE_INTERVAL_S,
     OpenAICompatProvider,
 )
-from nanobot.providers.openai_responses.state import build_responses_state
+from nucleamind.legacy.providers.openai_responses.state import build_responses_state
 
 
 @pytest.fixture()

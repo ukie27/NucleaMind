@@ -1,7 +1,7 @@
 import pytest
 
-from nanobot.agent.hook import AgentHook, AgentHookContext, AgentTurnHookContext
-from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
+from nucleamind.legacy.agent.hook import AgentHook, AgentHookContext, AgentTurnHookContext
+from nucleamind.legacy.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 
 
 class RecordingHook(AgentHook):

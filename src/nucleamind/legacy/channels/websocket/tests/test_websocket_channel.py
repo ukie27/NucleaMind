@@ -12,11 +12,11 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 from websockets.frames import Close
 
-from nanobot.bus.events import (
+from nucleamind.legacy.bus.events import (
     OUTBOUND_META_AGENT_UI,
     OutboundMessage,
 )
-from nanobot.bus.outbound_events import (
+from nucleamind.legacy.bus.outbound_events import (
     GoalStateSyncEvent,
     GoalStatusEvent,
     ProgressEvent,
@@ -25,8 +25,8 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
     TurnModelUpdatedEvent,
 )
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.websocket.runtime import (
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels.websocket.runtime import (
     WebSocketChannel,
     WebSocketConfig,
     _is_valid_chat_id,
@@ -34,32 +34,32 @@ from nanobot.channels.websocket.runtime import (
     _parse_inbound_payload,
     publish_runtime_model_update,
 )
-from nanobot.config.loader import load_config, save_config
-from nanobot.config.schema import Config, ModelPresetConfig
-from nanobot.runtime_context import RUNTIME_CONTEXT_INPUT_META, WEBUI_QUOTE_SOURCE
-from nanobot.session import webui_turns as wth
-from nanobot.session.manager import SessionManager
-from nanobot.webui.gateway_services import GatewayServices, build_gateway_services
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.config.loader import load_config, save_config
+from nucleamind.legacy.config.schema import Config, ModelPresetConfig
+from nucleamind.legacy.runtime_context import RUNTIME_CONTEXT_INPUT_META, WEBUI_QUOTE_SOURCE
+from nucleamind.legacy.session import webui_turns as wth
+from nucleamind.legacy.session.manager import SessionManager
+from nucleamind.legacy.webui.gateway_services import GatewayServices, build_gateway_services
+from nucleamind.legacy.webui.http_utils import (
     issue_route_secret_matches as _issue_route_secret_matches,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     normalize_config_path as _normalize_config_path,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     parse_query as _parse_query,
 )
-from nanobot.webui.http_utils import (
+from nucleamind.legacy.webui.http_utils import (
     parse_request_path as _parse_request_path,
 )
-from nanobot.webui.metadata import (
+from nucleamind.legacy.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
     WEBUI_MESSAGE_SOURCE_METADATA_KEY,
     WEBUI_SYSTEM_COMMAND_TURN_PREFIX,
     WEBUI_TURN_METADATA_KEY,
 )
-from nanobot.webui.settings_api import settings_payload, update_provider_settings
-from nanobot.webui.transcript import (
+from nucleamind.legacy.webui.settings_api import settings_payload, update_provider_settings
+from nucleamind.legacy.webui.transcript import (
     append_transcript_object,
     build_webui_thread_response,
     read_transcript_lines,
@@ -150,7 +150,7 @@ async def test_start_extends_http_open_timeout_for_slow_settings_routes(
     bus,
     monkeypatch,
 ) -> None:
-    import nanobot.channels.websocket.runtime as websocket_module
+    import nucleamind.legacy.channels.websocket.runtime as websocket_module
 
     channel = _ch(bus, port=0)
     seen: dict[str, Any] = {}
@@ -181,9 +181,9 @@ def isolate_webui_workspace_state(tmp_path, monkeypatch) -> None:
     wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
     wth._WEBSOCKET_TURN_IDS.clear()
     wth._WEBSOCKET_TURN_OWNERS.clear()
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "nanobot.webui.workspaces.get_webui_dir",
+        "nucleamind.legacy.webui.workspaces.get_webui_dir",
         lambda: tmp_path / "webui",
     )
     yield
@@ -393,7 +393,7 @@ async def test_token_issue_route_requires_secret_when_static_token_configured(bu
 
 @pytest.mark.asyncio
 async def test_webui_message_envelope_marks_inbound_metadata(bus: MagicMock) -> None:
-    from nanobot.webui.transcript import read_transcript_lines
+    from nucleamind.legacy.webui.transcript import read_transcript_lines
 
     channel = _ch(bus)
     conn = MagicMock()
@@ -443,9 +443,12 @@ async def test_webui_message_envelope_persists_user_transcript_for_refresh(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from nanobot.webui.transcript import build_webui_thread_response, read_transcript_lines
+    from nucleamind.legacy.webui.transcript import (
+        build_webui_thread_response,
+        read_transcript_lines,
+    )
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     channel = _ch(bus)
     conn = AsyncMock()
     conn.remote_address = ("127.0.0.1", 50123)
@@ -476,9 +479,9 @@ async def test_webui_stop_control_message_is_not_persisted_as_user_bubble(
     tmp_path,
     monkeypatch,
 ) -> None:
-    from nanobot.webui.transcript import read_transcript_lines
+    from nucleamind.legacy.webui.transcript import read_transcript_lines
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     channel = _ch(bus)
     conn = AsyncMock()
     conn.remote_address = ("127.0.0.1", 50123)
@@ -502,7 +505,7 @@ async def test_webui_user_transcript_append_failure_does_not_block_inbound(
     def fail_append(_session_key: str, _obj: dict[str, Any]) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("nanobot.webui.transcript.append_transcript_object", fail_append)
+    monkeypatch.setattr("nucleamind.legacy.webui.transcript.append_transcript_object", fail_append)
     channel = _ch(bus)
     conn = AsyncMock()
     conn.remote_address = ("127.0.0.1", 50123)
@@ -565,7 +568,7 @@ async def test_webui_persists_sidebar_state_larger_than_http_request_line(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     channel = _ch(bus)
     conn = AsyncMock()
     channel._webui_connections.add(conn)
@@ -879,7 +882,7 @@ async def test_remote_webui_scope_allows_access_reduction(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("nucleamind.legacy.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default_workspace = tmp_path / "default"
     default_workspace.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
@@ -920,7 +923,7 @@ async def test_remote_access_reduction_rejects_stale_in_flight_message_scope(
     tmp_path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("nucleamind.legacy.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
     default_workspace = tmp_path / "default"
     default_workspace.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
@@ -1173,7 +1176,7 @@ async def test_send_stages_external_media_as_signed_url(monkeypatch, tmp_path) -
     def fake_media_dir(channel: str | None = None):
         return ws_media if channel == "websocket" else media_root
 
-    monkeypatch.setattr("nanobot.webui.media_gateway.get_media_dir", fake_media_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.media_gateway.get_media_dir", fake_media_dir)
     channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
     mock_ws = AsyncMock()
     channel._attach(mock_ws, "chat-1")
@@ -1499,7 +1502,7 @@ async def test_send_delta_stream_end_rewrites_local_markdown_image(monkeypatch, 
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    monkeypatch.setattr("nanobot.webui.media_gateway.get_media_dir", fake_media_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.media_gateway.get_media_dir", fake_media_dir)
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "streaming": True},
         bus,
@@ -1531,7 +1534,7 @@ async def test_send_delta_stream_end_rewrites_inline_final_text(monkeypatch, tmp
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    monkeypatch.setattr("nanobot.webui.media_gateway.get_media_dir", fake_media_dir)
+    monkeypatch.setattr("nucleamind.legacy.webui.media_gateway.get_media_dir", fake_media_dir)
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "streaming": True},
         bus,
@@ -1634,7 +1637,10 @@ async def test_send_reasoning_without_subscribers_is_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_stream_transcript_persists_without_subscribers() -> None:
-    from nanobot.webui.transcript import build_webui_thread_response, read_transcript_lines
+    from nucleamind.legacy.webui.transcript import (
+        build_webui_thread_response,
+        read_transcript_lines,
+    )
 
     bus = MagicMock()
     channel = WebSocketChannel(
@@ -1770,7 +1776,7 @@ async def test_turn_end_persists_and_conditionally_clears_when_fanout_fails(
 async def test_turn_end_keeps_registry_when_transcript_persistence_fails(
     monkeypatch,
 ) -> None:
-    from nanobot.bus.events import InboundMessage
+    from nucleamind.legacy.bus.events import InboundMessage
 
     bus = MagicMock()
     bus.publish_outbound = AsyncMock()
@@ -1795,7 +1801,7 @@ async def test_turn_end_keeps_registry_when_transcript_persistence_fails(
     )
     await wth.publish_turn_run_status(bus, inbound, "running", started_at=1234.5)
     append = MagicMock(side_effect=OSError("disk full"))
-    monkeypatch.setattr("nanobot.webui.transcript.append_transcript_object", append)
+    monkeypatch.setattr("nucleamind.legacy.webui.transcript.append_transcript_object", append)
 
     await channel.send(OutboundMessage(
         channel="websocket",
@@ -1834,8 +1840,8 @@ async def test_turn_end_keeps_registry_when_transcript_persistence_fails(
 async def test_durable_incomplete_marker_stays_pending_without_safe_session_recovery(
     monkeypatch,
 ) -> None:
-    from nanobot.bus.events import InboundMessage
-    from nanobot.webui.transcript import build_webui_thread_response
+    from nucleamind.legacy.bus.events import InboundMessage
+    from nucleamind.legacy.webui.transcript import build_webui_thread_response
 
     bus = MagicMock()
     bus.publish_outbound = AsyncMock()
@@ -1872,7 +1878,7 @@ async def test_durable_incomplete_marker_stays_pending_without_safe_session_reco
             raise OSError("transient disk failure")
         original_append(session_key, event)
 
-    monkeypatch.setattr("nanobot.webui.transcript.append_transcript_object", fail_answer)
+    monkeypatch.setattr("nucleamind.legacy.webui.transcript.append_transcript_object", fail_answer)
 
     await channel.send(OutboundMessage(
         channel="websocket",
@@ -1929,7 +1935,7 @@ async def test_http_replay_recovers_marked_answer_from_session_after_gateway_res
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.bus.events import InboundMessage
+    from nucleamind.legacy.bus.events import InboundMessage
 
     chat_id = "answer-recovery-after-restart"
     key = f"websocket:{chat_id}"
@@ -1978,7 +1984,7 @@ async def test_http_replay_recovers_marked_answer_from_session_after_gateway_res
             raise OSError("transient disk failure")
         original_append(session_key, event)
 
-    monkeypatch.setattr("nanobot.webui.transcript.append_transcript_object", fail_answer)
+    monkeypatch.setattr("nucleamind.legacy.webui.transcript.append_transcript_object", fail_answer)
     await channel.send(OutboundMessage(
         channel="websocket",
         chat_id=chat_id,
@@ -2035,7 +2041,7 @@ async def test_http_replay_recovers_marked_answer_from_session_after_gateway_res
 
 @pytest.mark.asyncio
 async def test_webui_idle_clears_owner_when_no_completion_write_failed() -> None:
-    from nanobot.bus.events import InboundMessage
+    from nucleamind.legacy.bus.events import InboundMessage
 
     bus = MagicMock()
     bus.publish_outbound = AsyncMock()
@@ -2076,7 +2082,7 @@ async def test_webui_idle_clears_owner_when_no_completion_write_failed() -> None
 async def test_non_webui_transcript_failure_does_not_block_idle_cleanup(
     monkeypatch,
 ) -> None:
-    from nanobot.bus.events import InboundMessage
+    from nucleamind.legacy.bus.events import InboundMessage
 
     bus = MagicMock()
     bus.publish_outbound = AsyncMock()
@@ -2096,7 +2102,7 @@ async def test_non_webui_transcript_failure_does_not_block_idle_cleanup(
     )
     await wth.publish_turn_run_status(bus, inbound, "running", started_at=1234.5)
     monkeypatch.setattr(
-        "nanobot.webui.transcript.append_transcript_object",
+        "nucleamind.legacy.webui.transcript.append_transcript_object",
         MagicMock(side_effect=OSError("disk full")),
     )
 
@@ -2329,7 +2335,7 @@ async def test_maybe_push_turn_run_wall_clock_skips_when_no_active_turn() -> Non
     channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
     mock_ws = AsyncMock()
     channel._attach(mock_ws, "chat-1")
-    from nanobot.session import webui_turns as wth
+    from nucleamind.legacy.session import webui_turns as wth
 
     wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
     await channel._maybe_push_turn_run_wall_clock("chat-1")
@@ -2342,7 +2348,7 @@ async def test_maybe_push_turn_run_wall_clock_replays_running() -> None:
     channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
     mock_ws = AsyncMock()
     channel._attach(mock_ws, "chat-1")
-    from nanobot.session import webui_turns as wth
+    from nucleamind.legacy.session import webui_turns as wth
 
     wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
     try:
@@ -2504,7 +2510,7 @@ async def test_wrong_path_returns_404(bus: MagicMock) -> None:
 
 
 def test_registry_discovers_websocket_channel() -> None:
-    from nanobot.channels.registry import load_channel_class
+    from nucleamind.legacy.channels.registry import load_channel_class
 
     cls = load_channel_class("websocket")
     assert cls.name == "websocket"
@@ -2575,9 +2581,9 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
     config.tools.web.search.api_key = "brave-secret"
     expected_timezone = config.agents.defaults.timezone
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
     monkeypatch.setattr(
-        "nanobot.webui.settings_api._oauth_provider_status",
+        "nucleamind.legacy.webui.settings_api._oauth_provider_status",
         lambda _spec: {
             "configured": False,
             "account": None,
@@ -2593,7 +2599,7 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
         }
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.request_image_generation_reload",
+        "nucleamind.legacy.webui.settings_routes.request_image_generation_reload",
         image_reload,
     )
 
@@ -2947,7 +2953,7 @@ async def test_image_settings_hot_reload_without_restart(
     config = Config()
     config.providers.openrouter.api_key = "image-key"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
     image_reload = AsyncMock(
         return_value={
             "ok": True,
@@ -2956,7 +2962,7 @@ async def test_image_settings_hot_reload_without_restart(
         }
     )
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.request_image_generation_reload",
+        "nucleamind.legacy.webui.settings_routes.request_image_generation_reload",
         image_reload,
     )
 
@@ -2991,9 +2997,9 @@ async def test_image_settings_fall_back_to_restart_when_hot_reload_fails(
     config = Config()
     config.providers.openrouter.api_key = "image-key"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
     monkeypatch.setattr(
-        "nanobot.webui.settings_routes.request_image_generation_reload",
+        "nucleamind.legacy.webui.settings_routes.request_image_generation_reload",
         AsyncMock(
             return_value={
                 "ok": False,
@@ -3108,7 +3114,7 @@ def test_settings_payload_normalizes_camel_case_provider(
     config = Config()
     config.agents.defaults.provider = "minimaxAnthropic"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
 
     body = settings_payload()
 
@@ -3120,7 +3126,7 @@ def test_settings_payload_exposes_api_type_only_for_openai(monkeypatch, tmp_path
     config = Config()
     config.providers.openai.api_type = "responses"
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
 
     body = settings_payload()
     providers = {provider["name"]: provider for provider in body["providers"]}
@@ -3134,7 +3140,7 @@ def test_settings_payload_reports_workspace_sandbox(monkeypatch, tmp_path) -> No
     config = Config()
     config.tools.restrict_to_workspace = True
     save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
     monkeypatch.setenv("NANOBOT_SANDBOX_ENFORCED", "macos_app_sandbox")
 
     body = settings_payload()
@@ -3150,7 +3156,7 @@ def test_settings_payload_reports_workspace_sandbox(monkeypatch, tmp_path) -> No
 def test_settings_payload_includes_native_runtime_surface(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
 
     body = settings_payload(
         surface="native",
@@ -3170,7 +3176,7 @@ def test_settings_payload_includes_native_runtime_surface(monkeypatch, tmp_path)
 def test_update_provider_settings_ignores_api_type_for_non_openai(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "config.json"
     save_config(Config(), config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nucleamind.legacy.config.loader._current_config_path", config_path)
 
     body = update_provider_settings({
         "provider": ["custom"],
@@ -3631,7 +3637,7 @@ async def test_fork_chat_copies_only_prefix_session_and_transcript(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sessions = SessionManager(tmp_path / "sessions")
     source = sessions.get_or_create("websocket:source")
     source.metadata["webui"] = True
@@ -3683,7 +3689,7 @@ async def test_webui_message_envelope_appends_user_transcript(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     sessions = SessionManager(tmp_path / "sessions")
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
@@ -3838,8 +3844,8 @@ def test_sessions_list_includes_active_run_started_at(monkeypatch) -> None:
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.session import webui_turns as wth
-    from nanobot.webui import ws_http as ws_http_module
+    from nucleamind.legacy.session import webui_turns as wth
+    from nucleamind.legacy.webui import ws_http as ws_http_module
 
     bus = MagicMock()
     session_manager = MagicMock()
@@ -3919,9 +3925,9 @@ def test_handle_webui_thread_get_returns_json(tmp_path, monkeypatch) -> None:
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:c1"
     append_transcript_object(key, {"event": "user", "chat_id": "c1", "text": "hi"})
     bus = MagicMock()
@@ -3948,15 +3954,15 @@ def test_handle_webui_thread_get_reports_registered_turn_as_pending(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "nanobot.session.webui_turns.websocket_turn_wall_started_at",
+        "nucleamind.legacy.session.webui_turns.websocket_turn_wall_started_at",
         lambda chat_id: 1_700_000_000.0 if chat_id == "running" else None,
     )
     monkeypatch.setattr(
-        "nanobot.session.webui_turns.websocket_turn_id",
+        "nucleamind.legacy.session.webui_turns.websocket_turn_id",
         lambda chat_id: "turn-running" if chat_id == "running" else None,
     )
     key = "websocket:running"
@@ -3993,11 +3999,11 @@ async def test_idle_registry_stays_pending_until_turn_end_is_persisted(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.bus.events import InboundMessage
-    from nanobot.session import webui_turns as wth
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.bus.events import InboundMessage
+    from nucleamind.legacy.session import webui_turns as wth
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:idle-order"
     turn_id = "turn-idle-order"
     append_transcript_object(
@@ -4058,7 +4064,7 @@ async def test_webui_thread_api_restores_older_owner_after_latest_completes() ->
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.bus.events import InboundMessage
+    from nucleamind.legacy.bus.events import InboundMessage
 
     chat_id = "concurrent-projection"
     key = f"websocket:{chat_id}"
@@ -4134,15 +4140,15 @@ def test_handle_webui_thread_get_reconciles_registered_turn_with_turn_end(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
-        "nanobot.session.webui_turns.websocket_turn_wall_started_at",
+        "nucleamind.legacy.session.webui_turns.websocket_turn_wall_started_at",
         lambda chat_id: 1_700_000_000.0 if chat_id == "running" else None,
     )
     monkeypatch.setattr(
-        "nanobot.session.webui_turns.websocket_turn_id",
+        "nucleamind.legacy.session.webui_turns.websocket_turn_id",
         lambda chat_id: active_turn_id if chat_id == "running" else None,
     )
     key = "websocket:running"
@@ -4193,9 +4199,9 @@ def test_handle_webui_thread_get_accepts_pagination_query(tmp_path, monkeypatch)
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:paged-route"
     for idx in range(1, 4):
         append_transcript_object(
@@ -4333,7 +4339,7 @@ def test_handle_file_preview_probe_reports_binary_file_as_unavailable(tmp_path) 
 
 
 def test_file_preview_normalizes_windows_file_url() -> None:
-    from nanobot.webui.file_preview import _clean_preview_path
+    from nucleamind.legacy.webui.file_preview import _clean_preview_path
 
     assert _clean_preview_path("file:///C:/Users/me/project/app.py") == (
         "C:/Users/me/project/app.py"
@@ -4412,9 +4418,9 @@ def test_handle_webui_thread_get_backfills_legacy_missing_user_rows(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     workspace = tmp_path / "workspace"
     sessions = SessionManager(workspace)
     key = "websocket:c-legacy"
@@ -4456,10 +4462,10 @@ def test_handle_webui_thread_get_does_not_backfill_cron_internal_prompt(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.cron.session_turns import CRON_HISTORY_META
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.cron.session_turns import CRON_HISTORY_META
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     workspace = tmp_path / "workspace"
     sessions = SessionManager(workspace)
     key = "websocket:c-cron"
@@ -4502,10 +4508,10 @@ def test_handle_webui_thread_get_does_not_backfill_trigger_internal_prompt(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.session.automation_turns import AUTOMATION_HISTORY_META
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.session.automation_turns import AUTOMATION_HISTORY_META
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     workspace = tmp_path / "workspace"
     sessions = SessionManager(workspace)
     key = "websocket:c-trigger"
@@ -4548,10 +4554,10 @@ def test_handle_webui_thread_get_does_not_backfill_hidden_subagent_result(
     from websockets.datastructures import Headers
     from websockets.http11 import Request
 
-    from nanobot.session.history_visibility import HIDDEN_HISTORY_META
-    from nanobot.webui.transcript import append_transcript_object
+    from nucleamind.legacy.session.history_visibility import HIDDEN_HISTORY_META
+    from nucleamind.legacy.webui.transcript import append_transcript_object
 
-    monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("nucleamind.legacy.config.paths.get_data_dir", lambda: tmp_path)
     workspace = tmp_path / "workspace"
     sessions = SessionManager(workspace)
     key = "websocket:c-subagent"

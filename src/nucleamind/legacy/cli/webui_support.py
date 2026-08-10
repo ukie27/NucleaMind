@@ -12,22 +12,22 @@ from rich.console import Console
 from rich.markup import escape
 from rich.text import Text
 
-from nanobot.cli.runtime_config import (
+from nucleamind.legacy.cli.runtime_config import (
     _load_config_for_cli,
     _print_model_setup_steps,
     _print_runtime_config_validation_error,
     _provider_setup_error,
 )
-from nanobot.config.schema import Config
-from nanobot.security.network import is_loopback_host
-from nanobot.webui.build import (
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.security.network import is_loopback_host
+from nucleamind.legacy.webui.build import (
     BuildMode,
     WebUIBuildError,
     ensure_webui_bundle,
 )
 
 if TYPE_CHECKING:
-    from nanobot.gateway.runtime import GatewayRuntime
+    from nucleamind.legacy.gateway.runtime import GatewayRuntime
 
 __all__ = [
     "_attach_to_background_gateway",
@@ -88,7 +88,7 @@ def _webui_build_mode_for_interactive(*, yes: bool = False) -> BuildMode:
 
 def _resolve_webui_config_path(config: str | None) -> Path:
     """Resolve the config path used by ``nanobot webui`` and bind loader state."""
-    from nanobot.config.loader import get_config_path, set_config_path
+    from nucleamind.legacy.config.loader import get_config_path, set_config_path
 
     if not config:
         return get_config_path()
@@ -105,7 +105,7 @@ def _load_webui_setup_config(config_path: Path) -> Config:
 
 def _webui_config_dict(config: Config) -> dict[str, Any]:
     """Return the current WebSocket config as a mutable alias-key dictionary."""
-    from nanobot.channels.websocket.runtime import WebSocketConfig
+    from nucleamind.legacy.channels.websocket.runtime import WebSocketConfig
 
     current: Any = getattr(config.channels, "websocket", None) or {}
     model = WebSocketConfig.model_validate(current)
@@ -113,7 +113,7 @@ def _webui_config_dict(config: Config) -> dict[str, Any]:
 
 
 def _webui_channel_enabled(config: Config) -> bool:
-    from nanobot.channels.websocket.runtime import WebSocketConfig
+    from nucleamind.legacy.channels.websocket.runtime import WebSocketConfig
 
     current: Any = getattr(config.channels, "websocket", None) or {}
     return bool(WebSocketConfig.model_validate(current).enabled)
@@ -121,7 +121,7 @@ def _webui_channel_enabled(config: Config) -> bool:
 
 def _validate_gateway_startup(config: Config) -> str | None:
     """Validate gateway startup and return a provider error recoverable through WebUI."""
-    from nanobot.config.loader import get_config_path
+    from nucleamind.legacy.config.loader import get_config_path
 
     config_path = get_config_path()
     try:
@@ -257,7 +257,7 @@ def _ensure_local_webui_channel(
     yes: bool,
 ) -> tuple[bool, bool]:
     """Enable the local WebUI channel with safe localhost defaults."""
-    from nanobot.channels.websocket.runtime import WebSocketConfig
+    from nucleamind.legacy.channels.websocket.runtime import WebSocketConfig
 
     current: Any = getattr(config.channels, "websocket", None) or {}
     model = WebSocketConfig.model_validate(current)
@@ -488,7 +488,7 @@ def _run_quick_start_for_webui(
     )
     _confirm_webui_action("Run Quick Start now?", yes=False)
 
-    from nanobot.cli.onboard import run_quick_start_onboard
+    from nucleamind.legacy.cli.onboard import run_quick_start_onboard
 
     try:
         result = run_quick_start_onboard(config)

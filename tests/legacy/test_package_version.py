@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def test_source_checkout_import_uses_pyproject_version_without_metadata() -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     expected = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))["project"][
         "version"
     ]
@@ -17,15 +17,15 @@ def test_source_checkout_import_uses_pyproject_version_without_metadata() -> Non
         import sys
         import types
 
-        sys.path.insert(0, {str(repo_root)!r})
-        fake = types.ModuleType("nanobot.nanobot")
+        sys.path.insert(0, {str(repo_root / "src")!r})
+        fake = types.ModuleType("nucleamind.legacy.nanobot")
         fake.Nanobot = object
         fake.RunResult = object
-        sys.modules["nanobot.nanobot"] = fake
+        sys.modules["nucleamind.legacy.nanobot"] = fake
 
-        import nanobot
+        import nucleamind.legacy
 
-        print(nanobot.__version__)
+        print(nucleamind.legacy.__version__)
         """
     )
 

@@ -18,38 +18,38 @@ from urllib.parse import unquote
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
-from nanobot.agent.tools.image_generation import request_image_generation_reload
-from nanobot.agent.tools.mcp import request_mcp_reload
-from nanobot.api.runtime import ApiRuntime, ApiStartOptions, api_runtime_paths
-from nanobot.bus.queue import MessageBus
-from nanobot.channels._setup import channel_setup_spec
-from nanobot.channels.connect import ChannelConnectError
-from nanobot.channels.contracts import (
+from nucleamind.legacy.agent.tools.image_generation import request_image_generation_reload
+from nucleamind.legacy.agent.tools.mcp import request_mcp_reload
+from nucleamind.legacy.api.runtime import ApiRuntime, ApiStartOptions, api_runtime_paths
+from nucleamind.legacy.bus.queue import MessageBus
+from nucleamind.legacy.channels._setup import channel_setup_spec
+from nucleamind.legacy.channels.connect import ChannelConnectError
+from nucleamind.legacy.channels.contracts import (
     RouteFieldType,
     channel_instance_config,
     channel_update_instance_config,
 )
-from nanobot.channels.registry import load_channel_plugin
-from nanobot.channels.validation import validate_channel_config
-from nanobot.config.loader import get_config_path, load_config, save_config
-from nanobot.optional_features import (
+from nucleamind.legacy.channels.registry import load_channel_plugin
+from nucleamind.legacy.channels.validation import validate_channel_config
+from nucleamind.legacy.config.loader import get_config_path, load_config, save_config
+from nucleamind.legacy.optional_features import (
     OptionalFeatureError,
     extra_installed,
     optional_dependency_groups,
     with_channel_runtime_status,
 )
-from nanobot.pairing import approve_code, deny_code, list_pending
-from nanobot.webui.cli_apps_api import cli_apps_action, cli_apps_payload
-from nanobot.webui.http_utils import case_insensitive_header
-from nanobot.webui.http_utils import is_local_browser_request as _is_local_browser_request
-from nanobot.webui.http_utils import query_first as _query_first
-from nanobot.webui.mcp_presets_api import mcp_presets_settings_action
-from nanobot.webui.nanobot_features_api import (
+from nucleamind.legacy.pairing import approve_code, deny_code, list_pending
+from nucleamind.legacy.webui.cli_apps_api import cli_apps_action, cli_apps_payload
+from nucleamind.legacy.webui.http_utils import case_insensitive_header
+from nucleamind.legacy.webui.http_utils import is_local_browser_request as _is_local_browser_request
+from nucleamind.legacy.webui.http_utils import query_first as _query_first
+from nucleamind.legacy.webui.mcp_presets_api import mcp_presets_settings_action
+from nucleamind.legacy.webui.nanobot_features_api import (
     nanobot_feature_instance_target,
     nanobot_features_action,
     nanobot_features_payload,
 )
-from nanobot.webui.settings_api import (
+from nucleamind.legacy.webui.settings_api import (
     WebUISettingsError,
     complete_oauth_provider,
     create_model_configuration,
@@ -72,6 +72,7 @@ from nanobot.webui.settings_api import (
     update_transcription_settings,
     update_web_search_settings,
 )
+
 QueryParams = dict[str, list[str]]
 
 _MCP_VALUES_HEADER = "X-Nanobot-MCP-Values"

@@ -3,11 +3,11 @@ import json
 import httpx
 import pytest
 
-from nanobot.channels.feishu import runtime as feishu_module
-from nanobot.channels.feishu.runtime import FeishuChannel
-from nanobot.config import loader
-from nanobot.config.schema import Config
-from nanobot.pairing import store as pairing_store
+from nucleamind.legacy.channels.feishu import runtime as feishu_module
+from nucleamind.legacy.channels.feishu.runtime import FeishuChannel
+from nucleamind.legacy.config import loader
+from nucleamind.legacy.config.schema import Config
+from nucleamind.legacy.pairing import store as pairing_store
 
 
 def _default_feishu_instance(data: dict) -> dict:

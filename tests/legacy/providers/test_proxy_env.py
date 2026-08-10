@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import httpx
 
-import nanobot.providers.openai_compat_provider as openai_compat_provider
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+import nucleamind.legacy.providers.openai_compat_provider as openai_compat_provider
+from nucleamind.legacy.providers.openai_compat_provider import OpenAICompatProvider
 
 
 def _make_spec(is_local: bool = False) -> MagicMock:

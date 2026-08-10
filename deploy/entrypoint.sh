@@ -29,4 +29,4 @@ EOF
     exit 1
 fi
 
-exec nanobot "$@"
+exec nm legacy "$@"

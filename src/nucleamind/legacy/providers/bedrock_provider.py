@@ -11,7 +11,7 @@ import re
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, cast
 
-from nanobot.providers.base import (
+from nucleamind.legacy.providers.base import (
     LLMProvider,
     LLMResponse,
     ToolCallRequest,
