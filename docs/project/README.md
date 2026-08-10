@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-10
-- 当前阶段：阶段 0 工程基座（`D00` 已完成，下一步 `D01`）
+- 当前阶段：阶段 0 工程基座（`D00`、`D01` 均已完成，下一步 `D02`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -45,10 +45,28 @@
     `nm --version` 与 `nm legacy --help` 可用且无 `nanobot` 命令；
     wheel/sdist 含 `templates/`、`skills/`、`web/dist/`；
     `ruff check` 与 `basedpyright` 通过；新层无旧名残留。
+- **`D01` 架构守卫与 CI 门禁**：
+  - `tests/architecture/` 共 51 个用例，全部只做 AST/文本静态检查，不导入被测模块：
+    `test_import_boundaries.py`（`R1`–`R6`）、`test_module_docstrings.py`
+    （「职责/不负责」两行）、`test_file_size.py`（行数阈值）、
+    `test_any_usage.py`（`Any` 须带 `# boundary:` 说明）、
+    `test_legacy_debt.py`（债务棘轮）、`test_guard_integrity.py`（守卫自身不可被关掉）。
+  - 规则实现集中在 `_boundaries.py`，可作用于任意源码树——反向用例因此能在
+    `tmp_path` 里构造违规样例。`R1`–`R6` 每条各有一个注入用例；`R6` 另有四例覆盖
+    「新层 import legacy 失败 / legacy import 新层通过 / 白名单适配器通过 /
+    第二个适配器失败」。空目录一律通过，空骨架不会误报。
+  - `R6` 白名单精确到 `nucleamind/runtime/legacy_entry.py` 一个文件路径。
+  - `pyproject.toml` 叠加 `C901`(≤12) / `PLR0915` / `TRY` / `ASYNC`，
+    用 `per-file-ignores` 反向豁免 `legacy/`、`scripts/`、`tests/`；仍不引入 `ruff format`。
+  - `scripts/legacy_debt.py` 增加 `--check`（棘轮门禁）与 `--lower-baseline`（只许下调），
+    基线存于 `scripts/legacy_debt_baseline.json`。
+  - `scripts/check_startup_cost.py` 记录 `import nucleamind` 耗时、`nm --version`
+    耗时与包根急切导入的模块清单——第三项保证 `nucleamind/__init__.py` 零副作用。
+  - CI 新增独立作业 `Architecture guard`（守卫 + 债务棘轮 + 启动开销），失败即阻断。
 
 ## 正在进行
 
-- `D00` 已完成，`D01` 架构守卫尚未开始。新 Kernel 各层仍是空骨架，
+- `D00`、`D01` 已完成，阶段 0 工程基座收口。新 Kernel 各层仍是空骨架，
   尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
@@ -97,21 +115,31 @@
 
 ## 下一步工作
 
-1. 执行 `D01`：落地 `tests/architecture/` 的 `R1`–`R6` 断言、反向违规样例、
-   `runtime/legacy_entry.py` 精确白名单、
-   `legacy/` 债务指标与 CI 门禁。
-2. 按 `D02`–`D06` 落地契约层与 Capability Registry（此阶段不改动 `legacy/` 业务代码）。
+1. 执行 `D02` 契约·基础层：`contracts/{__init__,ids,errors,events}.py`。
+   注意 `SessionKey.storage_id()` 的分隔符转义必须可逆且不可碰撞
+   （`("a","b:c")` 与 `("a:b","c")` 须产出不同 id），一旦发布即为持久化契约。
+2. 按 `D03`–`D06` 落地契约领域层、能力层、`sdk/` 骨架与 Capability Registry
+   （此阶段不改动 `legacy/` 业务代码）。
 
-`D01` 需要注意的 `D00` 遗留事实：
+`D02` 起需要注意的既有事实：
 
-- `legacy/` 债务基线：352 个 Python 文件 / 133317 行（`scripts/legacy_debt.py --json`）。
-- `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单要精确到这一个文件路径。
-- Windows 上有一批**既有**失败用例（与 `D00` 无关）：`tools/test_exec_session_tools.py`
+- 新层每个模块的首个 docstring 必须含「职责：」「不负责：」两行，
+  否则 `tests/architecture/test_module_docstrings.py` 会失败。
+- 新层不得出现无 `# boundary:` 说明的 `Any`，不得 import `legacy/`。
+- `legacy/` 债务基线：352 个 Python 文件 / 133317 行
+  （`scripts/legacy_debt_baseline.json`，只允许用 `--lower-baseline` 下调）。
+- `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单精确到这一个文件路径。
+- 本机跑测试时系统临时目录可能因沙箱权限不可写，`pytest` 需加
+  `--basetemp=.pytest_tmp`；这是本地环境问题，与用例无关。
+- Windows 上有一批**既有**失败用例（与 `D00`/`D01` 无关）：
+  `tools/test_exec_session_tools.py`
   中 3-4 个用例依赖子进程时序，逐次运行结果不稳定；`test_web_fetch_security.py`、
   `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例在本机稳定失败。
   基线里记录的是这些用例的真实结果，不是「全绿」假设。
+- `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
+  （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02– ⬜（尚未开始）
 
 ## 本目录文档分类
 

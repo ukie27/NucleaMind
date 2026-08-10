@@ -7,7 +7,9 @@
 NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协议）
 独立开发的个人 AI Agent 项目，仓库与上游 Git 历史及协作流程均已分离。
 
-- **当前状态**：`D00` 已把仓库搬到目标结构（`src/` 布局 + 新层空骨架 + `legacy/` 隔离区）。遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；新 Kernel 各层仍是空骨架。
+- **当前状态**：`D00` 已把仓库搬到目标结构（`src/` 布局 + 新层空骨架 + `legacy/` 隔离区），
+  `D01` 已立起架构守卫与 CI 门禁。遗留实现全部位于 `src/nucleamind/legacy/`，
+  通过 `nm legacy` 可正常运行；新 Kernel 各层仍是空骨架。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -47,6 +49,12 @@ webui/                     # 前端源码（TypeScript）
 
 # legacy/ 债务指标（只允许下降）
 .venv\Scripts\python.exe scripts/legacy_debt.py
+.venv\Scripts\python.exe scripts/legacy_debt.py --check          # CI 门禁形态
+.venv\Scripts\python.exe scripts/legacy_debt.py --lower-baseline # 迁完模块后下调基线
+
+# 架构守卫（R1–R6 / 模块头部 / 文件规模 / Any 边界 / 债务棘轮），CI 独立作业
+.venv\Scripts\python.exe -m pytest tests/architecture -q
+.venv\Scripts\python.exe scripts/check_startup_cost.py --check
 
 # 严格类型检查（与 CI 一致）
 uv sync --all-extras --dev

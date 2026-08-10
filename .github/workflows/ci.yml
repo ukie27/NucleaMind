@@ -6,6 +6,30 @@ on:
   pull_request:
 
 jobs:
+  # 架构守卫是独立作业：它必须能在完整测试套件之外单独判定通过与否，
+  # 失败即阻断合并。守卫只做 AST/文本静态检查，不装 channel 可选依赖。
+  architecture:
+    name: Architecture guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Layer boundaries R1-R6 / docstrings / file size / Any
+        run: pytest tests/architecture -q
+
+      - name: Legacy debt ratchet
+        run: python scripts/legacy_debt.py --check
+
+      - name: Startup cost
+        run: python scripts/check_startup_cost.py --check
+
   python:
     name: Lint / Type / Test
     runs-on: ubuntu-latest
@@ -26,9 +50,6 @@ jobs:
 
       - name: Type check
         run: basedpyright
-
-      - name: Legacy debt
-        run: python scripts/legacy_debt.py
 
       - name: Test
         run: pytest
