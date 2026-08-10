@@ -8,8 +8,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
 独立开发的个人 AI Agent 项目，仓库与上游 Git 历史及协作流程均已分离。
 
 - **当前状态**：`D00` 已把仓库搬到目标结构（`src/` 布局 + 新层空骨架 + `legacy/` 隔离区），
-  `D01` 已立起架构守卫与 CI 门禁。遗留实现全部位于 `src/nucleamind/legacy/`，
-  通过 `nm legacy` 可正常运行；新 Kernel 各层仍是空骨架。
+  `D01` 已立起架构守卫与 CI 门禁，`D02` 已落地契约基础层
+  （`contracts/{ids,errors,events}.py`）。遗留实现全部位于 `src/nucleamind/legacy/`，
+  通过 `nm legacy` 可正常运行；`kernel/`–`embed/` 各层仍是空骨架。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -37,8 +38,16 @@ deploy/                    # Dockerfile / compose / entrypoint
 webui/                     # 前端源码（TypeScript）
 ```
 
-`contracts/`–`embed/` 目前是空骨架（只有 `__init__.py` 与 docstring），
-按开发方案 `D02` 起逐个填充。**新代码直接写在最终位置**，不要放临时目录。
+`contracts/` 已有 `D02` 的基础层（`ids` / `errors` / `events`），领域层与能力层由
+`D03`、`D04` 补齐；`kernel/`–`embed/` 仍是空骨架（只有 `__init__.py` 与 docstring），
+按开发方案逐个填充。**新代码直接写在最终位置**，不要放临时目录。
+
+契约层已冻结、后续模块必须复用而不是另起炉灶的三样东西：
+
+- `SessionKey.storage_id()`：可逆且无碰撞的编码，**已发布即为持久化契约**，不得更改。
+- `ErrorCode` + `CODE_CATEGORIES`：全部错误码集中登记，禁止在其他模块写错误码字面量；
+  `NucleaError` 的 `category` 由码推导，不接受调用方传入。
+- `contracts.errors.redact` / `scrub`：脱敏在**构造时**完成，不依赖日志或 sink 层。
 
 ## 开发命令
 

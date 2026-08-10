@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-10
-- 当前阶段：阶段 0 工程基座（`D00`、`D01` 均已完成，下一步 `D02`）
+- 当前阶段：阶段 1 契约与注册表（`D00`–`D02` 均已完成，下一步 `D03`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -63,11 +63,41 @@
   - `scripts/check_startup_cost.py` 记录 `import nucleamind` 耗时、`nm --version`
     耗时与包根急切导入的模块清单——第三项保证 `nucleamind/__init__.py` 零副作用。
   - CI 新增独立作业 `Architecture guard`（守卫 + 债务棘轮 + 启动开销），失败即阻断。
+- **`D02` 契约·基础层**（`contracts/{__init__,ids,errors,events}.py`，约 640 行 +
+  `tests/contracts/` 85 个用例）：
+  - `contracts/__init__.py` 定义递归类型别名 `JsonValue` 与 `JsonSchema`，
+    并统一再导出基础层公开名。子模块只在 `TYPE_CHECKING` 下反向导入 `JsonValue`，
+    运行时不成环，因此契约层全程没有 `Any`。
+  - `ids.py`：`InstanceId` / `TurnId` / `PluginId`（`NewType`）、`SessionKey`、`Correlation`。
+    `SessionKey.storage_id()` 对每个分量按 UTF-8 逐字节百分号编码（安全字符集
+    `[A-Za-z0-9._-]`），再用 `~` 连接。`~` 不在安全字符集内，编码结果里绝不会出现
+    未转义的分隔符，因此 `split` 不可能切错位置——这就是「不同输入不可能撞同一个 id」的
+    依据，也顺带让编码结果可以直接当目录名用。`from_storage_id()` 是其逆运算。
+    `Correlation.derive()` 生成 subagent / 派生 turn 的关联标识，只记一层父节点。
+  - `errors.py`：`ErrorCategory` 11 个取值全部落地；`ErrorCode` 集中登记 29 个稳定错误码，
+    `CODE_CATEGORIES` 是码到分类的唯一映射，`NucleaError.category` 由码推导而**不接受
+    调用方传入**，杜绝同码异类；未登记的码抛 `UnknownErrorCodeError`（编码错误，不走
+    `NucleaError` 自身）。脱敏在构造时完成：敏感键名整值打码、已知令牌形状（`sk-`、
+    `ghp_`、`xox*-`、`AKIA`、`Bearer`）按值打码，被摘除的原始密文再从 `user_message`
+    里反查擦除，因此 `user_message`、`detail`、`repr`、`str`、`args` 都不含哨兵值。
+  - 键名判定按**整词**比对（`_`、`-`、camelCase 边界切词）而不是子串：子串匹配会把
+    `tokens`、`prompt_tokens` 这类用量统计一并打掉，而那正是可观测性最需要的信号。
+    裸 `key` 不算密钥（`session_key`、`cache_key` 保留），只有 `api/access/private/
+    secret/signing/encryption` + `key` 的词组才算；`count`/`limit`/`usage` 等统计限定词
+    一票否决。这条规则由 15 个「必须保留」的反向用例锁死。
+  - `events.py`：`EventFamily` 7 族、`EventName` 冻结 30 个事件名，
+    `RuntimeEvent` 带 `Correlation` 与单调 `sequence`，构造时校验序号非负、时间带时区、
+    关联标识与事件实例一致，并对 `payload` 脱敏 + 快照冻结为只读映射
+    （调用方事后改自己的 dict 影响不到已发布的事件）。实例级事件允许无 `correlation`。
+  - 验收：`storage_id()` 在 16 个刁钻分量的 4096 种组合上往返还原且零碰撞；
+    `("a","b:c")` -> `a~b%3Ac~default` 与 `("a:b","c")` -> `a%3Ab~c~default` 不同；
+    哨兵密钥在五种渲染形式下均不泄漏；`ruff check`、`basedpyright`（新层 0 报错）、
+    `tests/architecture` 51 个用例全绿。
 
 ## 正在进行
 
-- `D00`、`D01` 已完成，阶段 0 工程基座收口。新 Kernel 各层仍是空骨架，
-  尚未开始拆分 `legacy/` 的现有模块。
+- `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02` 已完成，契约基础层落地。
+  `kernel/`–`embed/` 各层仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -115,33 +145,44 @@
 
 ## 下一步工作
 
-1. 执行 `D02` 契约·基础层：`contracts/{__init__,ids,errors,events}.py`。
-   注意 `SessionKey.storage_id()` 的分隔符转义必须可逆且不可碰撞
-   （`("a","b:c")` 与 `("a:b","c")` 须产出不同 id），一旦发布即为持久化契约。
-2. 按 `D03`–`D06` 落地契约领域层、能力层、`sdk/` 骨架与 Capability Registry
+1. 执行 `D03` 契约·领域与执行层：`contracts/{message,session,context,tool,model}.py`。
+   全部 frozen dataclass，字段按需求 §10.2–§10.6 逐条落地并在测试或 docstring 中追溯；
+   `ToolResult.side_effect` 必填不给默认值，`ContextFragment.trust` 四级齐全。
+   `metadata` 用 `Mapping[str, JsonValue]`（已在 `contracts/__init__.py` 定义）并加大小上限。
+2. 按 `D04`–`D06` 落地契约能力层、`sdk/` 骨架与 Capability Registry
    （此阶段不改动 `legacy/` 业务代码）。
 
-`D02` 起需要注意的既有事实：
+`D03` 起需要注意的既有事实：
 
 - 新层每个模块的首个 docstring 必须含「职责：」「不负责：」两行，
   否则 `tests/architecture/test_module_docstrings.py` 会失败。
 - 新层不得出现无 `# boundary:` 说明的 `Any`，不得 import `legacy/`。
+  契约层用 `JsonValue` 代替 `Any`，目前新层的 `Any` 数为 0，保持这个数字。
+- 错误码只能加在 `contracts/errors.py` 的 `ErrorCode` 并同步登记 `CODE_CATEGORIES`，
+  其他模块出现错误码字面量视为违规；`NucleaError` 的 `category` 不接受调用方传入。
+- `SessionKey.storage_id()` 的编码**已发布，不可更改**：改动会让历史会话目录失联。
+  新增分量同理需要评审——分量数变化会让 `from_storage_id()` 的三段假设失效。
+- 需要脱敏时复用 `contracts.errors.redact` / `scrub`，不要另写一套；
+  新增敏感键名要同时补「必须保留」的反向用例，防止把用量统计一并打掉。
 - `legacy/` 债务基线：352 个 Python 文件 / 133317 行
   （`scripts/legacy_debt_baseline.json`，只允许用 `--lower-baseline` 下调）。
 - `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单精确到这一个文件路径。
 - 本机跑测试时系统临时目录可能因沙箱权限不可写，`pytest` 需显式指定 basetemp。
-  **basetemp 必须落在仓库之外**（例如 `--basetemp=D:/nm_pytest_tmp/run1`）：
-  放在仓库内会让 `GitStore` 的嵌套仓库保护生效，凭空多出约 45 个 git 相关假失败。
-- 完整套件在本机的既有失败为 18 个，全部在 `legacy/`，与 `D00`/`D01` 无关：
+  **basetemp 必须落在仓库之外且父目录须已存在**（例如先建好 `D:/nm_pytest_tmp/`，
+  再传 `--basetemp=D:/nm_pytest_tmp/run1`）：放在仓库内会让 `GitStore` 的嵌套仓库保护
+  生效，凭空多出约 45 个 git 相关假失败；父目录不存在则 `tmp_path` 夹具直接报
+  `FileNotFoundError`，架构守卫的反向用例会全部 error。
+- 完整套件在本机的既有失败为 15–18 个，全部在 `legacy/`，与 `D00`–`D02` 无关：
   `test_exec_platform.py` 的 Windows PowerShell UTF-8 用例、
   `test_exec_session_tools.py` 的子进程时序用例、`test_web_fetch_security.py`、
   `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例，
-  以及 `channels/websocket` 的 `test_wrong_path_404`。
-  基线里记录的是这些用例的真实结果，不是「全绿」假设。
+  以及 `channels/websocket` 的 `test_wrong_path_404`。数量在区间内浮动是因为其中几个
+  依赖网络与子进程时序；基线里记录的是这些用例的真实结果，不是「全绿」假设。
+  `D02` 完成时的实测为 15 failed / 6295 passed / 35 skipped。
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01 ✅  D02– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02 ✅  D03– ⬜（尚未开始）
 
 ## 本目录文档分类
 
