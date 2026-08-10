@@ -24,6 +24,7 @@ __all__ = [
     "PluginId",
     "SessionKey",
     "TurnId",
+    "validate_identifier",
 ]
 
 #: 实例标识：一台机器上可并存多个实例，各自有独立的配置与状态目录。
@@ -92,24 +93,29 @@ def _decode_component(value: str) -> str:
         ) from exc
 
 
-def _validate_component(name: str, value: str) -> None:
+def validate_identifier(field: str, value: str, *, max_length: int = MAX_COMPONENT_LENGTH) -> None:
+    """标识字段的通用校验：非空、不超长、不含控制字符。
+
+    `message.py` 等模块的 `message_id`、`channel_id`、`call_id` 与会话分量遵循同一条
+    规则，因此共用这一个实现——三处平台标识各写一份校验只会慢慢长歪。
+    """
     if not value:
         raise NucleaError(
             ErrorCode.INPUT_MALFORMED,
-            "会话标识的每个分量都必须非空。",
-            detail={"field": name},
+            "标识字段必须非空。",
+            detail={"field": field},
         )
-    if len(value) > MAX_COMPONENT_LENGTH:
+    if len(value) > max_length:
         raise NucleaError(
             ErrorCode.INPUT_TOO_LARGE,
-            "会话标识分量超长。",
-            detail={"field": name, "length": len(value), "limit": MAX_COMPONENT_LENGTH},
+            "标识字段超长。",
+            detail={"field": field, "length": len(value), "limit": max_length},
         )
     if any(char < " " or char == "\x7f" for char in value):
         raise NucleaError(
             ErrorCode.INPUT_MALFORMED,
-            "会话标识分量不得含控制字符。",
-            detail={"field": name},
+            "标识字段不得含控制字符。",
+            detail={"field": field},
         )
 
 
@@ -127,9 +133,9 @@ class SessionKey:
     scope: str = "default"
 
     def __post_init__(self) -> None:
-        _validate_component("channel_id", self.channel_id)
-        _validate_component("conversation_id", self.conversation_id)
-        _validate_component("scope", self.scope)
+        validate_identifier("channel_id", self.channel_id)
+        validate_identifier("conversation_id", self.conversation_id)
+        validate_identifier("scope", self.scope)
 
     def storage_id(self) -> str:
         """稳定、可逆、无碰撞的编码，可直接用作目录名或记录键。
@@ -176,10 +182,10 @@ class Correlation:
     parent_turn_id: TurnId | None = None
 
     def __post_init__(self) -> None:
-        _validate_component("instance_id", self.instance_id)
-        _validate_component("turn_id", self.turn_id)
+        validate_identifier("instance_id", self.instance_id)
+        validate_identifier("turn_id", self.turn_id)
         if self.parent_turn_id is not None:
-            _validate_component("parent_turn_id", self.parent_turn_id)
+            validate_identifier("parent_turn_id", self.parent_turn_id)
         if self.parent_turn_id == self.turn_id:
             raise NucleaError(
                 ErrorCode.KERNEL_INVARIANT_VIOLATED,

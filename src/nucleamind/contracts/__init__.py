@@ -6,7 +6,8 @@
 
 三条不变量（技术方案 §5.1）：契约对象一律不可变；契约层不出现 `Any`；契约层不出现 IO。
 
-当前已落地 `D02` 基础层（`ids` / `errors` / `events`）；领域层与能力层由 `D03`、`D04` 补齐。
+当前已落地 `D02` 基础层（`ids` / `errors` / `events`）与 `D03` 领域与执行层
+（`metadata` / `message` / `session` / `context` / `tool` / `model`）；能力层由 `D04` 补齐。
 """
 
 from __future__ import annotations
@@ -30,6 +31,14 @@ JsonSchema: TypeAlias = Mapping[str, JsonValue]
 
 # 子模块的注解引用上面的 `JsonValue`，因此定义必须先于导入；子模块只在
 # `TYPE_CHECKING` 下反向导入它，运行时不成环。
+from .context import (  # noqa: E402
+    UNTRUSTED_DATA_PREFIX,
+    ContextFragment,
+    FragmentKind,
+    FragmentScope,
+    Sensitivity,
+    TrustLevel,
+)
 from .errors import (  # noqa: E402
     CODE_CATEGORIES,
     ErrorCategory,
@@ -39,23 +48,110 @@ from .errors import (  # noqa: E402
     scrub,
 )
 from .events import EventFamily, EventName, RuntimeEvent  # noqa: E402
-from .ids import Correlation, InstanceId, PluginId, SessionKey, TurnId  # noqa: E402
+from .ids import (  # noqa: E402
+    Correlation,
+    InstanceId,
+    PluginId,
+    SessionKey,
+    TurnId,
+    validate_identifier,
+)
+from .message import (  # noqa: E402
+    AttachmentRef,
+    AttachmentSource,
+    InboundMessage,
+    OutboundMessage,
+    Sender,
+    StreamState,
+)
+from .metadata import EMPTY_METADATA, normalize_metadata  # noqa: E402
+from .model import (  # noqa: E402
+    ChunkKind,
+    ModelCapability,
+    ModelChunk,
+    ModelInfo,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SamplingParams,
+    StopReason,
+    TokenUsage,
+)
+from .session import (  # noqa: E402
+    CancelReason,
+    Role,
+    SessionMessage,
+    SessionSnapshot,
+    TurnOutcome,
+    TurnStatus,
+)
+from .tool import (  # noqa: E402
+    ArtifactRef,
+    Concurrency,
+    PermissionKind,
+    RiskLevel,
+    SideEffect,
+    ToolCall,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+)
 
 __all__ = [
     "CODE_CATEGORIES",
+    "EMPTY_METADATA",
+    "UNTRUSTED_DATA_PREFIX",
+    "ArtifactRef",
+    "AttachmentRef",
+    "AttachmentSource",
+    "CancelReason",
+    "ChunkKind",
+    "Concurrency",
+    "ContextFragment",
     "Correlation",
     "ErrorCategory",
     "ErrorCode",
     "EventFamily",
     "EventName",
+    "FragmentKind",
+    "FragmentScope",
+    "InboundMessage",
     "InstanceId",
     "JsonSchema",
     "JsonValue",
+    "ModelCapability",
+    "ModelChunk",
+    "ModelInfo",
+    "ModelMessage",
+    "ModelRequest",
+    "ModelResponse",
     "NucleaError",
+    "OutboundMessage",
+    "PermissionKind",
     "PluginId",
+    "Role",
+    "RiskLevel",
     "RuntimeEvent",
+    "SamplingParams",
+    "Sender",
+    "Sensitivity",
     "SessionKey",
+    "SessionMessage",
+    "SessionSnapshot",
+    "SideEffect",
+    "StopReason",
+    "StreamState",
+    "TokenUsage",
+    "ToolCall",
+    "ToolInvocation",
+    "ToolResult",
+    "ToolSpec",
+    "TrustLevel",
     "TurnId",
+    "TurnOutcome",
+    "TurnStatus",
+    "normalize_metadata",
     "redact",
     "scrub",
+    "validate_identifier",
 ]

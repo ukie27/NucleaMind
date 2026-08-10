@@ -1,0 +1,243 @@
+"""字段追溯表：每个契约类型的字段集合对照需求 §10（`D03` 验收项 2）。
+
+本文件是「字段遗漏会在阶段 5 才暴露」这条风险的对冲：字段增删必须同时改这里，
+`docs/project/README.md` 记录的追溯依据就是这张表，而不是散落在各处的注释。
+
+每行的 `requirement` 写明该类型对应需求文档的哪一节；`fields` 是**完整**字段名集合，
+断言用相等而不是包含——包含关系拦不住「多加了一个没人讨论过的字段」。
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from typing import Final
+
+import pytest
+
+from nucleamind.contracts import (
+    ArtifactRef,
+    AttachmentRef,
+    ContextFragment,
+    InboundMessage,
+    ModelChunk,
+    ModelInfo,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    OutboundMessage,
+    SamplingParams,
+    Sender,
+    SessionMessage,
+    SessionSnapshot,
+    TokenUsage,
+    ToolCall,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+    TurnOutcome,
+)
+
+#: 类型 -> (需求出处, 完整字段名集合)。
+TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
+    Sender: ("§10.2 sender", frozenset({"user_id", "display_name", "is_operator", "is_bot"})),
+    AttachmentRef: (
+        "§10.2 attachments（引用/媒体类型/大小/受控访问方式）",
+        frozenset({"source", "locator", "media_type", "size_bytes", "filename"}),
+    ),
+    InboundMessage: (
+        "§10.2 统一输入消息（十行）",
+        frozenset(
+            {
+                "message_id",
+                "instance_id",
+                "channel_id",
+                "conversation_id",
+                "sender",
+                "content",
+                "timestamp",
+                "attachments",
+                "reply_to",
+                "metadata",
+            }
+        ),
+    ),
+    OutboundMessage: (
+        "§10.3 统一输出消息（九行）",
+        frozenset(
+            {
+                "session_key",
+                "channel_id",
+                "conversation_id",
+                "turn_id",
+                "content",
+                "attachments",
+                "reply_to",
+                "stream_state",
+                "metadata",
+            }
+        ),
+    ),
+    ContextFragment: (
+        "§10.4 Context 贡献（七行）",
+        frozenset(
+            {
+                "source",
+                "kind",
+                "content",
+                "priority",
+                "estimated_tokens",
+                "scope",
+                "trust",
+                "sensitivity",
+                "expires_at",
+            }
+        ),
+    ),
+    ToolSpec: (
+        "§10.5 / TOL-001（名称、描述、schema、权限、输出语义）",
+        frozenset(
+            {"name", "description", "parameters", "permissions", "read_only", "risk", "concurrency"}
+        ),
+    ),
+    ToolCall: ("§10.5 Tool Call 输入（调用 ID / 标识 / 参数）", frozenset({"call_id", "name", "arguments"})),
+    ToolInvocation: (
+        "§10.5 Tool Call 输入（关联信息 / 超时 / 权限 / 幂等）",
+        frozenset({"call", "correlation", "timeout_ms", "granted", "idempotency_key"}),
+    ),
+    ArtifactRef: (
+        "§10.5 外部产物引用",
+        frozenset({"locator", "media_type", "description", "size_bytes"}),
+    ),
+    ToolResult: (
+        "§10.5 Tool Result 输出（七条）",
+        frozenset(
+            {
+                "call_id",
+                "ok",
+                "content",
+                "truncated",
+                "side_effect",
+                "data",
+                "artifacts",
+                "error",
+                "duration_ms",
+            }
+        ),
+    ),
+    ModelInfo: (
+        "§10.6 模型标识与所需能力 / MOD-001",
+        frozenset(
+            {
+                "model_id",
+                "provider",
+                "capabilities",
+                "context_window_tokens",
+                "max_output_tokens",
+            }
+        ),
+    ),
+    SamplingParams: (
+        "§10.6 采样、最大输出等受支持参数",
+        frozenset({"temperature", "top_p", "max_output_tokens", "stop_sequences", "seed"}),
+    ),
+    ModelMessage: (
+        "§10.6 有序消息与 Context",
+        frozenset({"role", "content", "tool_calls", "tool_call_id"}),
+    ),
+    ModelRequest: (
+        "§10.6 请求（模型标识/消息/工具/参数/关联 ID）",
+        frozenset(
+            {"model_id", "messages", "correlation", "tools", "params", "stream", "timeout_ms"}
+        ),
+    ),
+    TokenUsage: (
+        "§10.6 Token 或费用用量",
+        frozenset(
+            {
+                "input_tokens",
+                "output_tokens",
+                "cached_input_tokens",
+                "reasoning_tokens",
+                "cost_usd",
+            }
+        ),
+    ),
+    ModelResponse: (
+        "§10.6 响应（内容/Tool Call/终止原因/用量/归一化元数据）",
+        frozenset(
+            {"model_id", "stop_reason", "content", "tool_calls", "usage", "provider_metadata"}
+        ),
+    ),
+    ModelChunk: (
+        "§10.6 流式增量",
+        frozenset({"kind", "text", "tool_call", "usage", "stop_reason"}),
+    ),
+    SessionMessage: (
+        "§9.7 SES-002 / SES-004 持久化单元",
+        frozenset(
+            {
+                "message_id",
+                "role",
+                "content",
+                "created_at",
+                "turn_id",
+                "tool_call_id",
+                "interrupted",
+                "metadata",
+            }
+        ),
+    ),
+    SessionSnapshot: (
+        "§9.7 SES-004 / SES-006 可迁移存储格式",
+        frozenset(
+            {
+                "session_key",
+                "messages",
+                "created_at",
+                "updated_at",
+                "compacted_through",
+                "schema_version",
+            }
+        ),
+    ),
+    TurnOutcome: (
+        "技术方案 §6.4 turn 终态 / KER-003 / KER-005",
+        frozenset(
+            {
+                "correlation",
+                "status",
+                "started_at",
+                "finished_at",
+                "iterations",
+                "tool_calls",
+                "error",
+                "cancel_reason",
+            }
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("contract", "requirement", "expected"),
+    [(cls, req, fields) for cls, (req, fields) in TRACEABILITY.items()],
+    ids=[cls.__name__ for cls in TRACEABILITY],
+)
+def test_fields_match_requirement(
+    contract: type, requirement: str, expected: frozenset[str]
+) -> None:
+    actual = frozenset(f.name for f in dataclasses.fields(contract))
+    assert actual == expected, f"{contract.__name__} 的字段与 {requirement} 不一致"
+
+
+def test_every_contract_is_a_frozen_slotted_dataclass() -> None:
+    """三条不变量之一：契约对象一律不可变（技术方案 §5.1）。
+
+    `slots=True` 一并断言：字段落在 `__slots__` 里，实例才加不上临时属性。
+    """
+    for contract in TRACEABILITY:
+        params = contract.__dataclass_params__  # pyright: ignore[reportAttributeAccessIssue]
+        assert params.frozen, f"{contract.__name__} 不是 frozen dataclass"
+        slots = getattr(contract, "__slots__", None)
+        assert slots is not None, f"{contract.__name__} 未启用 slots"
+        assert frozenset(slots) == frozenset(f.name for f in dataclasses.fields(contract))
