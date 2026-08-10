@@ -129,12 +129,14 @@
 - `legacy/` 债务基线：352 个 Python 文件 / 133317 行
   （`scripts/legacy_debt_baseline.json`，只允许用 `--lower-baseline` 下调）。
 - `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单精确到这一个文件路径。
-- 本机跑测试时系统临时目录可能因沙箱权限不可写，`pytest` 需加
-  `--basetemp=.pytest_tmp`；这是本地环境问题，与用例无关。
-- Windows 上有一批**既有**失败用例（与 `D00`/`D01` 无关）：
-  `tools/test_exec_session_tools.py`
-  中 3-4 个用例依赖子进程时序，逐次运行结果不稳定；`test_web_fetch_security.py`、
-  `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例在本机稳定失败。
+- 本机跑测试时系统临时目录可能因沙箱权限不可写，`pytest` 需显式指定 basetemp。
+  **basetemp 必须落在仓库之外**（例如 `--basetemp=D:/nm_pytest_tmp/run1`）：
+  放在仓库内会让 `GitStore` 的嵌套仓库保护生效，凭空多出约 45 个 git 相关假失败。
+- 完整套件在本机的既有失败为 18 个，全部在 `legacy/`，与 `D00`/`D01` 无关：
+  `test_exec_platform.py` 的 Windows PowerShell UTF-8 用例、
+  `test_exec_session_tools.py` 的子进程时序用例、`test_web_fetch_security.py`、
+  `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例，
+  以及 `channels/websocket` 的 `test_wrong_path_404`。
   基线里记录的是这些用例的真实结果，不是「全绿」假设。
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
