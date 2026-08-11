@@ -11,9 +11,10 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D01` 已立起架构守卫与 CI 门禁，`D02`–`D04` 已落地完整契约层
   （`contracts/` 十二个模块），`D05` 已落地 SDK 表面（`sdk/` 与 `sdk/testing/`），
   `D06` 已落地 Capability Registry 与覆盖解析（`kernel/registry/`），阶段 1 收口；
-  `D07` 已落地旧实现行为基线（`tests/baseline/`），阶段 2 Turn 内核开始。
+  `D07` 已落地旧实现行为基线（`tests/baseline/`），`D08` 已落地取消与预算
+  （`kernel/turn/{cancel,limits}.py`），阶段 2 Turn 内核推进中。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 只有 `registry/`。
+  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 只有 `registry/` 与 `turn/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -64,6 +65,13 @@ webui/                     # 前端源码（TypeScript）
 `RegistrationBatch`（`EDG-103`：`setup` 中途抛异常整批丢弃），内建与插件走同一条分派，
 不存在内建专用注册 API。`kernel/` 不 import `sdk/`，因此 manifest 的 `overrides` 以**原始串**
 跨层传递，两侧共用 `contracts.parse_capability_target()` 解码。
+
+`kernel/turn/` 目前有 `cancel.py` 与 `limits.py`：取消一律用 `CancelToken` 而不是
+`asyncio.CancelledError`（后者无法保证「保存已产生内容再退出」），检查点一律用
+`token.checkpoint(Checkpoint.X)`——`CHECKPOINT_OWNERS` 已经定死 engine 拿 2/3/5/6、
+orchestrator 拿 1/4。预算只有 `TurnLimits` 那**六项**，取值与 `LimitKind` 的名字相同，
+越界后的终态只查 `LIMIT_OUTCOMES`，不要在 engine 或编排里另写一份判断；记账用
+per-turn 的 `BudgetLedger`（判定必须在发起工具**之前**）。
 
 `tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
 可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），

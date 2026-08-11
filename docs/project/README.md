@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-11
-- 当前阶段：阶段 2 Turn 内核已启动（`D00`–`D07` 均已完成，下一步 `D08`）
+- 当前阶段：阶段 2 Turn 内核推进中（`D00`–`D08` 均已完成，下一步 `D09`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -266,13 +266,53 @@
     `test_onboard_logic.py::test_quick_start_openai_codex_reports_incomplete_installation`
     （单独跑同样失败，属既有 oauth-cli-kit 家族）；`ruff check` 通过；
     `tests/architecture` 51 个用例仍全绿；`src/` 未改动一行。
+- **`D08` 取消与预算**（`kernel/turn/{__init__,cancel,limits}.py`，约 420 行 +
+  `tests/kernel/{test_cancel,test_limits}.py` 87 个用例）：
+  - **取消与预算是两件事，因此是两个不互相依赖的模块**：取消是「有人要求停下」
+    （终态 `CANCELLED`），预算是「已经用掉多少」（终态 `STOPPED_BY_LIMIT`）。缝在一起
+    就会让「模型自己绕了 16 圈」和「用户按了 Ctrl-C」共用一条判定路径，而这两者的善后
+    动作不同。唯一交点是 `turn_timeout_ms`：它是预算项，触发时以 `CancelReason.TIMEOUT`
+    走取消路径，由 `LimitBreach.cancel_reason` 显式给出。
+  - `CancelToken` 三条不变量：`request()` 幂等且第一次的 reason 胜出（`EDG-206`）；
+    取消**只向下传播**（父取消全部后代，子取消不影响父与兄弟）；父已取消时 `child()`
+    **出生即取消**——否则「取消后又发起一次工具调用」会拿到一个看起来正常的令牌。
+    子令牌用 `WeakSet` 登记，工具结束后不会一直挂在 turn 上。
+  - **额外提供 `await token.wait()`**，不只是可轮询：`EDG-407` 的宽限期要与取消赛跑，
+    只能轮询的话 Kernel 只能指望不自觉的那些工具自觉。`asyncio.Event` 懒创建，
+    每工具一个的令牌绝大多数从不被 await。
+  - 6 个检查点落成 `Checkpoint` 枚举 + `CHECKPOINT_OWNERS`（engine 4 个：2/3/5/6；
+    orchestrator 2 个：1/4）。`token.checkpoint(where)` 抛出的错误带
+    `detail["checkpoint"]`，「turn 停在哪一步」不必靠读日志上下文猜。
+  - **补了一个 `ErrorCode`**：`CANCELLED_BY_SHUTDOWN`（→ `CANCELLED` 类）。四个
+    `CancelReason` 到错误码的映射集中在 `CANCEL_REASON_CODES`（`TIMEOUT`/`BUDGET` 合并到
+    `CANCELLED_BY_BUDGET`）。把 `SHUTDOWN` 并进 `CANCELLED_BY_USER` 会让「用户按了
+    Ctrl-C 还是实例在关闭」不可判定，而这两者的后续处理完全不同。
+  - `TurnLimits` 恰好六项且 `LimitKind` 的取值**等于字段名**（有对照测试）：越界报告要能
+    直接指回「改哪个配置项」，中间隔一层翻译表就会出现「报的名字和配置里的对不上」。
+    `LIMIT_OUTCOMES` 是 §6.4「触发行为」列的可执行形态，`None` 表示该项越界**不终止
+    turn**（单工具超时、结果截断、上下文超限三项）。取消宽限期
+    `DEFAULT_TOOL_CANCEL_GRACE_MS = 2000` 是取消参数而不是预算项，因此不在六项里。
+  - `BudgetLedger` 与 `TurnLimits` 分开：前者是 per-turn 可变状态，后者是不可变配置。
+    计数器塞进配置对象就等于让并发 turn 共享同一份计数（`KER-008` 允许同实例多 session
+    并发）。时钟注入默认 `time.monotonic`——墙钟回拨会让 turn 突然超时或永不超时。
+  - `check(pending_tool_calls=n)` 在**发起前**判定：先记账再判定会让最后一批工具真的执行
+    完才发现超了，副作用已经发生。判定顺序总超时 -> 迭代 -> 工具调用，时间用尽时的终态
+    （`CANCELLED`）不会被计数类越界遮住。「配额刚好用满且模型没再要工具」不算越界。
+  - 验收：六项预算逐项测试（默认值字面量 / 达到上限的行为 / 可配置性 / 非正数与 `bool`
+    被拒）；「缺省配置下不存在无界执行路径」用一个永远返回 tool_call 的假模型驱动
+    engine 主循环骨架，断言 16 轮后以 `STOPPED_BY_LIMIT` 终止；「取消后数据仍可保存」
+    有独立用例（模拟检查点 3，断言已产生文本完整留存）。`ruff check`、
+    `basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`tests/architecture` +
+    `tests/contracts` + `tests/sdk` + `tests/kernel` + `tests/baseline` 共 742 个用例全绿；
+    `kernel/turn/` 语句覆盖率 100%；新层 `Any` 数仍为 0。
 
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
-  `D07` 已完成，旧实现行为基线就位，阶段 2 开始。
-  `kernel/` 目前只有 `registry/`；`builtins/`、`runtime/`、`embed/` 仍是空骨架，
+  `D07` 已完成，旧实现行为基线就位；`D08` 已完成，取消与预算就位，`D09` Turn Engine
+  的两个前置依赖（`D06` + `D08`）齐备。
+  `kernel/` 目前有 `registry/` 与 `turn/`；`builtins/`、`runtime/`、`embed/` 仍是空骨架，
   尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
@@ -321,9 +361,33 @@
 
 ## 下一步工作
 
-1. 执行 `D08` 取消与预算：`kernel/turn/cancel.py`（`CancelToken` 留在 kernel，不进
-   `contracts`）与 `kernel/turn/limits.py` 预算账本。`D09` Turn Engine 依赖 `D06` + `D08`，
-   并以 `tests/baseline/` 为行为参照。
+1. 执行 `D09` Turn Engine：`kernel/turn/engine.py`（目标 ≤400 行，只通过 `EngineDeps`
+   与外界交互）与 `tests/kernel/test_engine.py`。属于 4 个高风险模块之一，
+   建议先单独评审实现方案。engine 直接用 `D08` 的 `CancelToken`（检查点 2/3/5/6）与
+   `BudgetLedger`，以 `tests/baseline/` 为行为参照。
+
+`D08` 留下的、`D09`/`D14` 必须用到的事实：
+
+- **检查点归属已经定死**：`CHECKPOINT_OWNERS` 里 engine 拿 2/3/5/6
+  （`BEFORE_MODEL_REQUEST` / `BETWEEN_STREAM_CHUNKS` / `BEFORE_TOOL_CALL` /
+  `AFTER_TOOL_RESULT`），orchestrator 拿 1/4。engine 里出现 1 或 4 就是分层错了——
+  它不知道 context 从哪来，也不负责写 assistant 消息。一律用 `token.checkpoint(where)`
+  而不是 `raise_if_requested()`，前者才带得上「停在哪一步」。
+- **engine 主循环的记账骨架**是 `check(pending_tool_calls=…)` -> `begin_iteration()` ->
+  模型 -> `record_tool_calls()`。判定必须在**发起前**，`test_limits.py` 里那段最小循环
+  就是这个骨架；`D09` 落地后由 `tests/kernel/test_engine.py` 在真引擎上重跑同一条
+  「缺省配置下有限步终止」的性质。
+- **越界不等于失败**：`LimitBreach.terminal_status` 为 `None` 的三项（单工具超时、
+  结果截断、上下文超限）turn 继续；`turn_timeout_ms` 的终态是 `CANCELLED` 而不是
+  `STOPPED_BY_LIMIT`。不要在 engine 里另写一份 kind→终态的判断，查 `LIMIT_OUTCOMES`。
+- **旧实现的 `_MAX_LENGTH_RECOVERIES = 3` / `_MAX_EMPTY_RETRIES = 2` 没有进
+  `TurnLimits`**：六项是技术方案 §6.4 冻结的表格，这两个是「模型返回异常时重试几次」
+  的编排策略（`EDG-303`），归 `D14`。engine 不该认识它们。工具超长结果落盘同理。
+- **取消宽限期在 `cancel.py`**（`DEFAULT_TOOL_CANCEL_GRACE_MS = 2000`），不在 `TurnLimits`
+  里。`EDG-407` 的等待与孤儿任务登记由 `D09` 的工具调用路径实现，用
+  `asyncio.wait_for(task, grace)` 或 `token.wait()` 赛跑；超时后写
+  `ToolResult(ok=False, side_effect=UNKNOWN)`，届时需要在 `contracts/errors.py` 补
+  `tool.cancel_timeout` 码（`D08` 未预先登记未被使用的码）。
 
 `D07` 留下的、`D09`/`D14` 必须用到的事实：
 
@@ -436,7 +500,8 @@
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅
+D09– ⬜（尚未开始）
 
 ## 本目录文档分类
 

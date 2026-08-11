@@ -96,6 +96,7 @@ class ErrorCode(StrEnum):
     # CANCELLED
     CANCELLED_BY_USER = "cancelled.by_user"
     CANCELLED_BY_BUDGET = "cancelled.by_budget"
+    CANCELLED_BY_SHUTDOWN = "cancelled.by_shutdown"
 
     # EXTERNAL_SERVICE
     EXTERNAL_MODEL_PROVIDER = "external.model_provider"
@@ -140,6 +141,9 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.TIMEOUT_HOOK: ErrorCategory.TIMEOUT,
         ErrorCode.CANCELLED_BY_USER: ErrorCategory.CANCELLED,
         ErrorCode.CANCELLED_BY_BUDGET: ErrorCategory.CANCELLED,
+        # 实例关闭导致的取消：既不是用户按下 Ctrl-C，也不是撞上预算，
+        # 混进上面两个码会让「谁停掉了这个 turn」在诊断里不可判定（`D08`）。
+        ErrorCode.CANCELLED_BY_SHUTDOWN: ErrorCategory.CANCELLED,
         ErrorCode.EXTERNAL_MODEL_PROVIDER: ErrorCategory.EXTERNAL_SERVICE,
         ErrorCode.EXTERNAL_CHANNEL: ErrorCategory.EXTERNAL_SERVICE,
         ErrorCode.PLUGIN_LOAD_FAILED: ErrorCategory.PLUGIN_FAILURE,
