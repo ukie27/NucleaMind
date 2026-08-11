@@ -79,6 +79,7 @@ from .errors import (  # noqa: E402
     ErrorCategory,
     ErrorCode,
     NucleaError,
+    SecretStr,
     redact,
     scrub,
 )
@@ -207,6 +208,7 @@ __all__ = [
     "RiskLevel",
     "RuntimeEvent",
     "SamplingParams",
+    "SecretStr",
     "Sender",
     "Sensitivity",
     "SessionKey",

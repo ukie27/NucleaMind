@@ -15,7 +15,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/turn/{cancel,limits}.py`），`D09` 已落地 Turn Engine
   （`kernel/turn/{engine,events,deps,scheduling,folding}.py`，纯循环，≤400 行），
   阶段 2 Turn 内核收口；`D10` 已落地实例布局与配置加载（`kernel/config/` 八个模块），
-  阶段 3 支撑设施推进中。
+  `D11` 已落地 Secret 与凭据（`kernel/config/secrets.py`，`SecretStr` 下沉到
+  `contracts/errors.py`），阶段 3 支撑设施推进中。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`
   与 `config/`。
@@ -58,6 +59,10 @@ webui/                     # 前端源码（TypeScript）
 - `ErrorCode` + `CODE_CATEGORIES`：全部错误码集中登记，禁止在其他模块写错误码字面量；
   `NucleaError` 的 `category` 由码推导，不接受调用方传入。
 - `contracts.errors.redact` / `scrub`：脱敏在**构造时**完成，不依赖日志或 sink 层。
+- `contracts.SecretStr`（`D11` 从 `sdk/api.py` 迁来）：**全项目唯一的密钥包装类型**。
+  刻意不是 dataclass（`dataclasses.asdict()` 会抖出明文），`str` / `repr` / `format` 恒为
+  `MASK`，明文只经 `reveal()` 取出；它不在 `sdk.__all__` 里，插件按 `R4` 直接从
+  `contracts` 导入。要再写一个密钥类型之前先想清楚哨兵测试要多扫一遍哪些输出路径。
 
 `sdk/` 同样已冻结：`sdk.__all__` 与 `sdk.testing.__all__` 是规范性清单，有字面量快照测试；
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
@@ -82,7 +87,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 （`ENGINE_HOOKS`），`turn_start`/`context_assemble`/`turn_end` 归 orchestrator；
 续写 = 用同一个 `ledger` 再调一次 `run_turn`。新旧语义差异见技术方案 §6.2.1。
 
-`kernel/config/`（`D10`）是实例布局、分层配置与实例锁的唯一来源。写代码前记住五条：
+`kernel/config/`（`D10`、`D11`）是实例布局、分层配置、实例锁与 `${VAR}` 凭据引用的唯一
+来源。写代码前记住六条：
 
 - **配置的四层优先级只在 `sources.collect_layers()` 的返回顺序里定义一次**：
   `default < config.json < env < cli`。内置默认值是**一层**（`schema.defaults()`）而不是
@@ -98,6 +104,10 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **判断 PID 是否存活一律用 `process.process_is_alive()`**，绝不用 `os.kill(pid, 0)`：
   Windows 上 CPython 把非 CTRL 信号映射到 `TerminateProcess`，那个「探测」会杀掉目标进程。
   返回值是**三态**，`UNKNOWN` 不得用来回收锁。
+- **`${VAR}` 解析后的明文不进配置文档**（`secrets.py`，`CFG-003`）：`resolve_secrets()`
+  返回按 JSON Pointer 索引的 `SecretMap`，配置树自始至终持有 `${VAR}` 字面量，写回因此
+  「没有别的东西可写」。要落盘一份配置前先过 `prepare_for_write()`。任何位置的引用都算
+  密钥（整串或内嵌），没有 `${VAR:-默认值}` 回退、没有 `$${VAR}` 转义、空变量按缺失处理。
 
 `tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
 可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），

@@ -34,7 +34,6 @@ SDK_PUBLIC_NAMES: Final[tuple[str, ...]] = (
     "PermissionDecl",
     "PluginContext",
     "PluginManifest",
-    "SecretStr",
     "ShellAccess",
     "ShellResult",
     "is_compatible",
@@ -199,14 +198,15 @@ def test_every_api_method_documents_its_exception_contract() -> None:
 
 
 def test_api_module_contains_no_implementation() -> None:
-    """`api.py` 只有签名：Protocol 方法体一律是 docstring + `...`。
+    """`api.py` 只有签名：函数体一律是 docstring + `...`，**没有例外**。
 
-    两个纯数据类型（`SecretStr` / `HttpResponse` / `ShellResult`）的 dunder 与
-    `reveal()` 是例外，显式列出。
+    `SecretStr` 在 `D11` 迁到 `contracts/errors.py` 之后，本模块剩下的两个纯数据类型
+    （`HttpResponse` / `ShellResult`）都没有方法，因此白名单是空集——`allowed` 里再出现
+    名字，就说明有实现漏进了这一层。
     """
     from nucleamind.sdk import api
 
-    allowed = {"reveal", "__str__", "__repr__"}
+    allowed: set[str] = set()
     source = Path(inspect.getfile(api)).read_text(encoding="utf-8")
     offenders: list[str] = []
     for node in ast.walk(ast.parse(source)):

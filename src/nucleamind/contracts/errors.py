@@ -35,6 +35,7 @@ __all__ = [
     "ErrorCategory",
     "ErrorCode",
     "NucleaError",
+    "SecretStr",
     "UnknownErrorCodeError",
     "key_words",
     "redact",
@@ -179,6 +180,80 @@ MAX_DETAIL_DEPTH: Final = 6
 #: 短于此长度的密文不参与 `user_message` 反查替换，避免把 "id"、"key" 这类词全打码。
 MIN_SCRUB_LENGTH: Final = 6
 
+#: `SecretStr` 拒绝改写时的消息。提成常量只为让 `TRY003`（消息不写在 raise 处）满意。
+_IMMUTABLE_MESSAGE: Final = "SecretStr 不可变"
+
+
+class SecretStr:
+    """密钥的包装类型：默认渲染为 `MASK`，明文只能经 `reveal()` 取出。
+
+    落在 `contracts/errors.py` 而不是 `sdk/api.py`（`D11` 从后者迁来）：`${VAR}` 的解析
+    结果在 `kernel/config/secrets.py` 里产生，而 `R2` 禁止 `kernel/` import `sdk/`——与
+    `D05` 把 `CliEntry` 下沉到 `contracts/` 是同一条理由。落在本模块又是因为掩码、
+    `redact()` 与它本就是同一件事的三个面：`_redact_value` 认得它，明文因此会进入
+    `scrub()` 的密文集合，被顺手拼进消息里的凭据也擦得掉。
+
+    它**不是**安全边界——`reveal()` 之后随手打印谁也拦不住。它防的是最常见的那条泄漏
+    路径：把凭据拼进日志、prompt 或异常消息。`reveal()` 的调用点同时是审计与 grep 的
+    抓手：明文从哪里开始流动是可查的。
+
+    刻意**不用 dataclass**：`dataclasses.asdict()` 会把 `_value` 明文抖出来，且对任何
+    *包含*它的 dataclass 递归时同样中招——那是一条绕过 `__repr__` 的泄漏路径。
+    普通类对 `asdict()` 不透明。
+    """
+
+    __slots__ = ("_value",)
+
+    #: 纯注解（不赋值），与 `__slots__` 并存不冲突；写出来是为了让类型检查器知道它是 `str`。
+    _value: str
+
+    def __init__(self, value: str) -> None:
+        object.__setattr__(self, "_value", value)
+
+    def reveal(self) -> str:
+        """取出明文。调用点即「这里开始承担泄漏风险」的标记。"""
+        return self._value
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(_IMMUTABLE_MESSAGE)
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(_IMMUTABLE_MESSAGE)
+
+    def __str__(self) -> str:
+        return MASK
+
+    def __repr__(self) -> str:
+        return f"SecretStr({MASK})"
+
+    def __format__(self, format_spec: str) -> str:
+        """任何格式规格都只得到掩码。
+
+        不定义它的话 `f"{secret:>20}"` 会走 `object.__format__` 直接抛 `TypeError`——
+        不泄漏，但会在无关的排版代码里炸出一个和密钥无关的报错。
+        """
+        return MASK
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, SecretStr):
+            return self._value == other._value
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash((SecretStr, self._value))
+
+    def __copy__(self) -> SecretStr:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> SecretStr:
+        """不可变对象复制即自身。
+
+        不定义它的话 `copy.deepcopy` 会走 `_reconstruct` 的 `setattr`，撞上上面的
+        `__setattr__` 抛 `AttributeError`——而 `dataclasses.asdict()` 正是这条路径，
+        「防泄漏」就会变成「在无关的地方炸掉」。
+        """
+        return self
+
 #: 敏感键名单词。键名按 `_`、`-`、`.` 与 camelCase 边界切成单词后**整词**比对，
 #: 不做子串匹配——子串匹配会把 `tokens`、`prompt_tokens` 这类用量统计一并打掉，
 #: 而那正是可观测性最需要的信号。
@@ -261,7 +336,9 @@ def _is_sensitive_key(key: str) -> bool:
 
 def _collect_strings(value: object, found: set[str]) -> None:
     """递归登记被整体打码的值里出现的全部字符串，供 `user_message` 反查。"""
-    if isinstance(value, str):
+    if isinstance(value, SecretStr):
+        found.add(value.reveal())
+    elif isinstance(value, str):
         found.add(value)
     elif isinstance(value, Mapping):
         # isinstance 就是这次 cast 的运行时支撑；键类型不影响遍历值。
@@ -283,6 +360,12 @@ def _redact_string(text: str, found: set[str]) -> str:
 def _redact_value(value: object, *, depth: int, found: set[str]) -> JsonValue:
     if depth > MAX_DETAIL_DEPTH:
         return "<depth-limit>"
+    # 先于 str 判定：`SecretStr` 不是 str，但它必须在任何其它分支之前被认出来，
+    # 否则会掉进末尾的 `<unsupported:...>`——不泄漏，却也丢掉了「这里有个密钥」的信息，
+    # 更要紧的是明文进不了 `found`，`scrub()` 就擦不掉被拼进 `user_message` 的那一份。
+    if isinstance(value, SecretStr):
+        found.add(value.reveal())
+        return MASK
     if isinstance(value, str):
         return _redact_string(value, found)
     if value is None or isinstance(value, (bool, int, float)):

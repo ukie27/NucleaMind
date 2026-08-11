@@ -1,11 +1,15 @@
 """Host API：插件与 Kernel 之间的注册面与受限运行时（技术方案 §7.5）。
 
 职责：声明 `NucleaAPI`（恰好 9 个注册方法 + `ctx`）、受限的 `PluginContext` 及其四个
-资源访问器 Protocol（`fs` / `net` / `shell` / `secret`），以及配套的 `SecretStr`、
-`HttpResponse`、`ShellResult`。
+资源访问器 Protocol（`fs` / `net` / `shell` / `secret`），以及配套的 `HttpResponse`、
+`ShellResult`。
 不负责：实现注册与冲突判定（`kernel/registry/`，`D06`）、构造 `PluginContext` 与执行
 权限判定（`kernel/plugins/`，`D26`）、决定谁被加载（`D27`）。本模块只有签名与两个纯数据
 类型，函数体一律是 docstring + `...`。
+
+`SecretStr` 在 `D11` 迁到了 `contracts/errors.py`（`kernel/config/secrets.py` 要产出它，
+而 `R2` 禁止 `kernel/` import `sdk/`），因此它不在 `sdk.__all__` 里：契约类型不从 `sdk`
+转发，插件按 `R4` 直接 `from nucleamind.contracts import SecretStr`。
 
 三件必须在这一层说清楚的事：
 
@@ -41,11 +45,11 @@ from nucleamind.contracts import (
     MemoryProvider,
     ModelProvider,
     RuntimeEvent,
+    SecretStr,
     SessionStore,
     ToolHandler,
     ToolSpec,
 )
-from nucleamind.contracts.errors import MASK
 
 __all__ = [
     "EventHandler",
@@ -55,38 +59,12 @@ __all__ = [
     "HttpResponse",
     "NucleaAPI",
     "PluginContext",
-    "SecretStr",
     "ShellAccess",
     "ShellResult",
 ]
 
 #: 事件订阅的回调形状。返回 `None` 的协程：订阅者是观察者，没有可被采纳的返回值。
 EventHandler = Callable[[RuntimeEvent], Awaitable[None]]
-
-
-@dataclass(frozen=True, slots=True)
-class SecretStr:
-    """密钥的包装类型：默认渲染为掩码，明文只能经 `reveal()` 取出。
-
-    自己定义而不是复用 pydantic 的同名类型：`contracts.errors` 用 `MASK` 作为全局统一
-    掩码，两套掩码会让「哨兵值扫全部 sink 输出」这条 CI 检查出现第二种期望值。
-
-    它**不是**安全边界——插件当然可以 `reveal()` 之后随手打印。它防的是最常见的那条
-    泄漏路径：顺手把凭据拼进日志、prompt 或异常消息。`reveal()` 的调用点同时是审计与
-    grep 的抓手：明文从哪里开始流动是可查的。
-    """
-
-    _value: str
-
-    def reveal(self) -> str:
-        """取出明文。调用点即「这里开始承担泄漏风险」的标记。"""
-        return self._value
-
-    def __str__(self) -> str:
-        return MASK
-
-    def __repr__(self) -> str:
-        return f"SecretStr({MASK})"
 
 
 @dataclass(frozen=True, slots=True)

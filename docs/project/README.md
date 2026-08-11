@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-11
-- 当前阶段：阶段 3 支撑设施推进中（`D00`–`D10` 均已完成，下一步 `D11`）
+- 当前阶段：阶段 3 支撑设施推进中（`D00`–`D11` 均已完成，下一步 `D12`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -176,7 +176,8 @@
     `PluginContext` 与四个资源访问器 Protocol（`fs` / `net` / `shell` / `secret`）——
     访问器是 **property 而不是方法**：未授权时属性访问就抛 `PERMISSION_DENIED`，插件拿不到
     「看起来能用、调用才失败」的对象。`SecretStr` 默认渲染为 `contracts.errors.MASK`，
-    明文只能经 `reveal()` 取出，调用点即审计抓手。
+    明文只能经 `reveal()` 取出，调用点即审计抓手（**`D11` 已把它下沉到
+    `contracts/errors.py`**，不再由 `sdk` 导出）。
   - **`CliEntry` 补进 `contracts/protocols.py`（第 9 个能力 Protocol）**：
     `register_cli_entry()` 的载荷需要类型，而 `kernel/` 与 `runtime/` 都要调用 CLI 能力却
     禁止 import `sdk/`（`R2`）。`D04` 冻结的是「8 个」这个数字，不是「不许补齐」——
@@ -405,6 +406,41 @@
     平台分支与防御性 IO 异常路径（`process.py` 的 POSIX 分支在 Windows 上不可能执行，
     反之亦然，需要两条 CI 腿才能合并覆盖；`lock.py` 里 `os.close`/`unlink` 的
     `except OSError` 兜底）。**如实记录，不是「约等于 100%」。**
+- **`D11` Secret 与凭据**（`kernel/config/secrets.py` 约 300 行 +
+  `tests/kernel/test_secrets.py` 43 个用例，另补 4 个契约测试）：
+  - **`SecretStr` 从 `sdk/api.py` 下沉到 `contracts/errors.py`**，这是本模块唯一一处动
+    已冻结表面的改动。技术方案 §7.5 原来的理由（「只出现在 `PluginContext.secret()` 的
+    返回位置」）被 `D11` 推翻：`${VAR}` 的解析结果在 `kernel/config/` 里产生，而 `R2`
+    禁止 `kernel/` import `sdk/`——与 `D05` 把 `CliEntry` 下沉是同一条理由。落在
+    `errors.py` 是因为 `MASK`、`redact()` 与它是同一件事的三个面：`redact()` 现在认得
+    `SecretStr`，明文因此进入 `scrub()` 的密文集合，**被顺手拼进 `user_message` 的凭据
+    也擦得掉**。`sdk.__all__` 相应少一个名字（契约类型不从 `sdk` 转发），
+    `tests/sdk/test_public_surface.py` 的规范性快照同步更新。
+  - **顺带修掉一个真实泄漏面**：原实现是 `@dataclass(frozen=True, slots=True)`，
+    `dataclasses.asdict()` 会把 `_value` 明文抖出来，且对任何**包含**它的 dataclass 递归
+    时同样中招——一条绕过 `__repr__` 的泄漏路径。改为普通不可变类（`__slots__` + 拒绝
+    `__setattr__` + `__deepcopy__` 返回自身）后 `asdict()` 对它不透明；并补 `__format__`，
+    让 `f"{secret:>20}"` 也只得到掩码。`json.dumps` 仍然抛 `TypeError`——**大声失败**比
+    静默掩码正确：密钥被送进序列化说明调用方本来就打算写到某处。
+  - **明文不进配置文档**（`CFG-003` 的结构性保证）：`resolve_secrets()` 不返回替换过的
+    文档，而是返回按 JSON Pointer 索引的 `SecretMap`（`refs` / `values` / `variables`）。
+    配置树自始至终持有 `${VAR}` 字面量，于是「写回保留字面量」不是一条要人记得遵守的
+    流程，而是**没有别的东西可写**。`prepare_for_write()` 是补充闸门，防「有人
+    `reveal()` 之后把明文塞回文档」：按位置、再按明文反查换回字面量，换不回去就抛
+    `KERNEL_INVARIANT_VIOLATED`。按明文反查有 `MIN_SCRUB_LENGTH` 阈值（短值与用户随手
+    写的 `"1234"` 无法区分），按**位置**恢复不受此限——那条不需要猜。
+  - **语义边界**：任何位置的引用都算密钥（整串或内嵌 `"Bearer ${TOKEN}"`），一种机制
+    一种含义；没有 `${VAR:-默认值}` 回退、不支持 `$${VAR}` 转义；**定义为空的变量按缺失
+    处理**（`reason: unset|empty`，两者都不含值）。缺失一次报全，与 `validate_config()`
+    同构。
+  - **不接进 `load_config()`**：`SECTION_SPECS` 目前没有 secret 字段，而 `SecretStr` 不是
+    `JsonValue`，塞进合并后的文档会让 `validate_config()` 无从校验。接线在 `D19`
+    （provider 凭据）与 `D26`（`ctx.secret()`）。
+  - 验收：`tests/architecture` + `contracts` + `sdk` + `kernel` + `baseline` 共
+    **990 个用例全绿**（`D10` 收口时 928）；`ruff check`、`basedpyright`（新层 0 报错，
+    legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
+    `secrets.py` 语句覆盖率 **100%**。完整套件（含 `tests/legacy`）14 failed /
+    5798 passed / 30 skipped，失败全部落在既有的那批网络与子进程时序用例上。
 
 ## 正在进行
 
@@ -414,7 +450,8 @@
   Turn Engine（纯循环 ≤400 行）就位，`D09` 的两个前置依赖（`D06` + `D08`）已兑现，
   阶段 2 的 engine 一层完成；`D10` 已完成，实例布局、分层配置与实例锁就位，
   `D06`/`D08` 欠给配置层的两件事（`resolve(disabled=...)` 的输入、`TurnLimits` 的配置
-  来源）已兑现，阶段 3 开始。
+  来源）已兑现，阶段 3 开始；`D11` 已完成，`${VAR}` 凭据引用、`SecretStr` 与写回保护
+  就位（`SecretStr` 下沉到 `contracts/errors.py`，`sdk` 表面相应调整）。
   `kernel/` 目前有 `registry/`、`turn/` 与 `config/`；`builtins/`、`runtime/`、`embed/`
   仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
@@ -464,14 +501,27 @@
 
 ## 下一步工作
 
-1. 执行 `D11` Secret 与凭据：`kernel/config/secrets.py`。`${VAR}` 解析为 `SecretStr`、
-   写回保留 `${VAR}` 字面量（`CFG-003`）、缺失变量只报变量名（`EDG-502`）。
-   `D10` 已把缝留好（见下），主要工作是哨兵测试要覆盖全部输出路径。
+1. 执行 `D12` 可观测性：`kernel/observability/{bus,redaction,diagnostics}.py`。
+   `EventBus` 只做扇出；**脱敏在事件构造时完成**（`redaction.py` 复用
+   `contracts.errors.redact`，它在 `D11` 之后已经认得 `SecretStr`，不要另写一份）；
+   订阅者异常与超时被隔离（`NFR-204`）；内存环有容量上限（`NFR-404`）。
+   同时补上 `D10` 欠的 `EDG-501` 后半句（把配置解析错误写到 `logs/`，落点
+   `layout.config_error_log_path(day)`）。前置依赖 `D02` 早已就绪。
 2. 阶段 2 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
    承接 `test_loop_behavior.py` 的 12 条决定项，消费 `D09` 的事件流
    （`TurnEvent` 封闭联合 + `ToolCallCompleted.message` 直接持久化），实现
    `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`）。
    属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D10` 已就绪。
+
+`D11` 留下的、`D19`/`D24`/`D26` 必须用到的事实：
+
+- **`ctx.secret()` 返回的就是 `contracts.SecretStr`**（`D26`），不需要任何跨层转换——
+  这正是把它下沉到 `contracts/` 换来的。
+- **要落盘一份配置，先过 `prepare_for_write()`**（`D24`）。`kernel/config/` 自身仍然一个
+  字节都不写。
+- **provider 凭据用 `resolve_text()` 解单个字段**（`D19`）：没有引用时它原样返回 `str`，
+  「这个值来自环境变量」这条信息因此保得住；缺失时抛 `CONFIG_SECRET_MISSING`，必须与
+  `PERMISSION_DENIED` 可区分（`sdk/api.py::secret` 的 docstring 已写死这条）。
 
 `D10` 留下的、`D11`/`D12`/`D14`/`D23` 必须用到的事实：
 
@@ -485,10 +535,10 @@
 - **`EDG-108`（配置试图禁用 CLI 入口）超出 `D10` 能力范围**：`resolve(disabled=...)` 是按
   **提供方**索引的，表达不了「禁用某一个能力 kind」。**交给 `D23`/wiring**，在那里
   `BUILTIN_MANIFESTS` 才存在、能知道哪一项是 `CLI_ENTRY`。
-- **`D11` 的缝已留好**：loader 把 `${VAR}` 当普通字符串、从不解析；`config.json` 缺失
-  不是错误（`file_present` 语义由默认值层承担）；`kernel/config/` **从不写文件**，
-  因此 `CFG-003` 的写回天然不会被加载路径破坏。`LoadedConfig.merge.origins` 保留了逐
-  指针来源，写回时可据此判断哪些值是用户显式写的。
+- **`D11` 的缝已留好**（`D11` 已按此落地）：loader 把 `${VAR}` 当普通字符串、从不解析；
+  `config.json` 缺失不是错误（`file_present` 语义由默认值层承担）；`kernel/config/`
+  **从不写文件**，因此 `CFG-003` 的写回天然不会被加载路径破坏。
+  `LoadedConfig.merge.origins` 保留了逐指针来源，写回时可据此判断哪些值是用户显式写的。
 - **`D24` 的缝已留好**：`schema.SECTION_SPECS` 与 `schema.defaults()` 是**唯一**的字段
   真相来源，`bootstrap.py` 生成最小 `config.json` 时应当从它派生，不要再手写一份模板。
   命名待对齐：技术方案 §4.2 叫 `scaffold.py`，开发方案 `D24` 那行叫 `bootstrap.py`。
@@ -663,7 +713,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅   D11– ⬜（尚未开始）
+D10 ✅  D11 ✅   D12– ⬜（尚未开始）
 
 ## 本目录文档分类
 

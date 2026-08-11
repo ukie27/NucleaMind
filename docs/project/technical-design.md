@@ -810,6 +810,15 @@ Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
 - Secret 只以引用形式出现：`{"api_key": "${OPENAI_API_KEY}"}`。解析结果包装为
   `SecretStr`，`__repr__` 与序列化输出恒为 `***`。写回配置时保留原始 `${VAR}` 字面量
   （`CFG-003`）。缺失变量报错时只给出变量名（`EDG-502`）。
+  > `D11` 落地时对本条的三处细化：
+  > - **明文不进配置文档**：`resolve_secrets()` 不返回一份替换过的文档，而是返回按 JSON
+  >   Pointer 索引的 `SecretMap`。配置树自始至终持有 `${VAR}` 字面量，于是 `CFG-003` 不是
+  >   一条要人记得遵守的流程，而是没有别的东西可写。`prepare_for_write()` 是写盘前的
+  >   补充闸门，防「有人 `reveal()` 之后把明文塞回文档」。
+  > - **任何位置的引用都算密钥**：整串或内嵌（`"Bearer ${TOKEN}"`）都解析，整个值成为
+  >   `SecretStr`。不提供「插值但不是密钥」的第二种语义，也没有 `${VAR:-默认值}` 回退，
+  >   不支持 `$${VAR}` 转义。
+  > - **定义为空的变量按缺失处理**，错误里用 `reason: unset|empty` 区分（两者都不含值）。
 - 配置文件损坏或版本未知：拒绝启动并保留原文件，同时把解析错误写到
   `<instance_dir>/logs/`，绝不静默重写（`EDG-501`）。
   > `D10` 兑现了前半句：`config.json` 只以 `"rb"` 打开、且只在
@@ -1012,8 +1021,12 @@ class NucleaAPI(Protocol):
 
 `CliEntry` 落在 **`contracts/protocols.py`** 而不是 `sdk/`（`D05` 补齐，为第 9 个能力
 Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止它们 import `sdk/`。
-`SecretStr` 则定义在 `sdk/api.py`——它只出现在 `PluginContext.secret()` 的返回位置，
-掩码值复用 `contracts.errors.MASK`，避免出现第二种掩码写法。
+`SecretStr` **同理落在 `contracts/errors.py`**（`D11` 从 `sdk/api.py` 迁来）：`${VAR}` 的
+解析结果在 `kernel/config/secrets.py` 里产生，`R2` 同样禁止 `kernel/` import `sdk/`。
+落在 `errors.py` 而不是新模块，是因为掩码 `MASK`、`redact()` 与它本就是同一件事的三个面：
+`redact()` 认得 `SecretStr`，明文因此会进入 `scrub()` 的密文集合，被顺手拼进 `user_message`
+的凭据也擦得掉。它不在 `sdk.__all__` 里——契约类型不从 `sdk` 转发，插件按 `R4` 直接
+`from nucleamind.contracts import SecretStr`。
 
 **必须写进文档的诚实声明**：同进程 Python 插件可以绕过这些门面直接 `import os`。应用级
 权限的目标是「防误用、使意图可审计、让越界在评审和测试中可见」，不是「防恶意插件」

@@ -6,9 +6,19 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
+
 import pytest
 
-from nucleamind.contracts import CODE_CATEGORIES, ErrorCategory, ErrorCode, NucleaError, redact
+from nucleamind.contracts import (
+    CODE_CATEGORIES,
+    ErrorCategory,
+    ErrorCode,
+    NucleaError,
+    SecretStr,
+    redact,
+)
 from nucleamind.contracts.errors import (
     MASK,
     MAX_DETAIL_STRING_LENGTH,
@@ -191,6 +201,40 @@ def test_scrub_replaces_longest_secret_first() -> None:
 
 def test_scrub_ignores_too_short_secrets() -> None:
     assert scrub("id=42", ["42"]) == "id=42"
+
+
+# ------------------------------------------------------------------ SecretStr
+
+
+def test_secret_str_is_masked_by_redaction_regardless_of_key_name() -> None:
+    """键名无辜（`endpoint`）也照样打码：类型本身就是「这是密钥」的声明。"""
+    redacted, found = redact({"endpoint": SecretStr("plaintext-value")})
+
+    assert redacted["endpoint"] == MASK
+    assert found == frozenset({"plaintext-value"})
+
+
+def test_secret_str_under_a_sensitive_key_still_yields_its_plaintext_for_scrubbing() -> None:
+    """敏感键名走的是整体打码分支，`SecretStr` 的明文同样要进密文集合。
+
+    否则同一个值被拼进 `user_message` 时 `scrub()` 认不出它。
+    """
+    redacted, found = redact({"api_key": SecretStr("plaintext-value")})
+
+    assert redacted["api_key"] == MASK
+    assert "plaintext-value" in found
+
+
+def test_secret_str_is_not_a_dataclass() -> None:
+    """做成 dataclass 会让 `dataclasses.asdict()` 把明文抖出来（`D11`）。"""
+    assert not dataclasses.is_dataclass(SecretStr)
+
+
+def test_secret_str_survives_deepcopy_as_itself() -> None:
+    secret = SecretStr("plaintext-value")
+
+    assert copy.deepcopy(secret) is secret
+    assert copy.copy(secret) is secret
 
 
 # ------------------------------------------------------------------ 不可变与关联
