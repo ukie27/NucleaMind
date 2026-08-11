@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-11
-- 当前阶段：阶段 2 Turn 内核推进中（`D00`–`D09` 均已完成，下一步 `D10`）
+- 当前阶段：阶段 3 支撑设施推进中（`D00`–`D10` 均已完成，下一步 `D11`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -353,6 +353,58 @@
     `tests/contracts` + `tests/sdk` + `tests/kernel` + `tests/baseline` 共 822 个用例全绿；
     `legacy_debt` 未变（src/ 只增不改 legacy）；`check_startup_cost` OK。
     `pyproject.toml` 的 coverage `exclude_lines` 补了一条 `^\s*\.\.\.$`（Protocol 存根）。
+- **`D10` 实例布局与配置加载**（`kernel/config/` 8 个文件，约 1450 行 +
+  `tests/kernel/{test_layout,test_config}.py` 106 个用例）：
+  - **包内依赖单向**：`layout` / `process` / `merge` 互不相识，`lock` 只用 `process`，
+    `schema` 只用 `merge` 的 pointer 工具，`sources` 只产出层，`loader` 编排全部。
+    比开发方案点名的 2 个文件多出 5 个，因为 `kernel/` 单文件上限是 500 行且本仓库模块
+    约 45% 是 docstring；已回写技术方案 §4.2 的目录树。
+  - **schema 手写而不用 pydantic**（与技术方案 §6.7 字面表述不同，取其意不取其形：
+    `extra="forbid"` 与 JSON Pointer 两条规范要求照做）。**先写了 pydantic 版再实测改掉**：
+    `import kernel.config` 从 313 ms 降到 110 ms、进程内模块数从 250 降到 138，而
+    `NFR-405` 给整个冷启动的预算是 300 ms，配置加载在启动第 2 步、永远在必经路径上
+    （`sdk/manifest.py` 用 pydantic 无妨——只在真要发现插件时才付这笔钱）。
+    另两条与耗时无关的理由：`CFG-005` 要求默认值层也带来源，这就要求默认值物化成 dict，
+    合并与来源追踪因此已在 `merge.py` 里自己写了；pydantic 的 `loc` 仍要自己转 RFC 6901，
+    而 `sdk/manifest.py::_format_location` 产出点分路径且 `R2` 禁止 import。
+    守卫是 `test_loading_config_does_not_import_pydantic`（子进程查 `sys.modules`）。
+  - **默认值是一层，不是「查不到来源」的兜底**：`collect_layers()` 返回**四**层
+    （`default < config.json < env < cli`）。只有默认值也是一层，`CFG-005` 的「每个生效值
+    可追溯来源」才对所有字段成立——否则「取自默认值」与「来源索引漏了它」在数据上不可区分。
+    `test_every_known_field_has_an_origin` 遍历 `SECTION_SPECS` 断言这件事。
+  - **turn 引擎不得被拖上配置路径**：`schema.py` 重写六个默认值字面量、`to_limits()` 用
+    函数内 import。`import kernel.turn.limits` 会执行 `kernel/turn/__init__.py`，把
+    engine / scheduling / folding 与 asyncio 一起拉进来，而 `nm config show` 只要六个整数。
+    代价是两张默认值表，由 `test_turn_defaults_match_the_limits_module` 与
+    `test_default_limits_round_trip_through_turn_limits` 钉住。**这条是测试先发现、
+    再改实现的**：最初直接 import 那些常量，守卫测试立刻报 LEAKED。
+  - **`os.kill(pid, 0)` 在 Windows 上会杀掉目标进程**（CPython 把非 CTRL 信号映射到
+    `TerminateProcess`），因此 `process.py` 分平台实现：Windows 用
+    `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetExitCodeProcess`，
+    `WinDLL(use_last_error=True)` 且**显式声明 `argtypes`/`restype`**（不声明会让 HANDLE
+    在 Win64 上被截成 32 位 → 句柄泄漏 + 对垃圾值 `CloseHandle`）；POSIX 用信号 0，
+    `EPERM` 视为存活。`pid <= 0` 在任何 syscall **之前**拒绝（`os.kill(0, 0)` 打的是整个
+    进程组）。回归测试：`test_probing_a_live_process_does_not_kill_it`、
+    `test_non_positive_pids_never_reach_a_syscall`。
+  - **`Liveness` 是三态**（ALIVE / DEAD / UNKNOWN），`UNKNOWN` 绝不授权回收锁：塌成 bool
+    就是替调用方在「永久砖掉实例」和「两个进程同时写同一份会话」之间选一个。
+  - **锁的占用者七行分类表**在 `lock.py` 的 `_reclaim_or_fail`：不可解析 / 跨主机 /
+    同 PID / DEAD / PID 复用 / ALIVE / UNKNOWN 各有结论。把**不可解析**当陈旧是刻意的
+    ——它给不出 PID 也给不出恢复路径，一次「create 与 write 之间崩溃」就会永久砖掉实例；
+    窗口只有微秒（create 后立即 fsync），且回收记进 `StaleLockReclaimed`。
+    fd 保持打开到 `release()`：Windows 的 `_SH_DENYNO` 共享读写但**不共享删除**，
+    别的进程算错陈旧性也删不掉活锁，只会拿到 `PermissionError`，`_reclaim` 把它降级成
+    「持有者存活 → 拒绝」；同时第二个进程仍能**读**锁文件，`EDG-507` 才报得出 PID。
+  - **补了一个 `ErrorCode`**：`CONFIG_INSTANCE_LOCKED`（→ `CONFIG` 类）。复用
+    `CONFIG_INVALID` 会让「另一个实例正在运行」与「你的配置拼错了」不可区分，而两者的
+    补救完全不同，且 `EDG-507`/`DST-005` 需要一个稳定码来单独断言。
+  - 验收：`tests/architecture` + `contracts` + `sdk` + `kernel` + `baseline` 共
+    **928 个用例全绿**（`D09` 收口时 822）；`ruff check`、`basedpyright`（新层 0 报错，
+    legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
+    `kernel/config/` 语句覆盖率 **90%**——未达 `registry/`、`turn/` 的 100%，缺口全部是
+    平台分支与防御性 IO 异常路径（`process.py` 的 POSIX 分支在 Windows 上不可能执行，
+    反之亦然，需要两条 CI 腿才能合并覆盖；`lock.py` 里 `os.close`/`unlink` 的
+    `except OSError` 兜底）。**如实记录，不是「约等于 100%」。**
 
 ## 正在进行
 
@@ -360,9 +412,11 @@
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
   `D07` 已完成，旧实现行为基线就位；`D08` 已完成，取消与预算就位；`D09` 已完成，
   Turn Engine（纯循环 ≤400 行）就位，`D09` 的两个前置依赖（`D06` + `D08`）已兑现，
-  阶段 2 的 engine 一层完成，下一层是 `D10` 配置与 `D14` orchestrator。
-  `kernel/` 目前有 `registry/` 与 `turn/`；`builtins/`、`runtime/`、`embed/` 仍是空骨架，
-  尚未开始拆分 `legacy/` 的现有模块。
+  阶段 2 的 engine 一层完成；`D10` 已完成，实例布局、分层配置与实例锁就位，
+  `D06`/`D08` 欠给配置层的两件事（`resolve(disabled=...)` 的输入、`TurnLimits` 的配置
+  来源）已兑现，阶段 3 开始。
+  `kernel/` 目前有 `registry/`、`turn/` 与 `config/`；`builtins/`、`runtime/`、`embed/`
+  仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -410,13 +464,47 @@
 
 ## 下一步工作
 
-1. 执行 `D10` 配置层：`kernel/config/`。`D14` orchestrator 的下一步依赖是配置
-   （`TurnLimits` 的配置来源、`DisabledProviders` 构造、实例目录）。
+1. 执行 `D11` Secret 与凭据：`kernel/config/secrets.py`。`${VAR}` 解析为 `SecretStr`、
+   写回保留 `${VAR}` 字面量（`CFG-003`）、缺失变量只报变量名（`EDG-502`）。
+   `D10` 已把缝留好（见下），主要工作是哨兵测试要覆盖全部输出路径。
 2. 阶段 2 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
    承接 `test_loop_behavior.py` 的 12 条决定项，消费 `D09` 的事件流
    （`TurnEvent` 封闭联合 + `ToolCallCompleted.message` 直接持久化），实现
    `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`）。
-   属于 4 个高风险模块之一，建议先单独评审实现方案。
+   属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D10` 已就绪。
+
+`D10` 留下的、`D11`/`D12`/`D14`/`D23` 必须用到的事实：
+
+- **`EDG-501` 的「把解析错误写到 `<instance_dir>/logs/`」`D10` 没有讨完**，是刻意的：
+  文件 sink 是 `D12` 的职责，事件总线此刻还不存在，而一个在自己错误路径上做 IO 的 loader
+  是第二个故障面。`layout.config_error_log_path(day)` 已备好落点，`NucleaError.detail`
+  本身可 JSON 序列化。**`D12` 落地 sink、`D23` 接线时必须补上这一句**，否则这条需求会
+  静默地没人实现。`EDG-501` 的核心（拒绝启动 + 原文件不被改写）在 `D10` 已完整兑现：
+  `config.json` 只以 `"rb"` 打开、只在 `sources.read_config_file` 一处，
+  `kernel/config/` 全包不出现任何写文件调用。
+- **`EDG-108`（配置试图禁用 CLI 入口）超出 `D10` 能力范围**：`resolve(disabled=...)` 是按
+  **提供方**索引的，表达不了「禁用某一个能力 kind」。**交给 `D23`/wiring**，在那里
+  `BUILTIN_MANIFESTS` 才存在、能知道哪一项是 `CLI_ENTRY`。
+- **`D11` 的缝已留好**：loader 把 `${VAR}` 当普通字符串、从不解析；`config.json` 缺失
+  不是错误（`file_present` 语义由默认值层承担）；`kernel/config/` **从不写文件**，
+  因此 `CFG-003` 的写回天然不会被加载路径破坏。`LoadedConfig.merge.origins` 保留了逐
+  指针来源，写回时可据此判断哪些值是用户显式写的。
+- **`D24` 的缝已留好**：`schema.SECTION_SPECS` 与 `schema.defaults()` 是**唯一**的字段
+  真相来源，`bootstrap.py` 生成最小 `config.json` 时应当从它派生，不要再手写一份模板。
+  命名待对齐：技术方案 §4.2 叫 `scaffold.py`，开发方案 `D24` 那行叫 `bootstrap.py`。
+- **配置的四层优先级只在 `sources.collect_layers()` 的返回顺序里定义一次**
+  （`default < config.json < env < cli`）。新增来源要改那一处，不要在 loader 里另排一遍。
+- **环境变量是 `NUCLEAMIND_CFG_<SECTION>__<KEY>`**（双下划线分隔层级，因为字段名本身
+  含下划线），与选实例用的 `NUCLEAMIND_INSTANCE_DIR` / `NUCLEAMIND_INSTANCE` 靠前缀区分。
+  **实例定位的优先级是「显式目录 > 显式实例名 > 目录环境变量 > 名环境变量 > default」**
+  ——命令行参数压过环境变量，与配置四层同序；否则 shell 里导出过的
+  `NUCLEAMIND_INSTANCE_DIR` 会静默吃掉 `nm --instance work`。
+- **`kernel/config/` 不获取实例锁**：加载配置是纯读操作，必须能在 `nm config show`、
+  诊断与测试里安全调用；获取锁会改全局状态且需要配对释放。`InstanceLock` 的生命周期
+  归 `runtime/bootstrap.py`（§10.1 步骤 1 在步骤 2 之前）。本包也不注册 `atexit`。
+- **实例名的长度上限是 64**（`MAX_INSTANCE_NAME_LENGTH`），远小于 `contracts` 的通用标识
+  上限：它会成为一段路径分量，下面还要接 `sessions/<storage_id>.jsonl`，Windows 默认
+  MAX_PATH 是 260。想放宽要先想清楚会话写入在运行期失败的场景。
 
 `D09` 留下的、`D10`/`D12`/`D14` 必须用到的事实：
 
@@ -575,7 +663,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10– ⬜（尚未开始）
+D10 ✅   D11– ⬜（尚未开始）
 
 ## 本目录文档分类
 

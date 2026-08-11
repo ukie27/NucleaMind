@@ -74,6 +74,7 @@ class ErrorCode(StrEnum):
     CONFIG_UNKNOWN_FIELD = "config.unknown_field"
     CONFIG_SECRET_MISSING = "config.secret_missing"
     CONFIG_FILE_CORRUPT = "config.file_corrupt"
+    CONFIG_INSTANCE_LOCKED = "config.instance_locked"
 
     # CAPABILITY_MISSING
     CAPABILITY_MISSING = "capability.missing"
@@ -128,6 +129,9 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.CONFIG_UNKNOWN_FIELD: ErrorCategory.CONFIG,
         ErrorCode.CONFIG_SECRET_MISSING: ErrorCategory.CONFIG,
         ErrorCode.CONFIG_FILE_CORRUPT: ErrorCategory.CONFIG,
+        # 「另一个实例正在跑」不是「你的配置写错了」：前者的补救是关掉那个进程或换实例目录，
+        # 后者的补救是改文件。复用 CONFIG_INVALID 会让 `EDG-507` 无法单独断言（`D10`）。
+        ErrorCode.CONFIG_INSTANCE_LOCKED: ErrorCategory.CONFIG,
         ErrorCode.CAPABILITY_MISSING: ErrorCategory.CAPABILITY_MISSING,
         ErrorCode.CAPABILITY_AMBIGUOUS: ErrorCategory.CAPABILITY_MISSING,
         # 覆盖目标不存在 = 那个能力真的不在，与 CAPABILITY_MISSING 同类。

@@ -14,9 +14,11 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D07` 已落地旧实现行为基线（`tests/baseline/`），`D08` 已落地取消与预算
   （`kernel/turn/{cancel,limits}.py`），`D09` 已落地 Turn Engine
   （`kernel/turn/{engine,events,deps,scheduling,folding}.py`，纯循环，≤400 行），
-  阶段 2 Turn 内核推进中。
+  阶段 2 Turn 内核收口；`D10` 已落地实例布局与配置加载（`kernel/config/` 八个模块），
+  阶段 3 支撑设施推进中。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 只有 `registry/` 与 `turn/`。
+  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`
+  与 `config/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -79,6 +81,23 @@ per-turn 的 `BudgetLedger`（判定必须在发起工具**之前**）。`D09` �
 import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 （`ENGINE_HOOKS`），`turn_start`/`context_assemble`/`turn_end` 归 orchestrator；
 续写 = 用同一个 `ledger` 再调一次 `run_turn`。新旧语义差异见技术方案 §6.2.1。
+
+`kernel/config/`（`D10`）是实例布局、分层配置与实例锁的唯一来源。写代码前记住五条：
+
+- **配置的四层优先级只在 `sources.collect_layers()` 的返回顺序里定义一次**：
+  `default < config.json < env < cli`。内置默认值是**一层**（`schema.defaults()`）而不是
+  dataclass 兜底——`CFG-005` 要求每个生效值可追溯来源，「取自默认值」必须查得到。
+- **字段只加在 `schema.SECTION_SPECS`**，那张表同时是默认值、类型与 `extra="forbid"` 的
+  唯一依据。不要在别处另开一张表，也不要绕过 `validate_config()` 直接构造小节。
+- **`kernel/config/` 全包不写任何文件**（`EDG-501`）：`config.json` 只以 `"rb"` 打开且只在
+  `sources.read_config_file` 一处。生成初始配置是 `D24`，写日志是 `D12`。
+- **不要在 `schema.py` 里 module-level import `kernel.turn.limits`**：那会执行
+  `kernel/turn/__init__.py`，把 engine/scheduling/folding 与 asyncio 拖上配置路径
+  （`NFR-405` 冷启动预算 300 ms）。`to_limits()` 用函数内 import，六个默认值在两处各写
+  一份、由对照测试钉住。同理**不要把 pydantic 引进 `kernel/config/`**，有子进程测试盯着。
+- **判断 PID 是否存活一律用 `process.process_is_alive()`**，绝不用 `os.kill(pid, 0)`：
+  Windows 上 CPython 把非 CTRL 信号映射到 `TerminateProcess`，那个「探测」会杀掉目标进程。
+  返回值是**三态**，`UNKNOWN` 不得用来回收锁。
 
 `tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
 可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），

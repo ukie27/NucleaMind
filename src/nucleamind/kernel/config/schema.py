@@ -1,0 +1,432 @@
+"""配置 schema 与校验（技术方案 §6.7、`CFG-001`、`EDG-501`）。
+
+职责：用一张声明式字段表定义配置的形状与默认值，校验合并后的 JSON，并把每处问题连同
+JSON Pointer 位置一起报出来；`TurnSection.to_limits()` 把 turn 小节转成 `TurnLimits`。
+不负责：读取任何来源（`sources.py`）、分层合并（`merge.py`）、决定 workspace 的最终绝对
+路径（`loader.py`）。
+
+**不用 pydantic，手写校验。** 技术方案 §6.7 的字面表述是「代码中的 Pydantic default」，
+这里取其意不取其形：规范性的两条（`extra="forbid"`、JSON Pointer 位置）都照做，实现方式
+另选。三个理由，按分量排序：
+
+1. `CFG-005` 要求每个生效值可追溯来源，这就要求默认值层**物化成一份 dict**（`defaults()`）
+   才能和其它层一样带上来源。默认值一旦是 dict，合并与来源追踪就已经全在 `merge.py` 里
+   自己写了，pydantic 剩下的贡献只是校验十几个字段的类型。
+2. pydantic 的 `ValidationError.loc` 是元组，仍要自己转成 RFC 6901；而 `sdk/manifest.py`
+   的 `_format_location` 产出点分路径且**不能 import**（`R2`）。
+3. 实测 `import pydantic` 约 90 ms、连带把 `kernel.config` 的导入推到 300 ms 以上，而
+   `NFR-405` 给整个冷启动的预算就是 300 ms。配置加载在启动第 2 步、永远在路径上
+   （`sdk/manifest.py` 只在真的要发现插件时才付这笔钱）。
+   `test_loading_config_does_not_import_pydantic` 是这条约束的可执行形态。
+
+**`detail` 里绝不放配置值**，只放指针、类型名与变量名：密钥可以出现在任何指针上
+（`/plugins/acme/config/api_key`），而 `contracts.redact` 按**键名**判定，一个通用的
+`{"value": ...}` 键正好绕过它。这条规则顺带预先满足 `D11` 的哨兵测试。
+"""
+
+from __future__ import annotations
+
+import difflib
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import TYPE_CHECKING, Final, Mapping, Sequence
+
+from ...contracts import ErrorCode, NucleaError
+from .merge import pointer_of
+
+if TYPE_CHECKING:
+    from ...contracts import JsonValue
+    from ..turn.limits import TurnLimits
+
+__all__ = [
+    "SECTION_SPECS",
+    "FieldKind",
+    "FieldSpec",
+    "LoggingSection",
+    "ModelSection",
+    "NucleaConfig",
+    "PluginsSection",
+    "TurnSection",
+    "WorkspaceSection",
+    "defaults",
+    "validate_config",
+]
+
+#: turn 六项预算的默认值。**与 `kernel/turn/limits.py` 的 `DEFAULT_*` 必须逐一相等**，
+#: 由 `test_turn_defaults_match_the_limits_module` 盯着。
+#:
+#: 这里重写字面量而不是 import 那些常量，是为了不把 turn 引擎拖上配置路径：import
+#: `kernel.turn.limits` 会执行 `kernel/turn/__init__.py`，连带 engine / scheduling /
+#: folding 与 asyncio 一起进来，而 `nm config show` 与诊断只需要六个整数。
+DEFAULT_MAX_ITERATIONS: Final = 16
+DEFAULT_MAX_TOOL_CALLS_PER_TURN: Final = 48
+DEFAULT_TOOL_TIMEOUT_MS: Final = 120_000
+DEFAULT_TOOL_RESULT_MAX_BYTES: Final = 65_536
+DEFAULT_TURN_TIMEOUT_MS: Final = 900_000
+
+
+class FieldKind(StrEnum):
+    """字段类型。取值刻意少：配置里出现第七种形状时应当先想清楚它是否真该进配置。"""
+
+    BOOL = "bool"
+    POSITIVE_INT = "positive_int"
+    #: 允许 `null`，含义由字段自己的 docstring 给出（不等于「无限制」）。
+    OPTIONAL_POSITIVE_INT = "optional_positive_int"
+    STR = "str"
+    OPTIONAL_STR = "optional_str"
+    STR_LIST = "str_list"
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSpec:
+    """一个字段的类型与默认值。"""
+
+    kind: FieldKind
+    default: JsonValue
+
+
+#: 全部已知字段。**这是 `extra="forbid"` 的唯一依据**：不在表里的键即未知字段。
+#: `D11`（secrets）/`D12`（可观测性）/`D19` 在此扩展，不要在别处另开一张表。
+SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
+    "turn": {
+        "max_iterations": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_MAX_ITERATIONS),
+        "max_tool_calls_per_turn": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_MAX_TOOL_CALLS_PER_TURN
+        ),
+        "tool_timeout_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_TOOL_TIMEOUT_MS),
+        "tool_result_max_bytes": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_TOOL_RESULT_MAX_BYTES
+        ),
+        "turn_timeout_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_TURN_TIMEOUT_MS),
+        "context_max_tokens": FieldSpec(FieldKind.OPTIONAL_POSITIVE_INT, None),
+    },
+    "workspace": {
+        "root": FieldSpec(FieldKind.OPTIONAL_STR, None),
+    },
+    "plugins": {
+        "disable": FieldSpec(FieldKind.STR_LIST, ()),
+        "search_paths": FieldSpec(FieldKind.STR_LIST, ()),
+    },
+    "model": {
+        "provider": FieldSpec(FieldKind.OPTIONAL_STR, None),
+        "name": FieldSpec(FieldKind.OPTIONAL_STR, None),
+    },
+    "logging": {
+        "level": FieldSpec(FieldKind.STR, "info"),
+        "file_enabled": FieldSpec(FieldKind.BOOL, True),
+    },
+}
+
+
+@dataclass(frozen=True, slots=True)
+class TurnSection:
+    """一次 turn 的预算。字段名与 `LimitKind` 的取值逐一对应（`limits.py` 的约定）。"""
+
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
+    max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
+    tool_timeout_ms: int = DEFAULT_TOOL_TIMEOUT_MS
+    tool_result_max_bytes: int = DEFAULT_TOOL_RESULT_MAX_BYTES
+    turn_timeout_ms: int = DEFAULT_TURN_TIMEOUT_MS
+    #: `None` = 由模型能力推导，不是「无限制」。见 `TurnLimits.resolve_context_max_tokens`。
+    context_max_tokens: int | None = None
+
+    def to_limits(self) -> TurnLimits:
+        """转成 `TurnLimits`。
+
+        **函数内 import 是刻意的**：见 `DEFAULT_MAX_ITERATIONS` 的注释——只有真的要构造
+        `TurnLimits` 的调用方（编排层）才付得起把 turn 包导入进来的代价。
+        """
+        from ..turn.limits import TurnLimits as _TurnLimits
+
+        return _TurnLimits(
+            max_iterations=self.max_iterations,
+            max_tool_calls_per_turn=self.max_tool_calls_per_turn,
+            tool_timeout_ms=self.tool_timeout_ms,
+            tool_result_max_bytes=self.tool_result_max_bytes,
+            turn_timeout_ms=self.turn_timeout_ms,
+            context_max_tokens=self.context_max_tokens,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceSection:
+    """workspace 位置。`None` = 用实例目录下的 `workspace/`（`InstanceLayout.workspace_dir`）。"""
+
+    root: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PluginsSection:
+    """插件加载的开关。真正的加载在 `D25`，这里只固定配置形状。"""
+
+    #: 显式禁用的插件 id。id 形状由 `D25` 用 `contracts` 的解析器校验。
+    disable: tuple[str, ...] = ()
+    #: 额外的插件搜索路径，在 `InstanceLayout.plugins_dir` 之外。
+    search_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSection:
+    """默认模型选择。provider 凭据不在配置文件里（只走环境变量，§6.7）。"""
+
+    provider: str | None = None
+    name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LoggingSection:
+    """事件 sink 的开关。sink 实现在 `D12`。"""
+
+    level: str = "info"
+    #: 写 `logs/events-<date>.jsonl`。
+    file_enabled: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class NucleaConfig:
+    """整份配置。所有小节都有默认值——缺失的 `config.json` 因此是完全合法的状态。"""
+
+    turn: TurnSection = field(default_factory=TurnSection)
+    workspace: WorkspaceSection = field(default_factory=WorkspaceSection)
+    plugins: PluginsSection = field(default_factory=PluginsSection)
+    model: ModelSection = field(default_factory=ModelSection)
+    logging: LoggingSection = field(default_factory=LoggingSection)
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """诊断视图。元组转列表，保证真能被 `json.dumps` 编码。"""
+        return {
+            "turn": {
+                "max_iterations": self.turn.max_iterations,
+                "max_tool_calls_per_turn": self.turn.max_tool_calls_per_turn,
+                "tool_timeout_ms": self.turn.tool_timeout_ms,
+                "tool_result_max_bytes": self.turn.tool_result_max_bytes,
+                "turn_timeout_ms": self.turn.turn_timeout_ms,
+                "context_max_tokens": self.turn.context_max_tokens,
+            },
+            "workspace": {"root": self.workspace.root},
+            "plugins": {
+                "disable": list(self.plugins.disable),
+                "search_paths": list(self.plugins.search_paths),
+            },
+            "model": {"provider": self.model.provider, "name": self.model.name},
+            "logging": {"level": self.logging.level, "file_enabled": self.logging.file_enabled},
+        }
+
+
+def defaults() -> dict[str, JsonValue]:
+    """把默认值物化成一层原始 JSON。
+
+    `CFG-005` 的来源追踪要求默认值和其它层同形：只有这样「这个值取自默认值」才是一个
+    可以回答的问题，而不是「查不到来源」的兜底解释。
+    """
+    return {
+        section: {name: spec.default for name, spec in fields.items()}
+        for section, fields in SECTION_SPECS.items()
+    }
+
+
+def _suggest(unknown: str, known: Sequence[str]) -> str:
+    """给拼错的键一个近似建议。
+
+    这是「只认 snake_case」这条规则可教的关键：`maxIterations` 会得到
+    「是否想写 max_iterations？」，而不是一句干巴巴的「未知字段」。
+    """
+    close = difflib.get_close_matches(unknown, known, n=1, cutoff=0.6)
+    if close:
+        return f"是否想写 {close[0]}？"
+    return f"删除该键；该小节可用的字段有：{', '.join(sorted(known))}。"
+
+
+def _issue(code: ErrorCode, message: str, pointer: str, **detail: JsonValue) -> NucleaError:
+    """构造一处带位置的问题。**detail 里只有指针与类型名，绝不含配置值。**"""
+    return NucleaError(code, message, detail={"pointer": pointer, **detail})
+
+
+def _coerce(value: JsonValue, spec: FieldSpec, pointer: str) -> tuple[JsonValue, NucleaError | None]:
+    """按 spec 校验一个值。返回 `(采用的值, 问题或 None)`。
+
+    出问题时返回 spec 的默认值，让校验能继续走完剩下的字段——一次报全比逐条中断有用。
+    """
+    kind = spec.kind
+    if kind is FieldKind.BOOL:
+        if isinstance(value, bool):
+            return (value, None)
+        return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是布尔值。", pointer))
+
+    if kind in (FieldKind.POSITIVE_INT, FieldKind.OPTIONAL_POSITIVE_INT):
+        if value is None and kind is FieldKind.OPTIONAL_POSITIVE_INT:
+            return (None, None)
+        # bool 是 int 的子类，但 `max_iterations: true` 显然是写错了。
+        if isinstance(value, bool) or not isinstance(value, int):
+            return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是整数。", pointer))
+        if value <= 0:
+            return (
+                spec.default,
+                _issue(ErrorCode.CONFIG_INVALID, "该字段必须是正整数。", pointer),
+            )
+        return (value, None)
+
+    if kind in (FieldKind.STR, FieldKind.OPTIONAL_STR):
+        if value is None and kind is FieldKind.OPTIONAL_STR:
+            return (None, None)
+        if not isinstance(value, str):
+            return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是字符串。", pointer))
+        return (value, None)
+
+    # STR_LIST
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是字符串数组。", pointer))
+    items = list(value)
+    if not all(isinstance(item, str) for item in items):
+        return (
+            spec.default,
+            _issue(ErrorCode.CONFIG_INVALID, "该数组的每一项都必须是字符串。", pointer),
+        )
+    return (tuple(items), None)
+
+
+def _validate_section(
+    name: str,
+    raw: JsonValue,
+    issues: list[NucleaError],
+) -> dict[str, JsonValue]:
+    """校验一个小节，返回**已逐字段校验过**的取值映射（缺席的字段不出现在里面）。
+
+    这里刻意不构造 dataclass：小节各有各的字段类型，泛型地 `**values` 展开会把每个字段
+    都退化成 `JsonValue`。构造留给 `validate_config` 里五处具名调用，那里类型才收得回来。
+    """
+    specs = SECTION_SPECS[name]
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        issues.append(
+            _issue(ErrorCode.CONFIG_INVALID, "该小节必须是 JSON 对象。", pointer_of([name]))
+        )
+        return {}
+
+    values: dict[str, JsonValue] = {}
+    for key in raw:
+        if key not in specs:
+            issues.append(
+                _issue(
+                    ErrorCode.CONFIG_UNKNOWN_FIELD,
+                    f"未知配置字段。{_suggest(key, list(specs))}",
+                    pointer_of([name, key]),
+                )
+            )
+    for field_name, spec in specs.items():
+        if field_name not in raw:
+            continue
+        adopted, issue = _coerce(raw[field_name], spec, pointer_of([name, field_name]))
+        if issue is not None:
+            issues.append(issue)
+            continue
+        values[field_name] = adopted
+    return values
+
+
+def _int_at(values: Mapping[str, JsonValue], key: str, fallback: int) -> int:
+    """取一个已校验的整数。`_coerce` 已保证形状，这里只是把类型收窄回 `int`。"""
+    value = values.get(key, fallback)
+    return value if isinstance(value, int) and not isinstance(value, bool) else fallback
+
+
+def _opt_int_at(values: Mapping[str, JsonValue], key: str) -> int | None:
+    value = values.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _str_at(values: Mapping[str, JsonValue], key: str, fallback: str) -> str:
+    value = values.get(key, fallback)
+    return value if isinstance(value, str) else fallback
+
+
+def _opt_str_at(values: Mapping[str, JsonValue], key: str) -> str | None:
+    value = values.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _bool_at(values: Mapping[str, JsonValue], key: str, fallback: bool) -> bool:
+    value = values.get(key, fallback)
+    return value if isinstance(value, bool) else fallback
+
+
+def _str_tuple_at(values: Mapping[str, JsonValue], key: str) -> tuple[str, ...]:
+    value = values.get(key, ())
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
+    """校验合并后的配置。失败时抛错，**一次报出全部问题**。
+
+    逐条抛出会让用户改一个键、重启、再看到下一个错误。因此先把全部问题收集起来，
+    再用第一处的错误码抛出，完整清单挂在 `detail["errors"]`——单个未知字段因此仍然得到
+    `CONFIG_UNKNOWN_FIELD`（`CFG-001`），而不是一个笼统的「配置无效」。
+
+    **异常约定**：任何一处问题即抛 `NucleaError`，`detail["errors"]` 的每项含
+    `pointer` / `code` / `reason`；绝不含配置值本身。
+    """
+    issues: list[NucleaError] = []
+
+    for key in data:
+        if key not in SECTION_SPECS:
+            issues.append(
+                _issue(
+                    ErrorCode.CONFIG_UNKNOWN_FIELD,
+                    f"未知配置小节。{_suggest(key, list(SECTION_SPECS))}",
+                    pointer_of([key]),
+                )
+            )
+
+    sections = {name: _validate_section(name, data.get(name), issues) for name in SECTION_SPECS}
+
+    if issues:
+        errors: list[JsonValue] = [
+            {
+                "pointer": str(issue.detail.get("pointer", "")),
+                "code": issue.code.value,
+                "reason": issue.user_message,
+            }
+            for issue in issues
+        ]
+        raise NucleaError(
+            issues[0].code,
+            f"配置校验失败，共 {len(errors)} 处问题。",
+            detail={"errors": errors},
+        )
+
+    # 逐个具名构造而不是 `**sections`：小节的字段类型在这里才收窄回具体形状，
+    # 展开一个 `dict[str, JsonValue]` 会让每个字段都退化成 `JsonValue`。
+    turn = sections["turn"]
+    plugins = sections["plugins"]
+    model = sections["model"]
+    logging_values = sections["logging"]
+    return NucleaConfig(
+        turn=TurnSection(
+            max_iterations=_int_at(turn, "max_iterations", DEFAULT_MAX_ITERATIONS),
+            max_tool_calls_per_turn=_int_at(
+                turn, "max_tool_calls_per_turn", DEFAULT_MAX_TOOL_CALLS_PER_TURN
+            ),
+            tool_timeout_ms=_int_at(turn, "tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS),
+            tool_result_max_bytes=_int_at(
+                turn, "tool_result_max_bytes", DEFAULT_TOOL_RESULT_MAX_BYTES
+            ),
+            turn_timeout_ms=_int_at(turn, "turn_timeout_ms", DEFAULT_TURN_TIMEOUT_MS),
+            context_max_tokens=_opt_int_at(turn, "context_max_tokens"),
+        ),
+        workspace=WorkspaceSection(root=_opt_str_at(sections["workspace"], "root")),
+        plugins=PluginsSection(
+            disable=_str_tuple_at(plugins, "disable"),
+            search_paths=_str_tuple_at(plugins, "search_paths"),
+        ),
+        model=ModelSection(
+            provider=_opt_str_at(model, "provider"),
+            name=_opt_str_at(model, "name"),
+        ),
+        logging=LoggingSection(
+            level=_str_at(logging_values, "level", "info"),
+            file_enabled=_bool_at(logging_values, "file_enabled", True),
+        ),
+    )

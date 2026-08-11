@@ -223,10 +223,15 @@ src/nucleamind/
 │   │   ├── host.py            # NucleaAPI 宿主侧实现
 │   │   └── permissions.py     # 权限授予与 Grant 派发
 │   ├── config/
-│   │   ├── layout.py          # 实例目录布局与 instance.lock
-│   │   ├── loader.py          # 分层配置加载
-│   │   ├── secrets.py         # Secret 引用解析
-│   │   └── scaffold.py        # 首次运行生成最小配置
+│   │   ├── layout.py          # 实例目录的路径代数（不含锁）
+│   │   ├── process.py         # 跨平台 PID 存活探测（Liveness 三态）
+│   │   ├── lock.py            # instance.lock：O_EXCL + 陈旧锁回收
+│   │   ├── merge.py           # 分层合并 + 逐指针来源追踪（JSON Pointer）
+│   │   ├── schema.py          # 配置 schema 与校验（extra="forbid"）
+│   │   ├── sources.py         # 三个来源与优先级（文件 < 环境变量 < CLI）
+│   │   ├── loader.py          # 加载编排：LoadedConfig
+│   │   ├── secrets.py         # Secret 引用解析（D11）
+│   │   └── scaffold.py        # 首次运行生成最小配置（D24，另名 bootstrap.py）
 │   └── observability/
 │       ├── bus.py             # 事件总线（只扇出）
 │       ├── redaction.py       # 脱敏（在事件构造时生效）
@@ -773,14 +778,29 @@ Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
 
 ### 6.7 配置与 Secret
 
-三层配置，后者覆盖前者，来源在诊断中可见（`CFG-005`）：
+四层配置，后者覆盖前者，来源在诊断中可见（`CFG-005`）：
 
 ```text
-1. 内置默认值（代码中的 Pydantic default）
+1. 内置默认值   代码中的字段表 kernel/config/schema.py::SECTION_SPECS
 2. 实例配置文件  <instance_dir>/config.json
-3. 环境变量覆盖  NUCLEAMIND__<SECTION>__<KEY>（仅限白名单字段）
+3. 环境变量覆盖  NUCLEAMIND_CFG_<SECTION>__<KEY>
 4. 进程参数      --set section.key=value（测试与临时用）
 ```
+
+`D10` 落地时对本节的三处修正：
+
+- **内置默认值物化成一层**（`schema.defaults()`），不是靠 dataclass 的字段默认值兜底。
+  `CFG-005` 要求「每个生效值可追溯来源」，只有默认值也是一层，「这个值取自默认值」
+  才是查得到的答案，而不是「来源索引里查不到」的兜底解释。因此是**四层**而非三层。
+- **schema 手写，不用 pydantic**（本节原文写的是「代码中的 Pydantic default」）。
+  取其意不取其形：`extra="forbid"` 与 JSON Pointer 位置两条规范要求照做，实现方式另选。
+  实测 pydantic 版让 `import kernel.config` 达 313 ms（手写版 110 ms），而 `NFR-405`
+  给整个冷启动的预算是 300 ms，配置加载在 §10.1 步骤 2、永远在必经路径上。
+  `sdk/manifest.py` 继续用 pydantic——它只在真的要发现插件时才付这笔钱。
+- **环境变量前缀是 `NUCLEAMIND_CFG_`、层级用双下划线**（字段名本身含下划线，单下划线
+  无法区分「层级」与「词间」）。不设白名单：字段表本身就是白名单，未登记的键由
+  `extra="forbid"` 报未知字段。选实例的 `NUCLEAMIND_INSTANCE_DIR` / `NUCLEAMIND_INSTANCE`
+  靠前缀自然区分开。
 
 规则：
 
@@ -792,6 +812,11 @@ Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
   （`CFG-003`）。缺失变量报错时只给出变量名（`EDG-502`）。
 - 配置文件损坏或版本未知：拒绝启动并保留原文件，同时把解析错误写到
   `<instance_dir>/logs/`，绝不静默重写（`EDG-501`）。
+  > `D10` 兑现了前半句：`config.json` 只以 `"rb"` 打开、且只在
+  > `sources.read_config_file` 一处，`kernel/config/` 全包不出现任何写文件调用，
+  > 原文件因此不可能被改写。**「把解析错误写到 `logs/`」留给 `D12` + `D23`**：
+  > 文件 sink 是 `D12` 的职责，事件总线在 `D10` 时还不存在，而一个在自己错误路径上做
+  > IO 的 loader 是第二个故障面。落点 `layout.config_error_log_path(day)` 已备好。
 - 首次运行无配置文件：生成最小可用 `config.json`（含注释性 `$schema` 与占位字段），
   并输出「填哪个文件、哪个字段」的指引（`EDG-506`、`BAS-006`）。
 
