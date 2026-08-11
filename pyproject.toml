@@ -200,4 +200,7 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+    # Protocol 与 TYPE_CHECKING 存根的函数体。它们永远不会被执行，
+    # 计进分母只会逼人写「调用 `...` 一次」这种没有意义的测试。
+    '^\s*\.\.\.$',
 ]

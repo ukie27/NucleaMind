@@ -617,6 +617,35 @@ engine 的不变量（写进 docstring 并由测试守护）：
 这样拆分带来的直接收益：engine 可以用 `FakeModelProvider` 在毫秒级完整测试
 迭代上限、并发调度、取消检查点，不需要文件系统或网络（`NFR-701`）。
 
+### 6.2.1 与旧实现的语义差异（`D09` 落地）
+
+以下差异是 `D09` 把 `legacy/agent/runner.py` 的纯循环拆成 `kernel/turn/engine.py` 时
+**有意**引入的，不是疏忽。完整对照表见 `docs/project/d09-turn-engine.md`（临时文档，
+收口时并入本节）：
+
+- **工具失败永不升级为 `TurnFailed`**。旧实现有 `fail_on_tool_error` 开关（subagent 用）；
+  新 engine 的工具失败一律折成 `ToolResult(ok=False)` 回给模型，本轮继续——`D14` 若要在
+  子 agent 场景「失败即终止」，做法是多次调用 `run_turn` 之间由编排层检查，engine 不再
+  认识这个开关。
+- **合批口径从「只读」换成 `ToolSpec.concurrency`**。旧实现按 `concurrency_safe`（≈ 只读
+  且非独占）合批；新层按 `concurrency is PARALLEL`。而 `concurrency` 的默认值是
+  `PARALLEL`、`risk` 的默认值是 `MUTATING`——**一个会写的工具忘了声明 `EXCLUSIVE` 就会被
+  并发执行**。写内建/插件工具时，声明 `FS_WRITE` 或 `SHELL` 权限的一律要显式给出
+  `concurrency`。
+- **截断按 UTF-8 字节、不追加后缀**。旧实现按字符截断并追加 `"\n... (truncated)"`；
+  新层按 `tool_result_max_bytes` 字节截断，标记由 `ToolResult.truncated` 承载——截断后缀
+  会让结果反过来超出上限。
+- **`before_model_request` 由 engine 每轮分发**。§10.2 第 9 步把它画在进 engine 之前，
+  第一轮两者重合，第 2..N 轮的请求只有 engine 造得出来。**`D14` 不得再分发一次**，
+  验收断言分发次数 == 迭代数。
+- **续写 = 用同一个 `ledger` 再调一次 `run_turn`**。`HookOutcome` 没有 `response` 槽
+  （`after_model_response` 是观察者），响应改写这条路在契约层封死；长度截断续写只能靠
+  编排层把上一轮 assistant 消息塞回 `messages`。
+- **「用完预算后发一次不带 tools 的收尾请求」是编排策略**。engine 撞上限即
+  `TurnStoppedByLimit`，不替模型收尾。
+- **参数非法由 `ToolInvoker` 判定**。§10.2 第 10 步把 schema 校验划给 invoker，
+  engine 不认识 JSON Schema；未知工具名仍由 engine 合成错误消息回给模型。
+
 ### 6.3 输入分流：命令与模型 turn
 
 `kernel/routing/dispatcher.py` 在进入 engine 之前决策一次（`KER-006`）：
@@ -1122,6 +1151,8 @@ Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中
          HISTORY 从最旧开始丢；仍超限则触发压缩策略（CTX-003、EDG-301）
  8  从 registry 取生效工具集 -> tool_specs（与模型可见列表同源）
  9  before_model_request Interceptor
+    （`D09` 起由 engine **每轮**分发；此处是 orchestrator 对第一轮的视角，D14 不得重复分发——
+      否则第一轮触发两遍。engine 内部每轮迭代前分发一次，见 §6.2.1）
 10  engine.run_turn 开始迭代：
       【检查点 2】-> model.stream()
       【检查点 3】每个分片：yield ModelDelta -> orchestrator 转 OutboundMessage(DELTA)

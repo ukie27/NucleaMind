@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-11
-- 当前阶段：阶段 2 Turn 内核推进中（`D00`–`D08` 均已完成，下一步 `D09`）
+- 当前阶段：阶段 2 Turn 内核推进中（`D00`–`D09` 均已完成，下一步 `D10`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -305,13 +305,62 @@
     `basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`tests/architecture` +
     `tests/contracts` + `tests/sdk` + `tests/kernel` + `tests/baseline` 共 742 个用例全绿；
     `kernel/turn/` 语句覆盖率 100%；新层 `Any` 数仍为 0。
+- **`D09` Turn Engine**（`kernel/turn/{engine,events,deps,scheduling,folding}.py`，
+  约 1170 行 + `tests/kernel/{test_engine,test_folding,test_scheduling}.py` 77 个用例）：
+  - **`run_turn(request, deps, cancel, *, ledger=None)` 以整个 `ModelRequest` 为种子**
+    （技术方案 §6.2 的草图已回写）：`before_model_request` Hook 的载荷槽就是
+    `ModelRequest`，拆成 `(messages, tool_specs)` 就得把 Hook 改过的请求拆回去，而
+    `params` / `timeout_ms` 的改写在那一步会被静默丢掉。顺带地，「模型看得见的工具集」
+    与「engine 能调度的工具集」成了同一个对象（`request.tools`）。
+  - **engine 事件类型放 `kernel/turn/events.py` 而不是 contracts**：`test_field_traceability`
+    要求每个契约类型对上需求 §10 的一节（事件是 §6.2 拆分的产物，没有出处）；进
+    `contracts.__all__` 会被快照变成永久公开表面（`NFR-104`）；且 `TurnCancelled.checkpoint`
+    与 `TurnStoppedByLimit.breach` 引用的是 kernel 的 `Checkpoint` 与 `LimitBreach`。
+    事件是 9 个 frozen dataclass 的**封闭联合**（不是 kind 枚举）：`D14` 的 `match` 在
+    basedpyright 严格模式下拿到穷尽性检查，漏一个分支是编译期错误。事件不带 `correlation`
+    （整个 turn 只有一个，复制一份就有两个真相来源）。
+  - **`EngineDeps` 恰好四个槽**（§6.2 原文），`ToolInvoker` / `HookDispatcher` 两个
+    kernel-local Protocol。三条职责边界：`ToolSpec` 查找留在 engine（`request.tools` 建索引，
+    「未知工具」由此有精确定义）；超时 engine 定、invoker 执行（`ToolInvocation.timeout_ms`
+    必填，engine 压到 `min(tool_timeout_ms, remaining_ms())`，宽限期与孤儿任务登记在
+    invoker）；截断在 engine 且在 `after_tool_call` **之后**（先截后钩等于给插件一条绕过
+    预算的路）。
+  - **全文件只有 2 处 try/except**：`run_turn` 外层的唯一出口（一切异常转成终态事件，
+    `terminal_from_error` 是唯一翻译表）+ `_invoke_one` 里把 invoker 逸出的异常折成
+    `side_effect=UNKNOWN`。捕 `Exception` 不捕 `BaseException` 是刻意的：`CancelledError`
+    是任务本身被杀，不是 turn 被取消。**工具失败永不升级为 `TurnFailed`**（旧实现行为，
+    开发方案验收表此处有措辞差异，结论写在测试 docstring 与 §6.2.1）。
+  - **工具调度的关键设计：检查点 5 只在工具阶段入口抛一次，批次内部只查不抛**。
+    批次中途取消时，已执行的保留真实结果，未执行的合成 `side_effect=NONE` 的
+    `SKIPPED` 结果，tool 消息照样进 messages——否则「已产生的内容」要靠 except 里的
+    局部变量抢救，那正是「一堆 try/except」的来源。`partition_tool_batches` 是公开纯函数
+    （替代旧私有方法）：连续 `PARALLEL` 合批，`EXCLUSIVE` 与未知工具单独成批。
+  - **`StreamFolder` 是推入式状态机**（engine 必须边收边发 delta 并做检查点 3）。全案
+    唯一一处推断：流结束但缺 DONE 分片时按 `TOOL_CALLS if tool_calls else END_TURN` 推断
+    并标记 `provider_metadata["missing_done_chunk"]`（`MOD-005` 不静默降级）。`DONE(ERROR)`
+    抛 `EXTERNAL_MODEL_PROVIDER` 而不是折成正常响应（`EDG-304`）。同 `call_id` 分片
+    后到覆盖先到并计数（增量拼装是 Provider 边界的职责）。
+  - **与旧实现的语义差异**逐条写进技术方案 §6.2.1（合批口径从只读换成
+    `concurrency is PARALLEL`、字节截断不追加后缀、`before_model_request` 归 engine 每轮
+    分发、续写 = 共享 ledger 再调 `run_turn`、收尾请求归 D14）。完整 33 行对照表在
+    `docs/project/d09-turn-engine.md`（临时文档，收口后删除）。
+  - 验收：`engine.py` 380 行（≤400，自有测试 + D01 守卫双卡）；import 白名单测试
+    （`os`/`pathlib`/`socket` 出现即失败 + 注入反向用例）；4 个检查点各有独立测试并断言
+    `side_effect` 正确；每个 `deps` 回调注入异常产出终态事件而非穿透；四个终态各有测试；
+    「最后一轮的工具不执行」是一条刻意的行为测试（结果无法回给模型，执行只产生无谓副作用）；
+    `tests/kernel` 单次 0.8s（≤2s）；`kernel/turn/` 语句覆盖率 100%；新层 `Any` 数保持 0。
+    `ruff check`、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`tests/architecture` +
+    `tests/contracts` + `tests/sdk` + `tests/kernel` + `tests/baseline` 共 822 个用例全绿；
+    `legacy_debt` 未变（src/ 只增不改 legacy）；`check_startup_cost` OK。
+    `pyproject.toml` 的 coverage `exclude_lines` 补了一条 `^\s*\.\.\.$`（Protocol 存根）。
 
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
-  `D07` 已完成，旧实现行为基线就位；`D08` 已完成，取消与预算就位，`D09` Turn Engine
-  的两个前置依赖（`D06` + `D08`）齐备。
+  `D07` 已完成，旧实现行为基线就位；`D08` 已完成，取消与预算就位；`D09` 已完成，
+  Turn Engine（纯循环 ≤400 行）就位，`D09` 的两个前置依赖（`D06` + `D08`）已兑现，
+  阶段 2 的 engine 一层完成，下一层是 `D10` 配置与 `D14` orchestrator。
   `kernel/` 目前有 `registry/` 与 `turn/`；`builtins/`、`runtime/`、`embed/` 仍是空骨架，
   尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
@@ -361,10 +410,35 @@
 
 ## 下一步工作
 
-1. 执行 `D09` Turn Engine：`kernel/turn/engine.py`（目标 ≤400 行，只通过 `EngineDeps`
-   与外界交互）与 `tests/kernel/test_engine.py`。属于 4 个高风险模块之一，
-   建议先单独评审实现方案。engine 直接用 `D08` 的 `CancelToken`（检查点 2/3/5/6）与
-   `BudgetLedger`，以 `tests/baseline/` 为行为参照。
+1. 执行 `D10` 配置层：`kernel/config/`。`D14` orchestrator 的下一步依赖是配置
+   （`TurnLimits` 的配置来源、`DisabledProviders` 构造、实例目录）。
+2. 阶段 2 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
+   承接 `test_loop_behavior.py` 的 12 条决定项，消费 `D09` 的事件流
+   （`TurnEvent` 封闭联合 + `ToolCallCompleted.message` 直接持久化），实现
+   `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`）。
+   属于 4 个高风险模块之一，建议先单独评审实现方案。
+
+`D09` 留下的、`D10`/`D12`/`D14` 必须用到的事实：
+
+- **engine 只分发 4 个 Hook**（`ENGINE_HOOKS`）：`BEFORE_MODEL_REQUEST`（每轮，次数 ==
+  迭代数——`D14` **不得**再分发一次，§10.2 已加脚注）、`AFTER_MODEL_RESPONSE`（观察者，
+  `HookOutcome` 没有 `response` 槽，响应改写永远走不通，续写只能多次调 `run_turn`）、
+  `BEFORE_TOOL_CALL`、`AFTER_TOOL_CALL`（`REPLACE` 发生在截断之前）。`turn_start` /
+  `context_assemble` / `turn_end` 归 orchestrator。
+- **`ToolInvoker.invoke` 必须在 `timeout_ms + tool_cancel_grace_ms` 内返回**（docstring
+  写死）；宽限期与孤儿任务登记只能在那里做。engine 不加第二层超时。`D14` 验收必须有一条
+  「不可取消工具在宽限期后返回 `side_effect=UNKNOWN`」的独立测试。
+- **工具失败不升级为 `TurnFailed`**（与开发方案验收表措辞不同的一处，结论在
+  `test_engine.py::test_tool_invoke_error_does_not_fail_the_turn` 与 §6.2.1）。
+  `fail_on_tool_error` 若需要由编排层多次调用之间检查，engine 不认识它。
+- **`TurnStoppedByLimit` 的 `EventName` 缺口未解决**：`EventName` turn 族只有 5 个，
+  没有 `turn.stopped_by_limit`。`D12` 按 `NFR-104` 评审新增，或 `D14` 显式论证用
+  `turn.completed` 承载。倾向前者（`EDG-304`）。
+- **「用完预算后发一次不带 tools 的收尾请求」归 `D14`**（引擎撞上限即停）。
+- **参数非法由 `ToolInvoker` 判定**（§10.2 第 10 步 schema 校验划给 invoker）；
+  未知工具名仍由 engine 合成错误消息。
+- **写内建/插件工具时**：声明 `FS_WRITE` 或 `SHELL` 权限的工具必须显式
+  `concurrency=EXCLUSIVE`（默认 `PARALLEL` 与旧行为相反，`scheduling.py` docstring 写死）。
 
 `D08` 留下的、`D09`/`D14` 必须用到的事实：
 
@@ -500,8 +574,8 @@
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅
-D09– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
+D10– ⬜（尚未开始）
 
 ## 本目录文档分类
 

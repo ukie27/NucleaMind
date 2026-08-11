@@ -12,7 +12,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`contracts/` 十二个模块），`D05` 已落地 SDK 表面（`sdk/` 与 `sdk/testing/`），
   `D06` 已落地 Capability Registry 与覆盖解析（`kernel/registry/`），阶段 1 收口；
   `D07` 已落地旧实现行为基线（`tests/baseline/`），`D08` 已落地取消与预算
-  （`kernel/turn/{cancel,limits}.py`），阶段 2 Turn 内核推进中。
+  （`kernel/turn/{cancel,limits}.py`），`D09` 已落地 Turn Engine
+  （`kernel/turn/{engine,events,deps,scheduling,folding}.py`，纯循环，≤400 行），
+  阶段 2 Turn 内核推进中。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 只有 `registry/` 与 `turn/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
@@ -71,7 +73,12 @@ webui/                     # 前端源码（TypeScript）
 `token.checkpoint(Checkpoint.X)`——`CHECKPOINT_OWNERS` 已经定死 engine 拿 2/3/5/6、
 orchestrator 拿 1/4。预算只有 `TurnLimits` 那**六项**，取值与 `LimitKind` 的名字相同，
 越界后的终态只查 `LIMIT_OUTCOMES`，不要在 engine 或编排里另写一份判断；记账用
-per-turn 的 `BudgetLedger`（判定必须在发起工具**之前**）。
+per-turn 的 `BudgetLedger`（判定必须在发起工具**之前**）。`D09` 已落地 engine 事件流：
+`run_turn(request, deps, cancel, *, ledger=None)` 以 `ModelRequest` 为种子、产出恰好一个
+终态事件结尾的事件流；`EngineDeps` 只有四个槽（model/tools/hooks/limits），engine 的
+import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
+（`ENGINE_HOOKS`），`turn_start`/`context_assemble`/`turn_end` 归 orchestrator；
+续写 = 用同一个 `ledger` 再调一次 `run_turn`。新旧语义差异见技术方案 §6.2.1。
 
 `tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
 可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），

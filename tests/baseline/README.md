@@ -48,6 +48,8 @@
 - **`D09`**：新 `engine.py` 落地后，把本目录中**行为断言的部分**在新实现上重跑
   （换掉 `AgentRunner` 与 spec 的构造，断言本身尽量不动）。断言改不动的地方，
   说明新旧语义不同——要在 `D09` 的文档里给出结论，而不是悄悄放宽断言。
+  逐条对照表在 `docs/project/d09-turn-engine.md`（临时文档）；`E≠` / `✗` 结论的
+  永久落点是技术方案 §6.2.1「与旧实现的语义差异」。
 - **`D14`**：`test_loop_behavior.py` 的决定项由 orchestrator 承接，同样处理。
 - 这些测试**不联网**，不依赖真实模型或真实工具：`_support.py` 里的
   `ScriptedProvider` 按脚本回放 `LLMResponse`，`FakeTool` 提供可控的结果、
