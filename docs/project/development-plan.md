@@ -373,7 +373,11 @@ pyproject.toml                                   # ruff 分层规则集
 
 **依赖**：D03
 
-**交付**：`contracts/capability.py`、`contracts/protocols.py`
+**交付**：`contracts/capability.py`、`contracts/command.py`、`contracts/protocols.py`
+
+> `command.py` 是实施时补的第三个文件：`CommandHandler` 的输入输出（`CommandSpec` /
+> `CommandInvocation` / `CommandResult`）不定型，Protocol 就无法类型化。同理，`HookHandler`
+> 需要的 `HookContext` / `HookOutcome` 落在 `capability.py`。规模因此由 450 行增至约 1030 行。
 
 **要点**（技术方案 §5.1、§6.1）
 

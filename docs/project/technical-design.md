@@ -505,7 +505,13 @@ class CapabilityRef:
 | TOOL / COMMAND | MULTI，name 唯一 | 同名重复即启动错误，除非显式声明覆盖 |
 | CONTEXT / HOOK | MULTI，可同名并存 | 全部生效，按 `priority` 排序，同 priority 按 provider id 字典序 |
 | CHANNEL / MODEL | MULTI，name 唯一 | 同名重复即错误；由配置选择使用哪一个 |
+| MEMORY | MULTI，name 唯一 | 同上（`D04` 补齐：原表漏列此 kind） |
 | SESSION_STORE / CLI_ENTRY | SINGLETON | 唯一生效实现，必须显式覆盖才能替换 |
+
+`MEMORY` 定为 MULTI 而非 SINGLETON 的依据：`register_memory_provider(name, m)` 带 name
+本身就意味着可以并存多个具名实现，而 `MEM-003`「Memory 不可用时按配置降级」要求换一个
+后端不必先卸载现有的。本表的可执行形态是 `contracts/capability.py::CAPABILITY_ARITY`，
+由 `tests/contracts/test_capability.py` 逐行断言。
 
 **覆盖只能显式声明，永不由加载顺序决定**（`EDG-102`、`EDG-107`）：
 

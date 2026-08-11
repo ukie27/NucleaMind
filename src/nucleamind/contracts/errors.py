@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final, cast
 
 if TYPE_CHECKING:  # pragma: no cover - 仅为注解，运行时不导入，避免与 ids.py 成环。
     from . import JsonValue
+    from .capability import CapabilityRef
     from .ids import Correlation
 
 __all__ = [
@@ -333,11 +334,13 @@ class NucleaError(Exception):
     构造即完成脱敏：`user_message`、`detail` 与 `repr` 都不再含密文，因此把它扔给
     任何 sink、日志或模型可见文本都是安全的，脱敏不依赖下游是否记得处理。
 
-    `capability` 字段（技术方案 §5.2）随 `D04` 的 `CapabilityRef` 一并补上，
-    此处先不占位，避免提前定义一个会被推翻的类型。
+    `capability` 指向出错的能力（`D04` 补齐）。它只在 `TYPE_CHECKING` 下导入——
+    `capability.py` 运行时依赖本模块，反向导入会成环——因此这里不做形状校验：
+    `CapabilityRef` 自己在构造时已经校验过，再验一遍只会在错误路径上多一个出错点。
     """
 
     __slots__ = (
+        "_capability",
         "_category",
         "_code",
         "_correlation",
@@ -354,6 +357,7 @@ class NucleaError(Exception):
         detail: Mapping[str, object] | None = None,
         retryable: bool = False,
         correlation: Correlation | None = None,
+        capability: CapabilityRef | None = None,
     ) -> None:
         category = CODE_CATEGORIES.get(code)
         if category is None:
@@ -368,6 +372,7 @@ class NucleaError(Exception):
         self._detail = redacted
         self._retryable = retryable
         self._correlation = correlation
+        self._capability = capability
         super().__init__(safe_message)
 
     @property
@@ -400,6 +405,15 @@ class NucleaError(Exception):
         """关联标识；在 turn 之外抛出（如实例启动阶段）时为 None。"""
         return self._correlation
 
+    @property
+    def capability(self) -> CapabilityRef | None:
+        """出错的能力；与具体能力无关的错误（如配置解析）为 None。
+
+        `PLG-006` 要求诊断能标明每项能力由内建还是插件提供，这个字段是那条信息在错误
+        路径上的载体：`ref.provider` 直接回答「是谁的问题」。
+        """
+        return self._capability
+
     def with_correlation(self, correlation: Correlation) -> NucleaError:
         """返回附带关联标识的新实例；契约对象不可变，因此不就地修改。"""
         return NucleaError(
@@ -408,6 +422,7 @@ class NucleaError(Exception):
             detail=self._detail,
             retryable=self._retryable,
             correlation=correlation,
+            capability=self._capability,
         )
 
     def __repr__(self) -> str:

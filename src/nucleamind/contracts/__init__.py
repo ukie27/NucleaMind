@@ -6,8 +6,17 @@
 
 三条不变量（技术方案 §5.1）：契约对象一律不可变；契约层不出现 `Any`；契约层不出现 IO。
 
-当前已落地 `D02` 基础层（`ids` / `errors` / `events`）与 `D03` 领域与执行层
-（`metadata` / `message` / `session` / `context` / `tool` / `model`）；能力层由 `D04` 补齐。
+当前已落地 `D02` 基础层（`ids` / `errors` / `events`）、`D03` 领域与执行层
+（`metadata` / `message` / `session` / `context` / `tool` / `model`）与 `D04` 能力层
+（`command` / `capability` / `protocols`）。
+
+模块间的依赖方向（子模块只在 `TYPE_CHECKING` 下反向从包根导入 `JsonValue`，
+运行时不成环）：
+
+```text
+errors ← ids ← metadata ← {message, session, context, tool} ← {model, command}
+       ← capability ← protocols
+```
 """
 
 from __future__ import annotations
@@ -31,6 +40,32 @@ JsonSchema: TypeAlias = Mapping[str, JsonValue]
 
 # 子模块的注解引用上面的 `JsonValue`，因此定义必须先于导入；子模块只在
 # `TYPE_CHECKING` 下反向导入它，运行时不成环。
+from .capability import (  # noqa: E402
+    CAPABILITY_ARITY,
+    HOOK_KINDS,
+    HOOK_REQUIRED_SLOTS,
+    Builtin,
+    CapabilityArity,
+    CapabilityKind,
+    CapabilityRef,
+    HookAction,
+    HookContext,
+    HookKind,
+    HookName,
+    HookOutcome,
+    Plugin,
+    ProviderId,
+    parse_capability_target,
+    parse_provider,
+    provider_sort_key,
+)
+from .command import (  # noqa: E402
+    CommandInvocation,
+    CommandParam,
+    CommandResult,
+    CommandSpec,
+    Disposition,
+)
 from .context import (  # noqa: E402
     UNTRUSTED_DATA_PREFIX,
     ContextFragment,
@@ -77,6 +112,17 @@ from .model import (  # noqa: E402
     StopReason,
     TokenUsage,
 )
+from .protocols import (  # noqa: E402
+    CancelSignal,
+    Channel,
+    CommandHandler,
+    ContextProvider,
+    HookHandler,
+    MemoryProvider,
+    ModelProvider,
+    SessionStore,
+    ToolHandler,
+)
 from .session import (  # noqa: E402
     CancelReason,
     Role,
@@ -98,37 +144,63 @@ from .tool import (  # noqa: E402
 )
 
 __all__ = [
+    "CAPABILITY_ARITY",
     "CODE_CATEGORIES",
     "EMPTY_METADATA",
+    "HOOK_KINDS",
+    "HOOK_REQUIRED_SLOTS",
     "UNTRUSTED_DATA_PREFIX",
     "ArtifactRef",
     "AttachmentRef",
     "AttachmentSource",
+    "Builtin",
     "CancelReason",
+    "CancelSignal",
+    "CapabilityArity",
+    "CapabilityKind",
+    "CapabilityRef",
+    "Channel",
     "ChunkKind",
+    "CommandHandler",
+    "CommandInvocation",
+    "CommandParam",
+    "CommandResult",
+    "CommandSpec",
     "Concurrency",
     "ContextFragment",
+    "ContextProvider",
     "Correlation",
+    "Disposition",
     "ErrorCategory",
     "ErrorCode",
     "EventFamily",
     "EventName",
     "FragmentKind",
     "FragmentScope",
+    "HookAction",
+    "HookContext",
+    "HookHandler",
+    "HookKind",
+    "HookName",
+    "HookOutcome",
     "InboundMessage",
     "InstanceId",
     "JsonSchema",
     "JsonValue",
+    "MemoryProvider",
     "ModelCapability",
     "ModelChunk",
     "ModelInfo",
     "ModelMessage",
+    "ModelProvider",
     "ModelRequest",
     "ModelResponse",
     "NucleaError",
     "OutboundMessage",
     "PermissionKind",
+    "Plugin",
     "PluginId",
+    "ProviderId",
     "Role",
     "RiskLevel",
     "RuntimeEvent",
@@ -138,11 +210,13 @@ __all__ = [
     "SessionKey",
     "SessionMessage",
     "SessionSnapshot",
+    "SessionStore",
     "SideEffect",
     "StopReason",
     "StreamState",
     "TokenUsage",
     "ToolCall",
+    "ToolHandler",
     "ToolInvocation",
     "ToolResult",
     "ToolSpec",
@@ -151,6 +225,9 @@ __all__ = [
     "TurnOutcome",
     "TurnStatus",
     "normalize_metadata",
+    "parse_capability_target",
+    "parse_provider",
+    "provider_sort_key",
     "redact",
     "scrub",
     "validate_identifier",

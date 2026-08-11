@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-10
-- 当前阶段：阶段 1 契约与注册表（`D00`–`D03` 均已完成，下一步 `D04`）
+- 更新时间：2026-08-11
+- 当前阶段：阶段 1 契约与注册表（`D00`–`D04` 均已完成，下一步 `D05`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -131,11 +131,50 @@
     `ruff check`、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
     `tests/architecture` 51 个用例、`tests/contracts` 269 个用例全绿；
     新层 `Any` 数仍为 0（仅 docstring 里提到这个词）。
+- **`D04` 契约·能力层**（`contracts/{capability,command,protocols}.py`，约 1030 行 +
+  `tests/contracts/` 新增 126 个用例，合计 395 个）：
+  - 比开发方案多一个 `command.py`：`CommandHandler` 的输入输出不定型，Protocol 就无法
+    类型化，而 `protocols.py` 是长期兼容承诺的起点，带着必然要改的签名发布代价更大。
+    同理，`HookHandler` 需要的 `HookContext` / `HookOutcome` 落在 `capability.py`。
+  - `capability.py`：`CapabilityKind` 9 个取值，与 `sdk.NucleaAPI` 的 9 个注册方法一一
+    对应；`CAPABILITY_ARITY` 是冲突语义的唯一来源，9 个 kind 全部登记，缺项直接 KeyError
+    ——冲突语义未定的能力不该有注册路径。**技术方案 §6.1 的表格漏了 `MEMORY`，`D04` 定为
+    MULTI（name 唯一）并已回写技术方案**：`register_memory_provider(name, m)` 带 name
+    本身就意味着可并存多个具名实现，而 `MEM-003` 的降级要求换后端不必先卸载现有的。
+  - `ProviderId = Builtin | Plugin(plugin_id)` 是联合类型而不是裸字符串（`SDK-002`）：
+    一个恰好叫 `builtin` 的插件在字符串世界里能冒充内建。`str(provider)` 的渲染
+    (`"builtin"` / `"plugin:<id>"`) 让「内建排在插件前」直接由字典序成立，
+    §6.1 的排序规则不需要特例。覆盖目标的编解码集中在
+    `CapabilityRef.target` / `parse_capability_target()`，`D05` 的 manifest `overrides`
+    与 `D06` 的解析必须复用这一份，不得各写一套正则。
+  - Hook 表面：`HookName` 冻结 10 个 + `HOOK_KINDS`（5 观察者 / 5 拦截器）+
+    `HOOK_REQUIRED_SLOTS`。最后这张表是 §6.6 表格的可执行形态——「`before_tool_call`
+    能改工具参数」落地就是「它一定拿得到 `invocation`」。`HookOutcome` 的载荷四选一而不是
+    全填：让一个结果同时带片段、请求和工具结果，调度器就只能靠当前 Hook 反推该用哪个，
+    handler 填错即静默失效。
+  - `command.py`：`Disposition` **照抄 §6.3 的四个取值**，`D13` 的 dispatcher 直接复用，
+    不再定义第二个同义枚举；`CommandResult` 在构造时拒绝 `MODEL_TURN`（那是「未命中」，
+    dispatcher 的结论而非 handler 的）。`fragments` 用 `ContextFragment` 而不是裸文本，
+    `CMD-004`/`CMD-005`「不得凭借文本形式绕过限制」因此在类型层就已成立。
+  - `protocols.py`：8 个能力 Protocol 共 20 个成员，外加只读的 `CancelSignal`
+    （`requested` + `raise_if_requested()`）。取消信号拆成两个面是刻意的——`D08` 的
+    `CancelToken` 额外有 `request()` / `child()`，能力实现拿到的只有观测面，
+    无权取消整个 turn。每个方法的 docstring 固定写 **异常约定** 与 **取消语义** 两段，
+    并由测试断言这两个标记存在（三个豁免项在测试里显式列出）。
+  - `NucleaError` 补上 `capability` 字段，兑现 `D02` docstring 里的承诺
+    （`PLG-006`：诊断要能一眼看出是谁的问题）。`CapabilityRef` 只在 `TYPE_CHECKING` 下
+    导入——`capability.py` 运行时依赖 `errors.py`，反向导入会成环。
+  - 验收：arity 表与 Hook 表以**字面量**写在测试里再与实现比对（从实现反推的测试只能
+    证明代码没改，证明不了它和技术方案一致）；每个 Protocol 有一个不继承任何宿主基类的
+    最小 Fake 通过 `isinstance`；方法数快照 + AST 断言 `protocols.py` 里没有实现；
+    `ruff check`、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `tests/architecture` 51 个用例、`tests/contracts` 395 个用例全绿；新层 `Any` 数仍为 0。
 
 ## 正在进行
 
-- `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`、`D03` 已完成，契约层的基础层与
-  领域/执行层落地。`kernel/`–`embed/` 各层仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
+- `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D04` 已完成，契约层三层（基础 /
+  领域与执行 / 能力）全部落地，阶段 1 只剩 `D05` 与 `D06`。`kernel/`–`embed/` 各层仍是
+  空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -183,15 +222,16 @@
 
 ## 下一步工作
 
-1. 执行 `D04` 契约·能力层：`contracts/capability.py`、`contracts/protocols.py`。
-   `CapabilityKind` 9 个取值 + 每个 kind 的 arity 常量表（MULTI / MULTI-unique /
-   SINGLETON），`ProviderId` 为 `Builtin() | Plugin(id)` 的联合类型而非裸字符串；
-   `protocols.py` 的 8 个 Protocol 每个方法都要在 docstring 写明异常约定与取消语义。
-   arity 表用测试对齐技术方案 §6.1 的表格，Protocol 方法数量做快照测试（`NFR-104`）。
-2. 按 `D05`–`D06` 落地 `sdk/` 骨架与 Capability Registry
+1. 执行 `D05` sdk 骨架与测试夹具：`sdk/{__init__,api,manifest,version}.py` 与
+   `sdk/testing/`。`NucleaAPI` 恰好 9 个注册方法 + `ctx`，逐条对应 `CapabilityKind` 的
+   9 个取值，其中含可覆盖内建 CLI 的 `register_cli_entry()`；`manifest.py` 只做数据与
+   校验，**导入它不得产生任何副作用**；`tests/sdk/test_public_surface.py` 对 `__all__`
+   做快照断言。
+2. 接着 `D06` Capability Registry 与覆盖解析：`RegistrationBatch` 的事务性注册、
+   冻结后写入抛 `KERNEL_INTERNAL`、开发方案里那张八行冲突分支表逐条对齐
    （此阶段不改动 `legacy/` 业务代码）。
 
-`D04` 起需要注意的既有事实：
+`D05` 起需要注意的既有事实：
 
 - 新层每个模块的首个 docstring 必须含「职责：」「不负责：」两行，
   否则 `tests/architecture/test_module_docstrings.py` 会失败。
@@ -212,8 +252,20 @@
   `TRACEABILITY` 表，否则该测试会失败——这是 `D03` 为「字段遗漏到阶段 5 才暴露」
   设的对冲，不要通过放宽断言来绕过。
 - `contracts` 内部的模块依赖方向是
-  `errors ← ids ← metadata ← {message, session, context, tool} ← model`，
+  `errors ← ids ← metadata ← {message, session, context, tool} ← {model, command}
+  ← capability ← protocols`，
   子模块只在 `TYPE_CHECKING` 下反向从包根导入 `JsonValue`，运行时不成环。
+- 冲突语义只查 `contracts/capability.py::CAPABILITY_ARITY`，Hook 语义只查 `HOOK_KINDS`；
+  两张表都有以字面量写死的对照测试，改表必须同时改测试——这是「文档漂移」的挡板，
+  不要通过把测试改成从实现反推来绕过。
+- 覆盖目标串（`"builtin:fs.read"` / `"plugin:<id>:<name>"`）只用
+  `CapabilityRef.target` 与 `parse_capability_target()` 编解码，不要在 manifest 校验或
+  registry 里另写正则。
+- `protocols.py` 的 8 个 Protocol 是长期兼容承诺的起点：新增/删除方法必须同步
+  `tests/contracts/test_protocols.py` 的快照表，且新方法的 docstring 必须含
+  「**异常约定**」与「**取消语义**」两段，否则测试失败（`NFR-104`）。
+- 能力实现方只拿到只读的 `CancelSignal`；`request()` / `child()` 属于 `D08` 的
+  `kernel/turn/cancel.py::CancelToken`，不要把它加进 `contracts`。
 - `legacy/` 债务基线：352 个 Python 文件 / 133317 行
   （`scripts/legacy_debt_baseline.json`，只允许用 `--lower-baseline` 下调）。
 - `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单精确到这一个文件路径。
@@ -228,13 +280,14 @@
   `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例，
   以及 `channels/websocket` 的 `test_wrong_path_404`。数量在区间内浮动是因为其中几个
   依赖网络与子进程时序；基线里记录的是这些用例的真实结果，不是「全绿」假设。
-  `D03` 完成时的实测为 14 failed / 6480 passed / 35 skipped
-  （`D02` 时为 15 failed / 6295 passed / 35 skipped，本次 `websocket` 与
-  `exec_session_tools` 的时序用例恰好通过）。
+  `D04` 完成时的实测为 17 failed / 6603 passed / 35 skipped
+  （`D03` 时 14 failed / 6480 passed，`D02` 时 15 failed / 6295 passed）。
+  `D04` 这次多出的几个仍全部属于上述家族——oauth-cli-kit 缺失导致的
+  `test_onboard_logic.py` 与 `cli/test_commands.py` 各一例，其余为网络与时序用例。
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05– ⬜（尚未开始）
 
 ## 本目录文档分类
 

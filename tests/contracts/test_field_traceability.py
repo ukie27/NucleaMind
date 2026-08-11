@@ -17,7 +17,15 @@ import pytest
 from nucleamind.contracts import (
     ArtifactRef,
     AttachmentRef,
+    Builtin,
+    CapabilityRef,
+    CommandInvocation,
+    CommandParam,
+    CommandResult,
+    CommandSpec,
     ContextFragment,
+    HookContext,
+    HookOutcome,
     InboundMessage,
     ModelChunk,
     ModelInfo,
@@ -25,6 +33,7 @@ from nucleamind.contracts import (
     ModelRequest,
     ModelResponse,
     OutboundMessage,
+    Plugin,
     SamplingParams,
     Sender,
     SessionMessage,
@@ -213,6 +222,53 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
                 "error",
                 "cancel_reason",
             }
+        ),
+    ),
+    # ---------------------------------------------------------------- D04 能力层
+    Builtin: ("技术方案 §6.1 ProviderId（内建无字段）", frozenset()),
+    Plugin: ("技术方案 §6.1 ProviderId / PLG-001", frozenset({"plugin_id"})),
+    CapabilityRef: (
+        "技术方案 §6.1 能力标识 / SDK-002",
+        frozenset({"kind", "name", "provider", "version"}),
+    ),
+    HookContext: (
+        "技术方案 §6.6 Hook 表格的输入侧",
+        frozenset(
+            {
+                "hook",
+                "correlation",
+                "message",
+                "fragments",
+                "request",
+                "response",
+                "invocation",
+                "result",
+                "outcome",
+            }
+        ),
+    ),
+    HookOutcome: (
+        "技术方案 §6.6「返回语义」列",
+        frozenset({"action", "fragments", "request", "invocation", "result", "reason"}),
+    ),
+    CommandParam: (
+        "§9.13 CMD-001「参数形式」",
+        frozenset({"name", "description", "required", "repeated"}),
+    ),
+    CommandSpec: (
+        "§9.13 CMD-001（名称/参数形式/说明/权限需求）",
+        frozenset(
+            {"name", "description", "parameters", "permissions", "operator_only", "aliases"}
+        ),
+    ),
+    CommandInvocation: (
+        "技术方案 §6.3 输入分流 / KER-010",
+        frozenset({"name", "args", "raw_text", "message", "correlation"}),
+    ),
+    CommandResult: (
+        "技术方案 §6.3 Disposition / CMD-003 / CMD-004",
+        frozenset(
+            {"disposition", "content", "rewritten_input", "fragments", "error", "metadata"}
         ),
     ),
 }
