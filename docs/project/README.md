@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-11
-- 当前阶段：阶段 1 契约与注册表已收口（`D00`–`D06` 均已完成，下一步 `D07`/`D08`）
+- 当前阶段：阶段 2 Turn 内核已启动（`D00`–`D07` 均已完成，下一步 `D08`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -242,11 +242,36 @@
     `ruff check`、`basedpyright`（新层 0 报错）、`tests/architecture` + `tests/contracts` +
     `tests/sdk` + `tests/kernel` 共 625 个用例全绿；`kernel/registry/` 语句覆盖率 100%；
     新层 `Any` 数仍为 0。
+- **`D07` 旧实现行为基线**（`tests/baseline/{__init__,_support}.py` +
+  `test_{runner,loop}_behavior.py` + `README.md`，约 900 行 / 36 个用例）：
+  - 全部针对**旧实现**编写并通过，不联网、不碰真实模型或真实工具：`_support.py` 的
+    `ScriptedProvider` 按脚本回放 `LLMResponse`（`chat_with_retry` 与
+    `chat_stream_with_retry` 共用同一条脚本），`FakeTool` 提供可控的结果、异常与并发类别。
+    刻意不复用 `tests/legacy/agent/` 的既有夹具——基线要能当作行为说明书读，也要能在
+    `D31` 整体删除。
+  - `ScriptedProvider` 每次请求返回响应的**深拷贝**：runner 会就地改写
+    `response.content`（`extract_reasoning` 之后），共用一个脚本对象会让第二次迭代看到
+    已被清洗过的内容——这个坑本身就说明「响应对象可变」是旧实现的隐含约定。
+  - 开发方案点名的五类行为逐条落在 `test_runner_behavior.py` 的五个分节
+    （`B1` 迭代上限 / `B2` 工具失败·超时·参数非法 / `B3` 流式聚合 / `B4` 调度顺序 /
+    `B5` 结果截断）；`test_loop_behavior.py` 收的是 `AgentLoop` 对这次运行**做的决定**
+    （预算、工具错误策略、持久化时的再次截断），那部分归 `D14` 而不是 `D09`。
+  - 记下来的几条容易读错的事实：用户可见的一轮 **不** 传 `fail_on_tool_error`
+    （取默认 `False`），而 `AgentDefaults.fail_on_tool_error` 是 `True` 且只作用于 subagent；
+    超长结果有截断与落盘两条路径，`read_file` 是唯一豁免工具；SSRF／工作区越界对模型
+    不可重试但对本轮不致命；并发只发生在**连续的** `concurrency_safe` 工具之间，
+    非安全工具是屏障，而工具结果进消息列表的顺序永远等于 tool_calls 的顺序。
+  - 验收：36 个用例在旧实现上全绿（`tests/baseline` 单独跑 0.9s + 1.3s）；
+    与 `tests/legacy/agent` 同进程跑 1554 passed / 1 failed，那 1 个是既有的
+    `test_onboard_logic.py::test_quick_start_openai_codex_reports_incomplete_installation`
+    （单独跑同样失败，属既有 oauth-cli-kit 家族）；`ruff check` 通过；
+    `tests/architecture` 51 个用例仍全绿；`src/` 未改动一行。
 
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
-  领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**。
+  领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
+  `D07` 已完成，旧实现行为基线就位，阶段 2 开始。
   `kernel/` 目前只有 `registry/`；`builtins/`、`runtime/`、`embed/` 仍是空骨架，
   尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
@@ -296,14 +321,25 @@
 
 ## 下一步工作
 
-1. 执行 `D07` 旧实现行为基线：`tests/baseline/test_{loop,runner}_behavior.py`，针对
-   `legacy/agent/loop.py`、`runner.py` 锁定迭代上限、工具失败/超时/参数非法、流式聚合顺序、
-   并发与串行调度顺序、结果超长截断五类行为。不依赖真实网络，`D09`/`D14` 用它比对新实现，
-   `D31` 删 `legacy/agent/` 时一并删除。它不依赖新契约，可与 `D08` 并行。
-2. 执行 `D08` 取消与预算：`kernel/turn/cancel.py`（`CancelToken` 留在 kernel，不进
-   `contracts`）与预算账本。`D09` Turn Engine 依赖 `D06` + `D08`。
+1. 执行 `D08` 取消与预算：`kernel/turn/cancel.py`（`CancelToken` 留在 kernel，不进
+   `contracts`）与 `kernel/turn/limits.py` 预算账本。`D09` Turn Engine 依赖 `D06` + `D08`，
+   并以 `tests/baseline/` 为行为参照。
 
-`D07` 起需要注意的既有事实：
+`D07` 留下的、`D09`/`D14` 必须用到的事实：
+
+- **`tests/baseline/` 是一次性设施**：只锁 `legacy/agent/{loop,runner}.py` 的五类行为，
+  `D31` 删 `legacy/agent/` 的同一个 PR 内一并删除（`tests/baseline/README.md` 写死了这条）。
+  不要往里加与那五类无关的测试——越像通用套件越删不动。
+- **`D09` 的用法是「换构造、不换断言」**：把 `AgentRunner` 与 `AgentRunSpec` 的构造换成新
+  engine，断言尽量原样重跑。改不动的断言就是新旧语义差异，要在 `D09` 的文档里给结论，
+  **不要靠放宽断言让它通过**。`test_loop_behavior.py` 的决定项由 `D14` 的 orchestrator 承接。
+- 旧实现的两条边界值得在新引擎里重新论证而不是照抄：`_MAX_LENGTH_RECOVERIES = 3`、
+  `_MAX_EMPTY_RETRIES = 2` 与「工具超长结果落盘到 workspace」都属于 `D08` `TurnLimits`
+  六项预算或 `D14` 的编排范畴，engine 本身不该再认识它们。
+- 基线里出现的 `.nanobot/tool-results/`、`NANOBOT_LLM_TIMEOUT_S` 是**迁移期运行契约**，
+  新层不保留（技术方案 §4.5），它们出现在断言里只是因为被测的是旧实现。
+
+`D07` 之前就已成立、继续有效的事实：
 
 - **`kernel/` 读 manifest 的分层张力，`D06` 已给出结论：不读。** `Registration` 只带
   `overrides` 的**原始串**，由契约层的 `parse_capability_target()` 解码——manifest 的
@@ -400,7 +436,7 @@
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08– ⬜（尚未开始）
 
 ## 本目录文档分类
 

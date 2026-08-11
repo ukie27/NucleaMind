@@ -10,7 +10,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
 - **当前状态**：`D00` 已把仓库搬到目标结构（`src/` 布局 + 新层空骨架 + `legacy/` 隔离区），
   `D01` 已立起架构守卫与 CI 门禁，`D02`–`D04` 已落地完整契约层
   （`contracts/` 十二个模块），`D05` 已落地 SDK 表面（`sdk/` 与 `sdk/testing/`），
-  `D06` 已落地 Capability Registry 与覆盖解析（`kernel/registry/`），阶段 1 收口。
+  `D06` 已落地 Capability Registry 与覆盖解析（`kernel/registry/`），阶段 1 收口；
+  `D07` 已落地旧实现行为基线（`tests/baseline/`），阶段 2 Turn 内核开始。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 只有 `registry/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
@@ -36,6 +37,7 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 plugins/                   # 一等公民：官方插件，各自独立发行
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
+                           # 外加 baseline/：旧实现行为基线，D31 随 legacy/agent/ 一并删除
 deploy/                    # Dockerfile / compose / entrypoint
 webui/                     # 前端源码（TypeScript）
 ```
@@ -62,6 +64,12 @@ webui/                     # 前端源码（TypeScript）
 `RegistrationBatch`（`EDG-103`：`setup` 中途抛异常整批丢弃），内建与插件走同一条分派，
 不存在内建专用注册 API。`kernel/` 不 import `sdk/`，因此 manifest 的 `overrides` 以**原始串**
 跨层传递，两侧共用 `contracts.parse_capability_target()` 解码。
+
+`tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
+可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），
+供 `D09` 的 Turn Engine 与 `D14` 的 Orchestrator 对照，**`D31` 删 `legacy/agent/` 时一并
+删除**。用法是「换构造、不换断言」——断言改不动说明新旧语义有差异，要给结论而不是放宽断言；
+也不要往里加与那五类无关的测试。
 
 ## 开发命令
 
