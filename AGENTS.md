@@ -9,9 +9,10 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
 
 - **当前状态**：`D00` 已把仓库搬到目标结构（`src/` 布局 + 新层空骨架 + `legacy/` 隔离区），
   `D01` 已立起架构守卫与 CI 门禁，`D02`–`D04` 已落地完整契约层
-  （`contracts/` 十二个模块），`D05` 已落地 SDK 表面（`sdk/` 与 `sdk/testing/`）。
+  （`contracts/` 十二个模块），`D05` 已落地 SDK 表面（`sdk/` 与 `sdk/testing/`），
+  `D06` 已落地 Capability Registry 与覆盖解析（`kernel/registry/`），阶段 1 收口。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `kernel/`、`builtins/`、`runtime/`、`embed/` 仍是空骨架。
+  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 只有 `registry/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -39,9 +40,10 @@ deploy/                    # Dockerfile / compose / entrypoint
 webui/                     # 前端源码（TypeScript）
 ```
 
-`contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面；
-`kernel/`、`builtins/`、`runtime/`、`embed/` 仍是空骨架（只有 `__init__.py` 与 docstring），
-按开发方案逐个填充。**新代码直接写在最终位置**，不要放临时目录。
+`contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面，
+`kernel/registry/` 已落地；`builtins/`、`runtime/`、`embed/` 仍是空骨架
+（只有 `__init__.py` 与 docstring），按开发方案逐个填充。**新代码直接写在最终位置**，
+不要放临时目录。
 
 契约层已冻结、后续模块必须复用而不是另起炉灶的三样东西：
 
@@ -54,6 +56,12 @@ webui/                     # 前端源码（TypeScript）
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
 写内建能力或插件时，先继承 `sdk.testing` 的 5 个契约测试基类。
+
+`kernel/registry/` 是**全项目冲突语义的唯一来源**：能力冲突、覆盖与遮蔽的判定只在
+`resolution.py` 里，注册点一律不判冲突（`EDG-102`：覆盖永不由加载顺序决定）。注册必须走
+`RegistrationBatch`（`EDG-103`：`setup` 中途抛异常整批丢弃），内建与插件走同一条分派，
+不存在内建专用注册 API。`kernel/` 不 import `sdk/`，因此 manifest 的 `overrides` 以**原始串**
+跨层传递，两侧共用 `contracts.parse_capability_target()` 解码。
 
 ## 开发命令
 

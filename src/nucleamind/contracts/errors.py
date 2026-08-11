@@ -78,6 +78,7 @@ class ErrorCode(StrEnum):
     # CAPABILITY_MISSING
     CAPABILITY_MISSING = "capability.missing"
     CAPABILITY_AMBIGUOUS = "capability.ambiguous"
+    CAPABILITY_OVERRIDE_TARGET_MISSING = "capability.override_target_missing"
 
     # PERMISSION_DENIED
     PERMISSION_DENIED = "permission.denied"
@@ -104,6 +105,7 @@ class ErrorCode(StrEnum):
     PLUGIN_LOAD_FAILED = "plugin.load_failed"
     PLUGIN_HOOK_FAILED = "plugin.hook_failed"
     PLUGIN_REGISTRATION_CONFLICT = "plugin.registration_conflict"
+    CAPABILITY_OVERRIDE_CONFLICT = "capability.override_conflict"
 
     # PERSISTENCE
     PERSISTENCE_READ_FAILED = "persistence.read_failed"
@@ -127,6 +129,8 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.CONFIG_FILE_CORRUPT: ErrorCategory.CONFIG,
         ErrorCode.CAPABILITY_MISSING: ErrorCategory.CAPABILITY_MISSING,
         ErrorCode.CAPABILITY_AMBIGUOUS: ErrorCategory.CAPABILITY_MISSING,
+        # 覆盖目标不存在 = 那个能力真的不在，与 CAPABILITY_MISSING 同类。
+        ErrorCode.CAPABILITY_OVERRIDE_TARGET_MISSING: ErrorCategory.CAPABILITY_MISSING,
         ErrorCode.PERMISSION_DENIED: ErrorCategory.PERMISSION_DENIED,
         ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE: ErrorCategory.PERMISSION_DENIED,
         ErrorCode.PLUGIN_SDK_INCOMPATIBLE: ErrorCategory.INCOMPATIBLE,
@@ -141,6 +145,9 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.PLUGIN_LOAD_FAILED: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PLUGIN_HOOK_FAILED: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PLUGIN_REGISTRATION_CONFLICT: ErrorCategory.PLUGIN_FAILURE,
+        # 两个插件抢同一个覆盖目标，与 PLUGIN_REGISTRATION_CONFLICT 同类：
+        # 都是「插件之间打架」，用户要做的是在配置里选一个。
+        ErrorCode.CAPABILITY_OVERRIDE_CONFLICT: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PERSISTENCE_READ_FAILED: ErrorCategory.PERSISTENCE,
         ErrorCode.PERSISTENCE_WRITE_FAILED: ErrorCategory.PERSISTENCE,
         ErrorCode.PERSISTENCE_RECORD_CORRUPT: ErrorCategory.PERSISTENCE,
