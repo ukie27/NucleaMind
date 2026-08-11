@@ -837,6 +837,22 @@ class PluginManifest(BaseModel):
     runtime_requires: tuple[str, ...] = ()      # 如 "node>=20"
 ```
 
+`D05` 落地时补齐的三处细节：
+
+- `PermissionDecl` 是 `kind: PermissionKind` + `reason: str`（必填）+ `target: str = ""`。
+  `reason` 会出现在授权提示与 `permissions.json` 的审计记录里（`NFR-301`）；
+  `secret` 类权限必须带 `target`，`secret:*` 等于「给我全部凭据」，不是最小权限。
+- `capabilities` 必填且非空：不注册任何能力的插件没有作用点。
+- `config_schema` 的值类型用 **pydantic 的** `JsonValue` 而不是 `contracts.JsonValue`——
+  后者是带前向引用的普通递归 Union，pydantic 为它生成 schema 时会无限递归。两者互相
+  兼容，因此该字段可以原样交给任何接受 `JsonSchema` 的调用方。
+
+错误契约：语义校验（id 形状、PEP 440、覆盖目标、能力重名）直接抛 `NucleaError`
+（pydantic 只截获 `ValueError` / `AssertionError`，其余原样穿透）；结构错误由 pydantic
+报 `ValidationError`，但外部数据一律走 `parse_manifest(data, origin=...)`，它转成带
+**字段路径**的 `NucleaError(PLUGIN_MANIFEST_UNSUPPORTED)`，`detail.errors` 形如
+`[{"field": "capabilities.0.kind", "message": ...}]`。调用方因此只需处理一种异常类型。
+
 约束：**导入 manifest 模块必须无副作用且廉价**。CI 中的插件模板测试会断言导入 manifest
 模块不产生网络、文件写入或超过阈值的耗时。这条规则让阶段 A 校验保持在毫秒级
 （`NFR-401`、`NFR-403`）。
@@ -940,6 +956,11 @@ class NucleaAPI(Protocol):
 `register_context_provider` / `register_command` 承载，内容以 `ContextFragment` 形式提交，
 因此天然受 `trust`、`priority` 与预算约束（`CMD-004`、`CMD-005`）。
 
+`CliEntry` 落在 **`contracts/protocols.py`** 而不是 `sdk/`（`D05` 补齐，为第 9 个能力
+Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止它们 import `sdk/`。
+`SecretStr` 则定义在 `sdk/api.py`——它只出现在 `PluginContext.secret()` 的返回位置，
+掩码值复用 `contracts.errors.MASK`，避免出现第二种掩码写法。
+
 **必须写进文档的诚实声明**：同进程 Python 插件可以绕过这些门面直接 `import os`。应用级
 权限的目标是「防误用、使意图可审计、让越界在评审和测试中可见」，不是「防恶意插件」
 （`13.7`）。真正的隔离依赖 P2 的子进程插件宿主，届时 `PluginContext` 的方法签名保持不变，
@@ -954,6 +975,8 @@ class NucleaAPI(Protocol):
 回答 §17.2 第 10 项。
 
 - `sdk/version.py` 导出 `SDK_VERSION`，语义化版本，与主程序版本独立演进。
+  **当前为 `0.1.0`**：下面这套兼容承诺从 `1.0.0` 起算，Kernel 未落地前宣布 1.0 等于承诺
+  一个还没有被任何实现验证过的表面。0.x 期间 minor 可破坏，`D30` 插件里程碑达成后发 1.0。
 - 插件用 `sdk_range` 声明兼容范围，不满足即拒绝加载（`SDK-005`）。
 - minor 版本只允许新增；移除或语义变更必须 major，且提前一个 minor 打运行期
   `DeprecationWarning` 并在 `ResolutionReport` 中标注。

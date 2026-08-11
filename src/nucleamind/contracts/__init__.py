@@ -115,6 +115,7 @@ from .model import (  # noqa: E402
 from .protocols import (  # noqa: E402
     CancelSignal,
     Channel,
+    CliEntry,
     CommandHandler,
     ContextProvider,
     HookHandler,
@@ -161,6 +162,7 @@ __all__ = [
     "CapabilityRef",
     "Channel",
     "ChunkKind",
+    "CliEntry",
     "CommandHandler",
     "CommandInvocation",
     "CommandParam",

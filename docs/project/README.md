@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-11
-- 当前阶段：阶段 1 契约与注册表（`D00`–`D04` 均已完成，下一步 `D05`）
+- 当前阶段：阶段 1 契约与注册表（`D00`–`D05` 均已完成，下一步 `D06`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -169,12 +169,47 @@
     最小 Fake 通过 `isinstance`；方法数快照 + AST 断言 `protocols.py` 里没有实现；
     `ruff check`、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
     `tests/architecture` 51 个用例、`tests/contracts` 395 个用例全绿；新层 `Any` 数仍为 0。
+- **`D05` sdk 骨架与测试夹具**（`sdk/{__init__,api,manifest,version}.py` +
+  `sdk/testing/{fakes,contracts}.py`，约 1100 行 + `tests/sdk/` 120 个用例）：
+  - `api.py`：`NucleaAPI` 恰好 **9 个注册方法 + `ctx`**，逐条对应 `CapabilityKind` 的 9 个
+    取值（对照表以字面量写在 `tests/sdk/test_public_surface.py` 里）。另含受限的
+    `PluginContext` 与四个资源访问器 Protocol（`fs` / `net` / `shell` / `secret`）——
+    访问器是 **property 而不是方法**：未授权时属性访问就抛 `PERMISSION_DENIED`，插件拿不到
+    「看起来能用、调用才失败」的对象。`SecretStr` 默认渲染为 `contracts.errors.MASK`，
+    明文只能经 `reveal()` 取出，调用点即审计抓手。
+  - **`CliEntry` 补进 `contracts/protocols.py`（第 9 个能力 Protocol）**：
+    `register_cli_entry()` 的载荷需要类型，而 `kernel/` 与 `runtime/` 都要调用 CLI 能力却
+    禁止 import `sdk/`（`R2`）。`D04` 冻结的是「8 个」这个数字，不是「不许补齐」——
+    `CapabilityKind` 一直是 9 个取值。签名是 `run(argv, cancel) -> int`：交互式会话与单次
+    执行是同一方法的两种参数形态，拆开会让 `EDG-108` 的整体回落无处落脚。
+    `tests/contracts/test_protocols.py` 的快照同步改为 9 个 Protocol / 21 个成员。
+  - `manifest.py` 用 pydantic（`extra="forbid"` + `frozen=True`，与技术方案 §5.1 表格一致），
+    但**错误面收窄成一种异常**：语义校验直接抛 `NucleaError`（pydantic 只截获 `ValueError`
+    / `AssertionError`，其余原样穿透），结构错误由 `parse_manifest()` 转成带**字段路径**的
+    `NucleaError(PLUGIN_MANIFEST_UNSUPPORTED)`。id 形状借 `Plugin()` 校验、能力名借
+    `CapabilityRef` 校验、`overrides` 只用 `parse_capability_target()` 解码——三处都用
+    `_at_field()` 把 contracts 抛出的 `INPUT_MALFORMED` 重贴上 manifest 字段路径，
+    否则「一律带字段路径」这条承诺会有三个漏洞。
+  - `SDK_VERSION = "0.1.0"`：§7.6 的兼容承诺从 1.0.0 起算，Kernel 未落地前不宣布 1.0
+    （已回写技术方案）。`is_compatible()` 用 `packaging` 的 PEP 440 语义，
+    非法 `sdk_range` **抛错而不是当作全兼容**——后者正好让最该被拦下的插件通过。
+  - `sdk/testing/`：`FakeModelProvider`（脚本是 `ModelResponse` 序列，`stream()` 由同一条
+    脚本派生分片）、`InMemorySessionStore`（用 `storage_id()` 作键，让 Fake 也走一遍已发布
+    的编码契约）、`RecordingHook`、`ManualCancel`，以及 5 个契约测试基类
+    （`ModelProviderContract` / `SessionStoreContract` / `ContextProviderContract` /
+    `ToolContract` / `ChannelContract`）。基类**不 import pytest**，只是普通类 + `assert`。
+  - 验收：`sdk.__all__` 与 `sdk.testing.__all__` 做字面量快照；导入 `sdk.manifest` 在子进程
+    里用 **audit hook** 断言无写文件、无网络、耗时 < 2s、且不牵连 `kernel/legacy/builtins`
+    ——并有一条「注入一个导入时写文件的模块，探针必须报出来」的自证用例；5 个契约基类各被
+    一个 Fake 继承跑通，另有一个故意忽略取消的 provider 证明基类会拦。
+    `ruff check`、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`tests/architecture`
+    51 个 + `tests/contracts` 395 个 + `tests/sdk` 120 个用例全绿；新层 `Any` 数仍为 0。
 
 ## 正在进行
 
-- `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D04` 已完成，契约层三层（基础 /
-  领域与执行 / 能力）全部落地，阶段 1 只剩 `D05` 与 `D06`。`kernel/`–`embed/` 各层仍是
-  空骨架，尚未开始拆分 `legacy/` 的现有模块。
+- `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D05` 已完成，契约层三层（基础 /
+  领域与执行 / 能力）与 SDK 表面全部落地，阶段 1 只剩 `D06`。`kernel/`、`builtins/`、
+  `runtime/`、`embed/` 仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -222,16 +257,35 @@
 
 ## 下一步工作
 
-1. 执行 `D05` sdk 骨架与测试夹具：`sdk/{__init__,api,manifest,version}.py` 与
-   `sdk/testing/`。`NucleaAPI` 恰好 9 个注册方法 + `ctx`，逐条对应 `CapabilityKind` 的
-   9 个取值，其中含可覆盖内建 CLI 的 `register_cli_entry()`；`manifest.py` 只做数据与
-   校验，**导入它不得产生任何副作用**；`tests/sdk/test_public_surface.py` 对 `__all__`
-   做快照断言。
-2. 接着 `D06` Capability Registry 与覆盖解析：`RegistrationBatch` 的事务性注册、
-   冻结后写入抛 `KERNEL_INTERNAL`、开发方案里那张八行冲突分支表逐条对齐
+1. 执行 `D06` Capability Registry 与覆盖解析：`kernel/registry/{capability,resolution}.py`。
+   `RegistrationBatch` 的事务性注册（`setup` 抛异常即整体回滚，`EDG-103`）、冻结后写入抛
+   `KERNEL_INTERNAL`、覆盖只认 manifest 的显式 `overrides`、开发方案里那张八行冲突分支表
+   逐条对齐、`ResolutionReport` 的 `active/shadowed/disabled/failures` 可序列化为 JSON
    （此阶段不改动 `legacy/` 业务代码）。
+2. `D06` 需要先解决 `D05` 留下的分层张力（见下）：`kernel/` 读 manifest 的方式。
 
-`D05` 起需要注意的既有事实：
+`D06` 起需要注意的既有事实：
+
+- **`kernel/` 不能 import `sdk/`（`R2`），但 `PluginManifest` 与 `SDK_VERSION` 在 `sdk/`。**
+  `D05` 没有预判这个张力的解法，只把它记下来：`D25` 的 `kernel/plugins/manifest.py` 要读同一
+  份数据，三条出路——kernel 侧按结构读取（duck typing）、由 `runtime/`（唯一组装根）做翻译、
+  或把 manifest 形状下沉到 `contracts/`。选哪条要在 `D06`/`D25` 显式决定并写进本文档，
+  不要让两处各长一套 manifest 校验。
+- `sdk.__all__` 与 `sdk.testing.__all__` 是**规范性清单**，有字面量快照测试
+  （`tests/sdk/test_public_surface.py`）。增删导出必须改快照，这就是评审闸门（`NFR-103`）。
+- `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应，对照表以字面量写死在
+  测试里。新增一类能力 = 同时改 `CapabilityKind`、`CAPABILITY_ARITY`、`NucleaAPI`、
+  对应 Protocol 与三处快照，没有捷径。
+- 契约类型**不从 `sdk` 转发**：插件按 `R4` 直接 `from nucleamind.contracts import ...`。
+  有一条测试盯着这件事，不要「顺手加个再导出」。
+- manifest 的所有校验失败都是 `NucleaError(PLUGIN_MANIFEST_UNSUPPORTED)` 且带字段路径；
+  外部数据只走 `sdk.parse_manifest(data, origin=...)`，不要直接 `PluginManifest(**data)`。
+- `sdk/manifest.py` **导入即不得有副作用**，有子进程 audit hook 测试盯着（写文件/网络/
+  牵连 `kernel`、`legacy`、`builtins` 都会失败）。往里加 import 前先想清楚。
+- 写内建能力或插件时，先继承 `sdk.testing` 的 5 个契约测试基类再写自己的用例；
+  基类里「后续应补齐」的清单就是各模块要补的验收项。
+
+`D02` 起就已经成立、继续有效的事实：
 
 - 新层每个模块的首个 docstring 必须含「职责：」「不负责：」两行，
   否则 `tests/architecture/test_module_docstrings.py` 会失败。
@@ -261,7 +315,7 @@
 - 覆盖目标串（`"builtin:fs.read"` / `"plugin:<id>:<name>"`）只用
   `CapabilityRef.target` 与 `parse_capability_target()` 编解码，不要在 manifest 校验或
   registry 里另写正则。
-- `protocols.py` 的 8 个 Protocol 是长期兼容承诺的起点：新增/删除方法必须同步
+- `protocols.py` 的 9 个 Protocol（`D05` 补入 `CliEntry`）是长期兼容承诺的起点：新增/删除方法必须同步
   `tests/contracts/test_protocols.py` 的快照表，且新方法的 docstring 必须含
   「**异常约定**」与「**取消语义**」两段，否则测试失败（`NFR-104`）。
 - 能力实现方只拿到只读的 `CancelSignal`；`request()` / `child()` 属于 `D08` 的
@@ -274,20 +328,20 @@
   再传 `--basetemp=D:/nm_pytest_tmp/run1`）：放在仓库内会让 `GitStore` 的嵌套仓库保护
   生效，凭空多出约 45 个 git 相关假失败；父目录不存在则 `tmp_path` 夹具直接报
   `FileNotFoundError`，架构守卫的反向用例会全部 error。
-- 完整套件在本机的既有失败为 14–18 个，全部在 `legacy/`，与 `D00`–`D03` 无关：
+- 完整套件在本机的既有失败为 14–18 个，全部在 `legacy/`，与 `D00`–`D05` 无关：
   `test_exec_platform.py` 的 Windows PowerShell UTF-8 用例、
   `test_exec_session_tools.py` 的子进程时序用例、`test_web_fetch_security.py`、
   `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例，
   以及 `channels/websocket` 的 `test_wrong_path_404`。数量在区间内浮动是因为其中几个
   依赖网络与子进程时序；基线里记录的是这些用例的真实结果，不是「全绿」假设。
-  `D04` 完成时的实测为 17 failed / 6603 passed / 35 skipped
-  （`D03` 时 14 failed / 6480 passed，`D02` 时 15 failed / 6295 passed）。
-  `D04` 这次多出的几个仍全部属于上述家族——oauth-cli-kit 缺失导致的
-  `test_onboard_logic.py` 与 `cli/test_commands.py` 各一例，其余为网络与时序用例。
+  `D05` 完成时的实测为 14 failed / 6729 passed / 35 skipped
+  （`D04` 时 17 failed / 6603 passed，`D03` 时 14 failed / 6480 passed，
+  `D02` 时 15 failed / 6295 passed）。失败数在区间内下降是因为网络与子进程时序用例
+  这一轮碰巧通过，不是修好了——它们仍是同一批家族。
 - `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
   （`D00` 之前就存在），不是新层引入的。
 
-当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05– ⬜（尚未开始）
+当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06– ⬜（尚未开始）
 
 ## 本目录文档分类
 

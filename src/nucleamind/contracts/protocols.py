@@ -1,8 +1,9 @@
 """能力接口：Kernel 与能力实现之间唯一的行为契约（技术方案 §5.1、需求 §9.3 `SDK-001`）。
 
-职责：声明 8 个能力 Protocol（`ModelProvider` / `ToolHandler` / `ContextProvider` /
-`SessionStore` / `MemoryProvider` / `Channel` / `CommandHandler` / `HookHandler`）与支撑用的
-只读 `CancelSignal`，并在每个方法的 docstring 上固定写明**异常约定**与**取消语义**。
+职责：声明 9 个能力 Protocol（`ModelProvider` / `ToolHandler` / `ContextProvider` /
+`SessionStore` / `MemoryProvider` / `Channel` / `CommandHandler` / `HookHandler` /
+`CliEntry`）与支撑用的只读 `CancelSignal`，并在每个方法的 docstring 上固定写明
+**异常约定**与**取消语义**。
 不负责：提供任何实现、决定调用顺序与重试、执行超时——实现在 `builtins/` 与 `plugins/`，
 调度在 `kernel/`；本模块只有签名，函数体一律是 docstring + `...`。
 
@@ -35,6 +36,7 @@ from .tool import ToolInvocation, ToolResult
 __all__ = [
     "CancelSignal",
     "Channel",
+    "CliEntry",
     "CommandHandler",
     "ContextProvider",
     "HookHandler",
@@ -364,5 +366,37 @@ class HookHandler(Protocol):
         **取消语义**：不接受 `CancelSignal`。Hook 有自己的独立超时
         （observer 2000ms / interceptor 5000ms），超时即按上面的隔离规则处理；
         把 turn 的取消信号交给 Hook 只会诱导它在 `turn_end` 这类清理点提前退出。
+        """
+        ...
+
+
+@runtime_checkable
+class CliEntry(Protocol):
+    """本地命令行入口（需求 §9.2 `BAS-009`、`BAS-010`、`EDG-108`、技术方案 §8.1）。
+
+    这是 `CapabilityKind.CLI_ENTRY` 的载荷类型，`D04` 只冻结了另外 8 个 Protocol，
+    留下的正是这一个缺口。它落在 `contracts/` 而不是 `sdk/`：`kernel/` 与 `runtime/`
+    都要调用 CLI 能力，而 `R2` 禁止它们 import `sdk/`。
+
+    CLI 入口不可禁用——不装任何 Channel 插件也必须存在本地交互入口。插件可以覆盖它
+    （`CLI_ENTRY` 是 SINGLETON），但覆盖实现加载失败时 Runtime 强制回落到内建实现
+    （`EDG-108`），因此本接口不需要「没有实现」这个状态。
+
+    与 `Channel` 分开而不是复用：Channel 是可有可无的外部平台接入，生命周期由实例
+    托管；CLI 入口拥有进程本身——它决定 `nm` 什么时候返回、返回什么退出码。
+    """
+
+    async def run(self, argv: Sequence[str], cancel: CancelSignal) -> int:
+        """接管本次 `nm` 调用，返回进程退出码（0 表示成功）。
+
+        交互式会话与单次执行（`nm -p "..."`）是同一个方法的两种参数形态：把它们拆成
+        两个方法，覆盖实现就得同时替换两处，而 `EDG-108` 的回落只能整体进行。
+
+        **异常约定**：**约定不抛**。参数错误、能力缺失与执行失败都应打印可诊断信息并
+        返回非零退出码——异常逸出会让用户看到 traceback 而不是说明。逸出的异常由
+        Runtime 捕获为 `KERNEL_UNEXPECTED` 并以非零码退出。
+        **取消语义**：首个 `Ctrl-C` 由 Runtime 转成 `cancel.request()`，实现方应观测
+        `cancel.requested` 结束当前 turn 并**继续接受输入**，而不是退出进程；
+        第二个 `Ctrl-C` 由 Runtime 直接终止进程，实现方不需要处理。
         """
         ...

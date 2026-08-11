@@ -19,6 +19,7 @@ from nucleamind.contracts import (
     CancelSignal,
     Channel,
     ChunkKind,
+    CliEntry,
     CommandHandler,
     CommandInvocation,
     CommandResult,
@@ -60,6 +61,7 @@ CAPABILITY_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
     Channel: frozenset({"channel_id", "start", "stop", "receive", "deliver"}),
     CommandHandler: frozenset({"handle"}),
     HookHandler: frozenset({"handle"}),
+    CliEntry: frozenset({"run"}),
 }
 
 SUPPORT_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
@@ -83,9 +85,13 @@ def _members(protocol: type) -> frozenset[str]:
 # --------------------------------------------------------------------------- 快照
 
 
-def test_capability_protocol_count_is_eight() -> None:
-    """`SDK-001` 的扩展类型数；它与 `sdk.NucleaAPI` 的注册方法一一对应。"""
-    assert len(CAPABILITY_PROTOCOLS) == 8
+def test_capability_protocol_count_is_nine() -> None:
+    """`SDK-001` 的扩展类型数；它与 `sdk.NucleaAPI` 的注册方法一一对应。
+
+    `D04` 冻结了 8 个，`D05` 补上第 9 个 `CliEntry`——`CapabilityKind` 一直有 9 个取值，
+    缺的那一个载荷类型是 `D04` 的缺口而不是一条有意的减法。
+    """
+    assert len(CAPABILITY_PROTOCOLS) == 9
 
 
 @pytest.mark.parametrize(
@@ -97,9 +103,9 @@ def test_protocol_surface_matches_snapshot(protocol: type, expected: frozenset[s
     assert _members(protocol) == expected
 
 
-def test_total_capability_members_is_twenty() -> None:
+def test_total_capability_members_is_twenty_one() -> None:
     """整体规模也进快照：接口数量受控是 `NFR-104` 的原话。"""
-    assert sum(len(names) for names in CAPABILITY_PROTOCOLS.values()) == 20
+    assert sum(len(names) for names in CAPABILITY_PROTOCOLS.values()) == 21
 
 
 @pytest.mark.parametrize(
@@ -260,6 +266,11 @@ class FakeHookHandler:
         return None
 
 
+class FakeCliEntry:
+    async def run(self, argv: Sequence[str], cancel: CancelSignal) -> int:
+        return 0
+
+
 FAKES: Final[list[tuple[type, object]]] = [
     (CancelSignal, FakeCancel()),
     (ModelProvider, FakeModelProvider()),
@@ -270,6 +281,7 @@ FAKES: Final[list[tuple[type, object]]] = [
     (Channel, FakeChannel()),
     (CommandHandler, FakeCommandHandler()),
     (HookHandler, FakeHookHandler()),
+    (CliEntry, FakeCliEntry()),
 ]
 
 

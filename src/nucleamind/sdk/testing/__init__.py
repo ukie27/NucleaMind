@@ -1,0 +1,45 @@
+"""公开测试工具包：Fake 实现与契约测试基类（技术方案 §12.3、`NFR-702`）。
+
+职责：把 `fakes.py` 的 Fake 能力与 `contracts.py` 的 5 个契约测试基类作为一个入口导出。
+不负责：任何生产行为——本包只应出现在测试代码里。
+
+刻意**不**被 `nucleamind.sdk` 的包根导入：夹具只在测试期需要，让
+`import nucleamind.sdk` 顺带拉起它们不合理（`NFR-401`）。用
+`from nucleamind.sdk.testing import FakeModelProvider` 显式获取。
+"""
+
+from __future__ import annotations
+
+from .contracts import (
+    ChannelContract,
+    ContextProviderContract,
+    ModelProviderContract,
+    SessionStoreContract,
+    ToolContract,
+)
+from .fakes import (
+    FAKE_MODEL_ID,
+    FakeModelProvider,
+    InMemorySessionStore,
+    ManualCancel,
+    RecordingHook,
+    make_correlation,
+    text_response,
+    tool_call_response,
+)
+
+__all__ = [
+    "FAKE_MODEL_ID",
+    "ChannelContract",
+    "ContextProviderContract",
+    "FakeModelProvider",
+    "InMemorySessionStore",
+    "ManualCancel",
+    "ModelProviderContract",
+    "RecordingHook",
+    "SessionStoreContract",
+    "ToolContract",
+    "make_correlation",
+    "text_response",
+    "tool_call_response",
+]
