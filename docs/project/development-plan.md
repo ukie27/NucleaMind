@@ -620,7 +620,12 @@ tests/sdk/test_public_surface.py
 **依赖**：D06、D10
 
 **交付**：`kernel/routing/dispatcher.py`、`kernel/routing/session_lock.py`、
-`tests/kernel/test_dispatcher.py`、`tests/kernel/test_session_lock.py`
+`kernel/routing/dedup.py`、`tests/kernel/test_dispatcher.py`、
+`tests/kernel/test_session_lock.py`、`tests/kernel/test_dedup.py`
+
+> `dedup.py` 在技术方案 §4.2 的目录树里本来就有（原拼作 `dedupe.py`），本清单初版漏列，
+> 落地时补回：去重是准入判定，与「谁能写这个 session」无关，并进 `session_lock.py` 会让
+> 那个文件同时管两件不相干的事。
 
 **要点**（技术方案 §6.3、§6.5）
 

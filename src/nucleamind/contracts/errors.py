@@ -69,6 +69,7 @@ class ErrorCode(StrEnum):
     INPUT_MALFORMED = "input.malformed"
     INPUT_TOO_LARGE = "input.too_large"
     INPUT_UNSUPPORTED_MEDIA = "input.unsupported_media"
+    INPUT_SESSION_BUSY = "input.session_busy"
 
     # CONFIG
     CONFIG_INVALID = "config.invalid"
@@ -126,6 +127,10 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.INPUT_MALFORMED: ErrorCategory.INVALID_INPUT,
         ErrorCode.INPUT_TOO_LARGE: ErrorCategory.INVALID_INPUT,
         ErrorCode.INPUT_UNSUPPORTED_MEDIA: ErrorCategory.INVALID_INPUT,
+        # 「这个会话正忙」不是「你的消息太大」：前者的补救是等一会儿再发或改并发策略，
+        # 后者的补救是把消息改短。复用 INPUT_TOO_LARGE 会让 `EDG-202` 的队列满与
+        # `EDG-205` 的大文本在诊断里长得一模一样（`D13`）。
+        ErrorCode.INPUT_SESSION_BUSY: ErrorCategory.INVALID_INPUT,
         ErrorCode.CONFIG_INVALID: ErrorCategory.CONFIG,
         ErrorCode.CONFIG_UNKNOWN_FIELD: ErrorCategory.CONFIG,
         ErrorCode.CONFIG_SECRET_MISSING: ErrorCategory.CONFIG,

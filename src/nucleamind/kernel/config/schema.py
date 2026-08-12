@@ -1,9 +1,10 @@
 """配置 schema 与校验（技术方案 §6.7、`CFG-001`、`EDG-501`）。
 
-职责：用一张声明式字段表定义配置的形状与默认值，校验合并后的 JSON，并把每处问题连同
-JSON Pointer 位置一起报出来；`TurnSection.to_limits()` 把 turn 小节转成 `TurnLimits`。
-不负责：读取任何来源（`sources.py`）、分层合并（`merge.py`）、决定 workspace 的最终绝对
-路径（`loader.py`）。
+职责：用一张声明式字段表定义**有哪些配置字段**、它们的默认值与所属小节，校验合并后的
+JSON，并把每处问题连同 JSON Pointer 位置一起报出来；`TurnSection.to_limits()` 把 turn
+小节转成 `TurnLimits`。
+不负责：逐字段的类型校验积木（`fields.py`）、读取任何来源（`sources.py`）、分层合并
+（`merge.py`）、决定 workspace 的最终绝对路径（`loader.py`）。
 
 **不用 pydantic，手写校验。** 技术方案 §6.7 的字面表述是「代码中的 Pydantic default」，
 这里取其意不取其形：规范性的两条（`extra="forbid"`、JSON Pointer 位置）都照做，实现方式
@@ -26,12 +27,11 @@ JSON Pointer 位置一起报出来；`TurnSection.to_limits()` 把 turn 小节�
 
 from __future__ import annotations
 
-import difflib
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import TYPE_CHECKING, Final, Mapping, Sequence
 
 from ...contracts import ErrorCode, NucleaError
+from .fields import FieldKind, FieldSpec, coerce_value, issue, suggest
 from .merge import pointer_of
 
 if TYPE_CHECKING:
@@ -40,12 +40,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SECTION_SPECS",
-    "FieldKind",
-    "FieldSpec",
+    "SESSION_CONCURRENCY_CHOICES",
     "LoggingSection",
     "ModelSection",
     "NucleaConfig",
     "PluginsSection",
+    "RoutingSection",
     "TurnSection",
     "WorkspaceSection",
     "defaults",
@@ -64,25 +64,17 @@ DEFAULT_TOOL_TIMEOUT_MS: Final = 120_000
 DEFAULT_TOOL_RESULT_MAX_BYTES: Final = 65_536
 DEFAULT_TURN_TIMEOUT_MS: Final = 900_000
 
+#: 路由的五项默认值。**与 `kernel/routing/` 的同名 `DEFAULT_*` 必须逐一相等**，由
+#: `test_routing_defaults_match_the_routing_package` 盯着。这里同样重写字面量而不是 import：
+#: `kernel.routing` 会把 asyncio 与调度器一起拖上配置路径，而 `nm config show` 不需要它们。
+DEFAULT_COMMAND_PREFIX: Final = "/"
+DEFAULT_SESSION_CONCURRENCY: Final = "queue"
+DEFAULT_QUEUE_MAX_SIZE: Final = 32
+DEFAULT_DEDUP_CAPACITY: Final = 4096
+DEFAULT_DEDUP_TTL_MS: Final = 600_000
 
-class FieldKind(StrEnum):
-    """字段类型。取值刻意少：配置里出现第七种形状时应当先想清楚它是否真该进配置。"""
-
-    BOOL = "bool"
-    POSITIVE_INT = "positive_int"
-    #: 允许 `null`，含义由字段自己的 docstring 给出（不等于「无限制」）。
-    OPTIONAL_POSITIVE_INT = "optional_positive_int"
-    STR = "str"
-    OPTIONAL_STR = "optional_str"
-    STR_LIST = "str_list"
-
-
-@dataclass(frozen=True, slots=True)
-class FieldSpec:
-    """一个字段的类型与默认值。"""
-
-    kind: FieldKind
-    default: JsonValue
+#: `session_concurrency` 的合法取值，与 `routing.ConcurrencyPolicy` 的三个取值同名。
+SESSION_CONCURRENCY_CHOICES: Final = ("queue", "merge", "reject")
 
 
 #: 全部已知字段。**这是 `extra="forbid"` 的唯一依据**：不在表里的键即未知字段。
@@ -102,6 +94,15 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
     },
     "workspace": {
         "root": FieldSpec(FieldKind.OPTIONAL_STR, None),
+    },
+    "routing": {
+        "command_prefix": FieldSpec(FieldKind.STR, DEFAULT_COMMAND_PREFIX),
+        "session_concurrency": FieldSpec(
+            FieldKind.STR, DEFAULT_SESSION_CONCURRENCY, SESSION_CONCURRENCY_CHOICES
+        ),
+        "queue_max_size": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_QUEUE_MAX_SIZE),
+        "dedup_capacity": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_DEDUP_CAPACITY),
+        "dedup_ttl_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_DEDUP_TTL_MS),
     },
     "plugins": {
         "disable": FieldSpec(FieldKind.STR_LIST, ()),
@@ -149,6 +150,23 @@ class TurnSection:
 
 
 @dataclass(frozen=True, slots=True)
+class RoutingSection:
+    """输入分流与 Session 并发（`D13`）。字段与 `kernel/routing/` 的构造参数一一对应。
+
+    `command_prefix` 是路由的配置项而不是命令身份的一部分（见 `contracts/command.py`）：
+    改前缀不该等于改全部命令声明。
+    """
+
+    command_prefix: str = DEFAULT_COMMAND_PREFIX
+    #: `queue` / `merge` / `reject`，取值由 `SESSION_CONCURRENCY_CHOICES` 限定。
+    session_concurrency: str = DEFAULT_SESSION_CONCURRENCY
+    #: 单个 session 的等待上限；超出即降级为拒绝，不静默丢弃（`EDG-202`）。
+    queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE
+    dedup_capacity: int = DEFAULT_DEDUP_CAPACITY
+    dedup_ttl_ms: int = DEFAULT_DEDUP_TTL_MS
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceSection:
     """workspace 位置。`None` = 用实例目录下的 `workspace/`（`InstanceLayout.workspace_dir`）。"""
 
@@ -187,6 +205,7 @@ class NucleaConfig:
     """整份配置。所有小节都有默认值——缺失的 `config.json` 因此是完全合法的状态。"""
 
     turn: TurnSection = field(default_factory=TurnSection)
+    routing: RoutingSection = field(default_factory=RoutingSection)
     workspace: WorkspaceSection = field(default_factory=WorkspaceSection)
     plugins: PluginsSection = field(default_factory=PluginsSection)
     model: ModelSection = field(default_factory=ModelSection)
@@ -204,6 +223,13 @@ class NucleaConfig:
                 "context_max_tokens": self.turn.context_max_tokens,
             },
             "workspace": {"root": self.workspace.root},
+            "routing": {
+                "command_prefix": self.routing.command_prefix,
+                "session_concurrency": self.routing.session_concurrency,
+                "queue_max_size": self.routing.queue_max_size,
+                "dedup_capacity": self.routing.dedup_capacity,
+                "dedup_ttl_ms": self.routing.dedup_ttl_ms,
+            },
             "plugins": {
                 "disable": list(self.plugins.disable),
                 "search_paths": list(self.plugins.search_paths),
@@ -225,66 +251,6 @@ def defaults() -> dict[str, JsonValue]:
     }
 
 
-def _suggest(unknown: str, known: Sequence[str]) -> str:
-    """给拼错的键一个近似建议。
-
-    这是「只认 snake_case」这条规则可教的关键：`maxIterations` 会得到
-    「是否想写 max_iterations？」，而不是一句干巴巴的「未知字段」。
-    """
-    close = difflib.get_close_matches(unknown, known, n=1, cutoff=0.6)
-    if close:
-        return f"是否想写 {close[0]}？"
-    return f"删除该键；该小节可用的字段有：{', '.join(sorted(known))}。"
-
-
-def _issue(code: ErrorCode, message: str, pointer: str, **detail: JsonValue) -> NucleaError:
-    """构造一处带位置的问题。**detail 里只有指针与类型名，绝不含配置值。**"""
-    return NucleaError(code, message, detail={"pointer": pointer, **detail})
-
-
-def _coerce(value: JsonValue, spec: FieldSpec, pointer: str) -> tuple[JsonValue, NucleaError | None]:
-    """按 spec 校验一个值。返回 `(采用的值, 问题或 None)`。
-
-    出问题时返回 spec 的默认值，让校验能继续走完剩下的字段——一次报全比逐条中断有用。
-    """
-    kind = spec.kind
-    if kind is FieldKind.BOOL:
-        if isinstance(value, bool):
-            return (value, None)
-        return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是布尔值。", pointer))
-
-    if kind in (FieldKind.POSITIVE_INT, FieldKind.OPTIONAL_POSITIVE_INT):
-        if value is None and kind is FieldKind.OPTIONAL_POSITIVE_INT:
-            return (None, None)
-        # bool 是 int 的子类，但 `max_iterations: true` 显然是写错了。
-        if isinstance(value, bool) or not isinstance(value, int):
-            return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是整数。", pointer))
-        if value <= 0:
-            return (
-                spec.default,
-                _issue(ErrorCode.CONFIG_INVALID, "该字段必须是正整数。", pointer),
-            )
-        return (value, None)
-
-    if kind in (FieldKind.STR, FieldKind.OPTIONAL_STR):
-        if value is None and kind is FieldKind.OPTIONAL_STR:
-            return (None, None)
-        if not isinstance(value, str):
-            return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是字符串。", pointer))
-        return (value, None)
-
-    # STR_LIST
-    if isinstance(value, str) or not isinstance(value, Sequence):
-        return (spec.default, _issue(ErrorCode.CONFIG_INVALID, "该字段必须是字符串数组。", pointer))
-    items = list(value)
-    if not all(isinstance(item, str) for item in items):
-        return (
-            spec.default,
-            _issue(ErrorCode.CONFIG_INVALID, "该数组的每一项都必须是字符串。", pointer),
-        )
-    return (tuple(items), None)
-
-
 def _validate_section(
     name: str,
     raw: JsonValue,
@@ -300,7 +266,7 @@ def _validate_section(
         return {}
     if not isinstance(raw, Mapping):
         issues.append(
-            _issue(ErrorCode.CONFIG_INVALID, "该小节必须是 JSON 对象。", pointer_of([name]))
+            issue(ErrorCode.CONFIG_INVALID, "该小节必须是 JSON 对象。", pointer_of([name]))
         )
         return {}
 
@@ -308,25 +274,25 @@ def _validate_section(
     for key in raw:
         if key not in specs:
             issues.append(
-                _issue(
+                issue(
                     ErrorCode.CONFIG_UNKNOWN_FIELD,
-                    f"未知配置字段。{_suggest(key, list(specs))}",
+                    f"未知配置字段。{suggest(key, list(specs))}",
                     pointer_of([name, key]),
                 )
             )
     for field_name, spec in specs.items():
         if field_name not in raw:
             continue
-        adopted, issue = _coerce(raw[field_name], spec, pointer_of([name, field_name]))
-        if issue is not None:
-            issues.append(issue)
+        adopted, problem = coerce_value(raw[field_name], spec, pointer_of([name, field_name]))
+        if problem is not None:
+            issues.append(problem)
             continue
         values[field_name] = adopted
     return values
 
 
 def _int_at(values: Mapping[str, JsonValue], key: str, fallback: int) -> int:
-    """取一个已校验的整数。`_coerce` 已保证形状，这里只是把类型收窄回 `int`。"""
+    """取一个已校验的整数。`coerce_value` 已保证形状，这里只是把类型收窄回 `int`。"""
     value = values.get(key, fallback)
     return value if isinstance(value, int) and not isinstance(value, bool) else fallback
 
@@ -373,9 +339,9 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     for key in data:
         if key not in SECTION_SPECS:
             issues.append(
-                _issue(
+                issue(
                     ErrorCode.CONFIG_UNKNOWN_FIELD,
-                    f"未知配置小节。{_suggest(key, list(SECTION_SPECS))}",
+                    f"未知配置小节。{suggest(key, list(SECTION_SPECS))}",
                     pointer_of([key]),
                 )
             )
@@ -400,6 +366,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     # 逐个具名构造而不是 `**sections`：小节的字段类型在这里才收窄回具体形状，
     # 展开一个 `dict[str, JsonValue]` 会让每个字段都退化成 `JsonValue`。
     turn = sections["turn"]
+    routing = sections["routing"]
     plugins = sections["plugins"]
     model = sections["model"]
     logging_values = sections["logging"]
@@ -417,6 +384,15 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             context_max_tokens=_opt_int_at(turn, "context_max_tokens"),
         ),
         workspace=WorkspaceSection(root=_opt_str_at(sections["workspace"], "root")),
+        routing=RoutingSection(
+            command_prefix=_str_at(routing, "command_prefix", DEFAULT_COMMAND_PREFIX),
+            session_concurrency=_str_at(
+                routing, "session_concurrency", DEFAULT_SESSION_CONCURRENCY
+            ),
+            queue_max_size=_int_at(routing, "queue_max_size", DEFAULT_QUEUE_MAX_SIZE),
+            dedup_capacity=_int_at(routing, "dedup_capacity", DEFAULT_DEDUP_CAPACITY),
+            dedup_ttl_ms=_int_at(routing, "dedup_ttl_ms", DEFAULT_DEDUP_TTL_MS),
+        ),
         plugins=PluginsSection(
             disable=_str_tuple_at(plugins, "disable"),
             search_paths=_str_tuple_at(plugins, "search_paths"),

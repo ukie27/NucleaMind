@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-12
-- 当前阶段：阶段 3 支撑设施推进中（`D00`–`D12` 均已完成，下一步 `D13`）
+- 当前阶段：阶段 4 编排闭环推进中（`D00`–`D13` 均已完成，下一步 `D14`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -502,6 +502,58 @@
     legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK；
     新层 `Any` 数仍为 0。完整套件（含 `tests/legacy`）15 failed / 7209 passed /
     35 skipped，失败全部落在既有那批家族（已用 `git stash` 逐一确认与 `D12` 无关）。
+- **`D13` 输入分流与 Session 并发**（`kernel/routing/` 4 个文件，约 870 行 +
+  `tests/kernel/test_{dispatcher,session_lock,dedup}.py` 62 个用例，另补 4 个配置测试）：
+  - **`dedup.py` 单独成模块**：技术方案 §4.2 的目录树里本来就有它（原拼作 `dedupe.py`，
+    已统一为 `dedup.py`，与 `DedupCache` / `DEFAULT_DEDUP_*` 同形），只是开发方案的交付
+    清单漏列。它不该并进 `session_lock.py`：去重是**准入判定**，与「谁能写这个 session」
+    无关，合并只会让那个文件同时管两件不相干的事，还要顶着 `kernel/` 500 行上限。
+    三个模块互不相识，编排层按 **去重 → 并发 → 分流** 的顺序各问一次（顺序写在
+    `routing/__init__.py` 里）。顺序有讲究：**去重必须在最前面**，否则重投的消息会占掉
+    队列名额、在 `MERGE` 下被并进下一批，`EDG-201` 随之失效。
+  - **显式 FIFO 票据，不用 `asyncio.Lock`**。`Lock` 的唤醒顺序是 CPython 的实现细节而非
+    文档保证，而 `EDG-202` 要断言的恰好是严格 FIFO；票据还让「队列多长」「谁在跑」变成可读
+    状态（`waiting()` / `running_turn()`），`Lock` 的等待者是私有的。20 条并发消息的
+    FIFO 断言与三种策略的用例**全程不用 `sleep`**，用 `asyncio.Event` 卡住第一个 `run`
+    制造确定的重叠窗口。
+  - **单写者不变量只有一段实现**：`run` 只在持有槽位时被调用，三种策略的差别**只在
+    「拿不到槽位时怎么办」**。测试用 `concurrent_peak` 把它变成可观测量——它只要超过 1，
+    历史写入的顺序性就无从谈起。`MERGE` 下被合并的提交方拿到那一批的返回值（失败时拿到
+    同一个异常），调用方因此不需要为「我的消息去哪了」再维护一张映射表。
+  - **命令名冲突在 `build_command_index()` 里判**（`CMD-002`）：registry 的 MULTI_UNIQUE
+    只保证 `name` 在 kind 内唯一，**别名撞车它看不见**——两个插件各自注册
+    `status`/`st` 与 `statistics`/`st`，注册阶段一路绿灯，到调用期才由加载顺序择一。
+    别名与命令名在同一个命名空间里判定。
+  - **dispatcher 不发任何事件、不分配 `turn_id`**。`KER-010`（命令即使不进模型也发 turn
+    事件）整件事留给 `D14`：turn 事件只能有一个发布点，两个发布点会让命令类 turn 与模型类
+    turn 的事件序列各有一套口径，`OBS-002` 的按序重放随之作废。`Correlation` 由 `D14` 带着
+    已分配的 `turn_id` 传进来。
+  - **命令 handler 的异常只捕 `Exception`**（`CMD-003`）：`BaseException`（取消、Ctrl-C）
+    放行，否则停机要按两次。折出来的错误**不放异常消息**只放类型名——第三方命令的异常
+    文本可能带着凭据，有测试埋了 `token=sk-…` 哨兵。`NucleaError` 原样透传，实现方给的
+    诊断比 Kernel 能编的更准。「会话仍可用」的可断言形态是：同一个 dispatcher 在命令炸掉
+    之后，紧接着还能正常分流下一条命令与普通文本。
+  - **新增 `ErrorCode.INPUT_SESSION_BUSY`**（INVALID_INPUT 类）。技术方案 §6.5 只说「返回
+    `INVALID_INPUT` 类错误」，而那一类原有的三个码都表达不了「忙」。复用
+    `INPUT_TOO_LARGE` 会让 `EDG-202` 的队列满与 `EDG-205` 的大文本在诊断里长得一模一样，
+    而两者的补救动作完全不同（等一会儿 vs 把消息改短）。先例是 `D10` 的
+    `CONFIG_INSTANCE_LOCKED`。
+  - **配置多了 `routing` 小节**（`command_prefix` / `session_concurrency` / `queue_max_size`
+    / `dedup_capacity` / `dedup_ttl_ms`），`FieldSpec` 相应加了 `choices`：取值受限的字段
+    必须在**校验时**就带指针报错，否则错误推迟到构造调度器那一刻，那时既没有指针也没有
+    「你可以写哪几个」。加完 `schema.py` 到 504 行、超了 `kernel/` 的 500 行上限，于是把
+    校验积木（`FieldKind` / `FieldSpec` / `coerce_value` / `suggest`）拆到
+    `kernel/config/fields.py`——分界线是**认不认识具体字段**：`fields.py` 一个字段名都不
+    认识，`schema.py` 除了字段什么都不放。字段表在长，校验积木不该跟着长。
+  - 验收：`tests/architecture` + `contracts` + `sdk` + `kernel` + `baseline` 共
+    **1116 个用例全绿**（`D12` 收口时 1050）；`kernel/routing/` 语句覆盖率 **97%**。
+    `ruff check`、`basedpyright`（新层 0 报错）、`legacy_debt --check` 未变、
+    `check_startup_cost --check` OK；`kernel.routing` 已加进「配置加载不得拖上 turn 引擎」
+    那条子进程测试的泄漏名单。完整套件（含 `tests/legacy`）14 failed / 5924 passed /
+    30 skipped，失败全部落在既有那批网络与子进程时序家族。
+    ⚠️ 跑测试时 **`--basetemp` 不要指到仓库内**：`tests/legacy` 的 36 个 git-store 用例会
+    因为临时目录落在工作树里而误判失败。本机系统临时目录有 ACL 问题，用
+    `--basetemp=D:/tmp/...` 之类的仓库外路径。
 
 ## 正在进行
 
@@ -514,8 +566,9 @@
   来源）已兑现，阶段 3 开始；`D11` 已完成，`${VAR}` 凭据引用、`SecretStr` 与写回保护
   就位（`SecretStr` 下沉到 `contracts/errors.py`，`sdk` 表面相应调整）；
   `D12` 已完成，事件总线、脱敏与序列化、内建两个 sink 与诊断查询就位，
-  `D09` 欠的 `EventName` 缺口与 `D10` 欠的 `EDG-501` 后半句一并兑现。
-  `kernel/` 目前有 `registry/`、`turn/`、`config/` 与 `observability/`；
+  `D09` 欠的 `EventName` 缺口与 `D10` 欠的 `EDG-501` 后半句一并兑现，**阶段 3 收口**；
+  `D13` 已完成，输入分流、Session 并发三策略与去重就位，阶段 4 开工。
+  `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/` 与 `routing/`；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
@@ -564,20 +617,34 @@
 
 ## 下一步工作
 
-1. 执行 `D13` 输入分流与 Session 并发：`kernel/routing/{dispatcher,session_lock}.py`。
-   四种 `Disposition`（复用 `contracts/command.py`，不另定义同义枚举）；命令名冲突在
-   **启动期**报错而非调用期择一（`CMD-002`）；命令即使不进模型也分配 `turn_id` 并发布
-   turn 事件（`KER-010`，现在 `D12` 的 `EventBus` 已经就位）；三种并发策略
-   （queue / merge / reject）共用「同 session 写入只经过持锁的单一写者」这条不变量；
-   去重 LRU 按 `(channel_id, message_id)`，默认 4096 条 / 10 分钟（`EDG-201`）。
-   前置依赖 `D06`、`D10` 均已就绪。
-2. 阶段 4 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
+1. 执行阶段 4 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
    承接 `test_loop_behavior.py` 的 12 条决定项，消费 `D09` 的事件流
    （`TurnEvent` 封闭联合 + `ToolCallCompleted.message` 直接持久化），实现
    `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`），
    并把 `D09` 的 9 个引擎事件翻译成 `EventName` 发布到 `D12` 的 bus。
-   属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D09`、`D12` 已就绪，
-   `D13` 待完成。
+   属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D09`、`D12`、`D13`
+   全部就绪。
+2. 随后 `D15` 骨架集成验收：在写任何真实能力前，用 Fake 能力打通端到端 turn。
+
+`D13` 留下的、`D14`/`D22`/`D23` 必须用到的事实：
+
+- **turn 事件由 `D14` 独家发布**。dispatcher 不碰 `EventBus`、不分配 `turn_id`，
+  `Correlation` 由编排层传进来。`KER-010`「命令即使不进模型也发 turn 事件」因此是 `D14`
+  的活：命令类 turn 也要有 `turn.started` 与终态事件，否则事件流里会出现无头无尾的 turn。
+- **准入顺序是 去重 → 并发 → 分流**，不能换。`DedupCache.remember()` 返回 `DedupHit`
+  就直接跳过执行并引用上一次的 `turn_id`（`EDG-201`），**不要**让它先进队列。
+- **`SessionScheduler.submit(key, message, run)` 的 `run` 拿到的是一批消息**
+  （`QUEUE`/`REJECT` 恒为一条，`MERGE` 可能多条）。编排层的签名要按元组写，
+  换并发策略时才不需要改 orchestrator。会话历史的写入必须发生在 `run` 内部——
+  那是「持锁的单一写者」唯一成立的地方。
+- **`D22` 的每个内建命令注册的载荷必须是 `routing.RegisteredCommand(spec, handler)`**，
+  `build_command_index()` 会当场核对形状。权限（`operator_only`）与参数个数由 dispatcher
+  统一前置校验，命令自己不要再抄一遍。
+- **`D23` 装配时按配置构造三件套**：`Dispatcher(index, prefix=cfg.routing.command_prefix)`、
+  `SessionScheduler(policy=ConcurrencyPolicy(cfg.routing.session_concurrency),
+  queue_max_size=cfg.routing.queue_max_size)`、
+  `DedupCache(capacity=…, ttl_ms=…)`。`build_command_index()` 要在启动期调用一次并让它的
+  异常直接冒泡——那正是 `CMD-002` 的「启动期报错」。
 
 `D12` 留下的、`D14`/`D23`/`D29` 必须用到的事实：
 
@@ -799,7 +866,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅   D13– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅   D14– ⬜（尚未开始）
 
 ## 本目录文档分类
 

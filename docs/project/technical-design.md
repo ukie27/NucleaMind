@@ -214,7 +214,7 @@ src/nucleamind/
 │   ├── routing/               # 输入分流与并发
 │   │   ├── dispatcher.py      # 命令 / 模型 turn 分流
 │   │   ├── session_lock.py    # 同 session 串行 / 合并 / 拒绝
-│   │   └── dedupe.py          # (channel_id, message_id) 有界 LRU
+│   │   └── dedup.py           # (channel_id, message_id) 有界 LRU
 │   ├── plugins/               # 插件运行时（宿主侧）
 │   │   ├── manifest.py        # PluginManifest 解析与校验
 │   │   ├── discovery.py       # entry point + 显式路径发现
@@ -688,6 +688,9 @@ class Disposition(StrEnum):
 - 命令执行异常一律捕获为 `NucleaError`，返回可诊断输出，会话保持可用，进程不退出
   （`CMD-003`）。
 - 命令即使不进模型，也分配 `turn_id` 并发布 turn 事件，使可观测性统一（`KER-010`）。
+  分配与发布都在 orchestrator（`D14`）：dispatcher 只回答「这条输入该怎么走」，
+  `Correlation` 由调用方传入。turn 事件只能有一个发布点，否则命令类 turn 与模型类 turn
+  的事件序列会各有一套口径，`OBS-002` 的按序重放随之作废（`D13` 落地时确定）。
 
 ### 6.4 取消与预算
 
@@ -751,7 +754,11 @@ class SessionSlot:
 策略（`KER-008`、`EDG-202`）：`queue`（默认，FIFO 串行）、`merge`（排队消息合并为一条
 后续输入）、`reject`（返回明确的忙碌错误）。三种策略共用一个不变量：**同一 session 的写
 入只经过持有该 slot 锁的单一写者**，因此不可能乱序或并发写。队列满时按策略降级为
-`reject` 并返回 `INVALID_INPUT` 类错误，不静默丢弃。
+`reject` 并返回 `INPUT_SESSION_BUSY`（`D13` 新增的 `INVALID_INPUT` 类错误码——原有三个码
+都表达不了「忙」，复用 `INPUT_TOO_LARGE` 会让队列满与大文本在诊断里不可区分），
+不静默丢弃。`D13` 落地时把 `SessionSlot` 的 `queue` 换成了显式的 FIFO 票据队列：
+`asyncio.Lock` 的唤醒顺序是 CPython 的实现细节而非文档保证，而 `EDG-202` 要断言的恰好是
+严格 FIFO。
 
 去重（`EDG-201`）：Kernel 维护 `(channel_id, message_id)` 的有界 LRU（默认 4096 条 /
 10 分钟）。命中则跳过执行并返回上一次结果引用，避免重复触发有副作用的工具。

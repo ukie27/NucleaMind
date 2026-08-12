@@ -1,12 +1,12 @@
 """实例布局、配置加载与实例锁（技术方案 §6.7、§10.1 步骤 1–2、§11）。
 
-职责：re-export 本包八个模块的公开表面，使调用方只需 `from nucleamind.kernel.config
+职责：re-export 本包九个模块的公开表面，使调用方只需 `from nucleamind.kernel.config
 import ...` 一条导入路径；`load_config()` 是这里的主入口。
 不负责：获取实例锁（`InstanceLock` 由 `runtime/bootstrap.py` 在生命周期里持有）、
 读写实例目录里除 `config.json` 之外的任何文件、加载插件（`D25`）。
 
 模块间依赖是单向的：`layout` / `process` / `merge` 互不相识，`lock` 只用 `process`，
-`schema` 与 `secrets` 只用 `merge` 的 pointer 工具，`sources` 只产出 `merge` 的层，
+`fields` 谁都不认识，`schema` 用 `fields` 与 `merge` 的 pointer 工具、`secrets` 只用后者，`sources` 只产出 `merge` 的层，
 `loader` 编排全部。配置的四层优先级只在 `sources.collect_layers()` 的返回顺序里定义一次。
 
 `secrets` 刻意不接进 `load_config()`：`SecretStr` 不是 `JsonValue`，塞进合并后的文档会让
@@ -16,6 +16,7 @@ import ...` 一条导入路径；`load_config()` 是这里的主入口。
 
 from __future__ import annotations
 
+from .fields import FieldKind, FieldSpec
 from .layout import (
     CONFIG_FILENAME,
     DEFAULT_INSTANCE_NAME,
@@ -35,12 +36,12 @@ from .merge import ConfigLayer, MergeResult, escape_pointer_token, merge_layers,
 from .process import Liveness, process_is_alive, process_started_at
 from .schema import (
     SECTION_SPECS,
-    FieldKind,
-    FieldSpec,
+    SESSION_CONCURRENCY_CHOICES,
     LoggingSection,
     ModelSection,
     NucleaConfig,
     PluginsSection,
+    RoutingSection,
     TurnSection,
     WorkspaceSection,
     defaults,
@@ -90,6 +91,7 @@ __all__ = [
     "SESSIONS_DIRNAME",
     "WORKSPACE_DIRNAME",
     "ConfigLayer",
+    "SESSION_CONCURRENCY_CHOICES",
     "FieldKind",
     "FieldSpec",
     "InstanceLayout",
@@ -102,6 +104,7 @@ __all__ = [
     "ModelSection",
     "NucleaConfig",
     "PluginsSection",
+    "RoutingSection",
     "SecretMap",
     "SecretRef",
     "StaleLockReclaimed",

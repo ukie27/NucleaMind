@@ -23,6 +23,7 @@ from nucleamind.kernel.config import (
     ENV_ORIGIN,
     FILE_ORIGIN,
     SECTION_SPECS,
+    SESSION_CONCURRENCY_CHOICES,
     ConfigLayer,
     InstanceLayout,
     InstanceLock,
@@ -354,6 +355,51 @@ class TestSchema:
         from nucleamind.kernel.turn import limits as limits_module
 
         assert validate_config({}).turn.to_limits() == limits_module.TurnLimits()
+
+    def test_routing_defaults_are_the_documented_ones(self) -> None:
+        routing = validate_config({}).routing
+        assert routing.command_prefix == "/"
+        assert routing.session_concurrency == "queue"
+        assert routing.queue_max_size == 32
+        assert routing.dedup_capacity == 4096
+        assert routing.dedup_ttl_ms == 600_000
+
+    def test_routing_defaults_match_the_routing_package(self) -> None:
+        """schema 重写了路由的默认值以避开 routing 包的导入开销，两处因此必须逐一相等。
+
+        与 `test_turn_defaults_match_the_limits_module` 同理：这条测试就是那份重复的挡板。
+        """
+        from nucleamind.kernel import routing as routing_package
+        from nucleamind.kernel.routing import session_lock
+
+        routing = validate_config({}).routing
+        assert routing.command_prefix == routing_package.DEFAULT_COMMAND_PREFIX
+        assert routing.queue_max_size == routing_package.DEFAULT_QUEUE_MAX_SIZE
+        assert routing.dedup_capacity == routing_package.DEFAULT_DEDUP_CAPACITY
+        assert routing.dedup_ttl_ms == routing_package.DEFAULT_DEDUP_TTL_MS
+        # 策略字面量与枚举取值同名，否则配置里写的 `queue` 会转不成 `ConcurrencyPolicy`。
+        assert set(SESSION_CONCURRENCY_CHOICES) == {
+            policy.value for policy in session_lock.ConcurrencyPolicy
+        }
+        assert session_lock.ConcurrencyPolicy(routing.session_concurrency) is (
+            session_lock.ConcurrencyPolicy.QUEUE
+        )
+
+    def test_unknown_session_concurrency_is_rejected_with_the_allowed_values(self) -> None:
+        """取值受限的字段必须在校验时就带着指针报错，而不是等到构造调度器那一刻。"""
+        with pytest.raises(NucleaError) as caught:
+            validate_config({"routing": {"session_concurrency": "parallel"}})
+        issue = caught.value.detail["errors"][0]
+        assert issue["pointer"] == "/routing/session_concurrency"
+        assert issue["code"] == ErrorCode.CONFIG_INVALID.value
+        assert "queue" in issue["reason"]
+
+    def test_unknown_routing_field_is_rejected(self) -> None:
+        with pytest.raises(NucleaError) as caught:
+            validate_config({"routing": {"dedup_capcity": 10}})
+        issue = caught.value.detail["errors"][0]
+        assert issue["code"] == ErrorCode.CONFIG_UNKNOWN_FIELD.value
+        assert "dedup_capacity" in issue["reason"]
 
 
 class TestLoadConfig:
@@ -724,14 +770,16 @@ def test_loading_config_does_not_import_the_turn_engine(tmp_path: Path) -> None:
     """`nm config show` 不该把 turn 引擎与 asyncio 调度拖上路径（`NFR-405` 冷启动预算）。
 
     `schema.py` 只从 `kernel.turn.limits` 取六个默认值常量，engine / scheduling / folding
-    都不该被牵连。子进程里断言，因为本进程早就把它们导入了。
+    都不该被牵连；`routing` 的五个默认值同理，那个包会把调度器与 asyncio 一起带进来。
+    子进程里断言，因为本进程早就把它们导入了。
     """
     script = (
         "import sys;"
         "from nucleamind.kernel.config import load_config;"
         f"load_config(instance_dir=r'{tmp_path / 'inst'}', env={{}});"
         "leaked=[m for m in ('nucleamind.kernel.turn.engine',"
-        "'nucleamind.kernel.turn.scheduling','nucleamind.kernel.turn.folding')"
+        "'nucleamind.kernel.turn.scheduling','nucleamind.kernel.turn.folding',"
+        "'nucleamind.kernel.routing')"
         " if m in sys.modules];"
         "print('LEAKED' if leaked else 'CLEAN', leaked)"
     )

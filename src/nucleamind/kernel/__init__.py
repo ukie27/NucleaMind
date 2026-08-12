@@ -5,7 +5,8 @@
 不负责：实现具体能力（模型、存储、工具、渠道），也不认识任何具体 provider。
 
 本目录当前有 `registry/`（`D06`：能力注册与覆盖解析）、`turn/`（`D08` 取消与预算、
-`D09` Turn Engine）、`config/`（`D10` 实例布局、分层配置与实例锁，`D11` Secret 引用）
-与 `observability/`（`D12`：事件总线、脱敏、内建 sink 与诊断查询），
-其余机制由开发方案 `D13`–`D14` 逐个落地。
+`D09` Turn Engine）、`config/`（`D10` 实例布局、分层配置与实例锁，`D11` Secret 引用）、
+`observability/`（`D12`：事件总线、脱敏、内建 sink 与诊断查询）与
+`routing/`（`D13`：输入分流、Session 并发与去重），
+其余机制由开发方案 `D14` 落地。
 """
