@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-12
-- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D17` 均已完成，下一步 `D18`–`D22`）
+- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D18` 均已完成，下一步 `D19`–`D22`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -811,6 +811,49 @@
     新层七个测试目录共 **1412 个用例全绿**（`D16` 收口时 1342）。`ruff check`、
     `basedpyright`（新层 0 报错）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
 
+- **`D18` 内建 Context：`context_basic`**（`builtins/context_basic/` 三个模块约 405 行 +
+  `builtins/registry.py` 的第二条 manifest + `tests/builtins/test_context_basic.py` 共 50 个
+  用例 + `tests/architecture/` 的一条只读守卫）：
+  - **它不贡献历史**。技术方案 §8.1 原文写的是「系统指令 + 历史 + 按 token 预算的尾部保留
+    裁剪」，但 `D14` 之后历史重放（含 `EDG-305` 的投影规则）与从最旧丢起的裁剪都在
+    `context_builder` 里。Provider 再贡献一份历史片段就是把同一段对话讲两遍，还绕过了投影
+    规则。所以内建 Provider 的产出恰好是三类片段：**基线系统指令、运行时事实、运维配置的
+    自定义指令**，「尾部保留裁剪」由组装器履行。§8.1 已回写这条细化。
+  - **运维配置的 `instructions` 用 `TrustLevel.OPERATOR` 而不是 `SYSTEM`**（本轮唯一一处
+    需要拍板的取舍）。契约对 OPERATOR 的定义就是「实例拥有者通过配置显式提供的内容，可信
+    但不是系统本身」，把配置文本升为 SYSTEM 等于取消 `CMD-005` 的分级。**可观察后果**：
+    自定义指令落在历史之后的一条 user 消息里，而不是 system 消息里；补偿是给它
+    `priority=0`（与内建基准、`HISTORY_TRIM_PRIORITY` 同级），实际上最晚才被裁。
+    只有基线指令与运行时事实是 `trust=SYSTEM`。`test_operator_instructions_stay_out_of_the_system_message`
+    钉住这条——它走真的组装器，断言的是最终 `ModelMessage` 序列而不是片段字段。
+  - **`kind` 与 `trust` 刻意不同步**：自定义指令片段是 `kind=SYSTEM` + `trust=OPERATOR`。
+    种类说的是「它是一段指令」，位置由 `trust` 决定——这正是组装器规则 2 描述的那个组合，
+    现在有了第一个真实样例。
+  - **零权限、零 IO**。manifest 一条权限也不声明，模块连 `os` / `pathlib` 都不 import。
+    新增的架构守卫 `test_read_only_builtins_have_no_syntactic_route_to_persistence` 按
+    **「没有语法途径」**而不是「看起来没写盘」来断言（扫 import + 裸 `open`），另一条断言
+    只读内建的 `permissions == ()`；两条都有反向注入样例。判据写成一张
+    `_READ_ONLY_BUILTIN_PACKAGES` 表，`D20`/`D21` 那种确实要写盘的内建不进这张表。
+  - **token 估算公式在 `builtins/` 与 `kernel/` 各写一份**（`R4` 逼的）。片段自报的
+    `estimated_tokens` 与组装器裁剪时用的尺子必须同口径：自报偏小则请求真的超窗，偏大则
+    白丢内容。`test_token_estimate_matches_the_kernel_trimmer` 逐字符对照两份实现，
+    与 `kernel/config/schema.py` 重写六个默认值是同一种做法。
+  - **基线系统指令里引用的是契约常量 `UNTRUSTED_DATA_PREFIX` 而不是复述那句话**。
+    `EDG-306` 的数据块包裹只有在模型认得那个暗号时才有意义；用常量插值，改契约措辞时不会
+    留下一段说着旧暗号的系统指令。（第一版测试在这里写错过：拿前缀出现与否当「有没有被包裹」
+    的判据，会把这段刻意的引用误判成越界——判据应当是 `<untrusted-data` 标签。）
+  - **配置在 `setup()` 时校验一次，不拖到第一次 turn**。本内建 `critical=True`，一份写错的
+    配置应当让实例启动失败。`instructions` 同时接受字符串与字符串数组（JSON 里写多行提示词
+    只有这两种写法，「写法合法但被静默忽略」是本项目一贯拒绝的失败）；`1` 不是 `True`，
+    布尔项收到非布尔一律 `CONFIG_INVALID`；「关掉基线又不给自定义指令」也是 `CONFIG_INVALID`
+    ——那等于要一个没有任何系统指令的 Agent，正规做法是在 `plugins.disable` 里禁用本内建。
+  - **`provide()` 约定不抛、也不检查 `cancel`**。契约要求的是「每个**外部查询**前检查」，
+    而这个实现一次外部往返也没有；加一个必然为假的检查点只会让人以为这里有阻塞操作。
+    `critical=True` 敢这么设，正是因为它没有可失败的外部依赖。
+  - 验收：`tests/builtins`(120) 全绿，`builtins/context_basic/` 语句覆盖率 **100%**；
+    新层七个测试目录共 **1471 个用例全绿**（`D17` 收口时 1412）。`ruff check`、
+    `basedpyright`（新层 0 报错）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -832,10 +875,12 @@
   函数、静态清单 bootstrap 与组装根就位，`D15` 暴露的五个 kind 缺口一并补齐，
   **阶段 5 开工**；`D17` 已完成，第一个内建能力 `builtins/session_jsonl/` 落地
   （JSONL + `meta.json`、`committed_bytes` 提交水位、发布格式文档），
-  `BUILTIN_MANIFESTS` 从此不再是空元组。
+  `BUILTIN_MANIFESTS` 从此不再是空元组；`D18` 已完成，内建 Context Provider
+  `builtins/context_basic/` 落地（基线系统指令 + 运行时事实 + 运维指令三类片段、
+  零权限零 IO），`CTX-006`/`EDG-307` 的「无 Memory 也有可用上下文」由此成立。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
-  `plugins/`；`builtins/` 有 `registry.py` 与 `session_jsonl/`（`D18`–`D22`
-  逐个追加其余六项），`runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
+  `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/` 与 `context_basic/`
+  （`D19`–`D22` 逐个追加其余五项），`runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -883,16 +928,34 @@
 
 ## 下一步工作
 
-1. 继续阶段 5 的其余内建能力：`D18` context_basic、`D19` model_openai、`D20` tools_fs、
+1. 继续阶段 5 的其余内建能力：`D19` model_openai、`D20` tools_fs、
    `D21` tools_shell、`D22` commands_core。它们之间无相互依赖，可并行开发。
    **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
    `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
    注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
    自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
-   `D17` 的 `builtins/session_jsonl/` 是这个形态的第一个样例，照着它写即可。
+   `D17` 的 `builtins/session_jsonl/`（要写盘的那种）与 `D18` 的 `builtins/context_basic/`
+   （纯内存、零权限的那种）是这个形态的两个样例，照着写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
 
-`D17` 留下的、`D18`–`D23` 必须用到的事实：
+`D18` 留下的、`D19`–`D23` 必须用到的事实：
+
+- **`context_basic` 不产出 `trust=SYSTEM` 的运维内容**。用户在配置里写的自定义指令是
+  `TrustLevel.OPERATOR`，落在历史之后的一条 user 消息里而不是 system 消息里（`CMD-005`）。
+  `D23` 装配后如果有人反馈「我的系统提示词没生效」，答案是这条而不是 bug。要改这个语义，
+  改的是契约层对 OPERATOR 的定义，不是内建实现。
+- **只读内建有一张显式清单**：`tests/architecture/test_builtin_no_privilege.py::
+  _READ_ONLY_BUILTIN_PACKAGES`。往里加一个包，就等于承诺它连 `os` / `pathlib` / 裸 `open`
+  都不出现、manifest 里一条权限都不声明。`D20`/`D21` 的 `tools_fs` / `tools_shell` **不进**
+  这张表——它们如实声明权限，走 `session_jsonl` 那条路。
+- **token 估算公式现在有两份**（`builtins/context_basic/instructions.py` 与
+  `kernel/turn/context_builder.py`，都是 `ceil(len/3)`）。任何要自报 `estimated_tokens` 的
+  新 Provider 都得用同一把尺，改比值要同时改两处并更新对照测试。
+- **`D14` 定的「同优先级先丢片段再丢历史」现在有了真实样例**：运维指令片段与历史同为
+  `priority=0`，预算收紧时先丢片段。`D19` 接上真模型后，`resolve_context_max_tokens` 会从
+  模型窗口推导预算，这条裁剪顺序才第一次真正生效。
+
+`D17` 留下的、`D19`–`D23` 必须用到的事实：
 
 - **内建能力拿不到实例布局**（`R4` 禁止 import `kernel/`），要写盘就只能让装配根把路径
   经 `ctx.config` 交下来。`session_jsonl` 用的键是 `dir`，没配时退回 `ctx.state_dir`。
@@ -908,7 +971,7 @@
   的 `builtins` 撞名、整个目录收集失败。新增测试目录时不需要再操心这件事。
 - **`SESSION_SCHEMA_VERSION` 现在从 `nucleamind.contracts` 直接可导**（`D17` 补的转发）。
 
-`D16` 留下的、`D18`–`D23` 必须用到的事实：
+`D16` 留下的、`D19`–`D23` 必须用到的事实：
 
 - **注册载荷形状现在九个 kind 全齐了**。`D14` 的四个（`RegisteredTool` / `RegisteredHook` /
   `RegisteredContextProvider` / `RegisteredCommand`）加 `D16` 的五个（`RegisteredModelProvider`
@@ -922,9 +985,9 @@
   判定，它只如实回答有没有。（`D17` 之后 SESSION_STORE 已经有了。）
 - **`critical` 是提供方级的，不是每项能力各有一个**。同一份 manifest 里的全部能力共享一个
   `critical`；需要不同关键性就得是两个插件。`tests/integration/_support.py` 因此按 `critical`
-  分批注册，`D18`–`D22` 写 manifest 时要意识到这一点。
+  分批注册，`D19`–`D22` 写 manifest 时要意识到这一点。
 - **`priority` 在 manifest 里别写**，除非真的要偏离基准值。写了就会被原样采纳（哪怕写的
-  正好是默认值 100），而内建的基准是 0——`D18` 的 `context_basic` 尤其要注意，§10.2 的
+  正好是默认值 100），而内建的基准是 0——`D18` 的 `context_basic` 已经按这条落地，§10.2 的
   「其余按 priority 逆序丢弃」依赖内建排在最前。
   `tests/runtime/test_wiring.py::test_every_builtin_manifest_leaves_priority_unset` 是这条的棘轮。
 - **`wire_capabilities(context_for=...)` 没有默认值**，因为 `D16` 还没有生产级
@@ -1226,7 +1289,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅   D18– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅   D19– ⬜（尚未开始）
 
 ## 本目录文档分类
 

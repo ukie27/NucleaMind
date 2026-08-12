@@ -1,0 +1,450 @@
+"""内建 Context Provider `context_basic` 的验收（开发方案 `D18`）。
+
+| 验收项 | 测试 |
+| --- | --- |
+| 通过 `ContextProviderContract` 全部用例 | `TestBasicContextProvider` |
+| 无 Memory / 检索插件时组装正常完成（`CTX-006`、`EDG-307`） | `TestUsableWithoutPlugins` |
+| trust 分级与放置位置（`CMD-005`） | `TestTrustPlacement` |
+| token 估算与实际裁剪一致（`CTX-003`） | `TestTokenEstimate` |
+| 配置校验：类型、数组写法、自相矛盾的组合 | `TestSettings` |
+| 内建以普通 manifest + `setup(api)` 注册（`BAS-005`） | `TestRegistration` |
+
+两条写这些用例时的取舍：
+
+- **和真的组装器对接，而不是只断言片段字段**。本内建产出什么，只有经
+  `kernel/turn/context_builder.assemble()` 渲染成 `ModelMessage` 之后才谈得上「可用上下文」；
+  `trust` 决定位置这条尤其如此——片段上写着 `OPERATOR` 不等于它真的没进 system 消息。
+  测试可以 import `kernel/`（`R4` 只约束 `src/nucleamind/builtins/`），实现不行。
+- **时钟注入而不是冻结**。运行时事实片段的内容要能逐字符断言，注入一个固定 `clock` 比
+  monkeypatch `datetime.now` 少一层魔法，也顺带证明了这个注入点确实存在。
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Final
+
+import pytest
+
+from nucleamind.builtins.context_basic import (
+    BASELINE_INSTRUCTIONS,
+    CAPABILITY_NAME,
+    CONFIG_INSTRUCTIONS_KEY,
+    CONFIG_RUNTIME_FACTS_KEY,
+    CONFIG_USE_BASELINE_KEY,
+    FRAGMENT_SOURCE,
+    BasicContextProvider,
+    BasicContextSettings,
+    estimate_tokens,
+    resolve_settings,
+    setup,
+)
+from nucleamind.builtins.registry import BUILTIN_MANIFESTS, CONTEXT_BASIC
+from nucleamind.contracts import (
+    UNTRUSTED_DATA_PREFIX,
+    Builtin,
+    CapabilityKind,
+    ContextProvider,
+    ErrorCode,
+    FragmentKind,
+    FragmentScope,
+    JsonValue,
+    NucleaError,
+    ProviderId,
+    Role,
+    SessionKey,
+    SessionMessage,
+    SessionSnapshot,
+    TrustLevel,
+)
+from nucleamind.kernel.turn import context_providers_from
+from nucleamind.kernel.turn.context_builder import assemble
+from nucleamind.kernel.turn.context_builder import estimate_tokens as kernel_estimate_tokens
+from nucleamind.kernel.turn.limits import TurnLimits
+from nucleamind.runtime.wiring import wire_capabilities
+from nucleamind.sdk import PluginContext
+from nucleamind.sdk.testing import (
+    ContextProviderContract,
+    FakePluginContext,
+    ManualCancel,
+    make_correlation,
+)
+
+#: 固定时钟。运行时事实片段要能逐字符断言，就不能读真实时间。
+FIXED_NOW: Final = datetime(2026, 8, 12, 9, 30, tzinfo=UTC)
+
+KEY: Final = SessionKey(channel_id="cli", conversation_id="local")
+
+
+def make_settings(
+    *,
+    instructions: str = "",
+    use_baseline: bool = True,
+    include_runtime_facts: bool = True,
+) -> BasicContextSettings:
+    return BasicContextSettings(
+        instructions=instructions,
+        use_baseline=use_baseline,
+        include_runtime_facts=include_runtime_facts,
+    )
+
+
+def make_provider(**kwargs: object) -> BasicContextProvider:
+    return BasicContextProvider(
+        make_settings(**kwargs),  # type: ignore[arg-type]
+        clock=lambda: FIXED_NOW,
+    )
+
+
+def snapshot_with(*contents: str, compacted_through: int = 0) -> SessionSnapshot:
+    messages = tuple(
+        SessionMessage(
+            message_id=f"m{index}",
+            role=Role.USER if index % 2 == 0 else Role.ASSISTANT,
+            content=content,
+            created_at=FIXED_NOW,
+        )
+        for index, content in enumerate(contents)
+    )
+    return SessionSnapshot(
+        session_key=KEY, messages=messages, compacted_through=compacted_through
+    )
+
+
+async def provide(provider: BasicContextProvider, snapshot: SessionSnapshot):
+    return await provider.provide(snapshot, make_correlation(), ManualCancel())
+
+
+async def assemble_with(
+    provider: BasicContextProvider,
+    snapshot: SessionSnapshot,
+    *,
+    user_input: str = "你好",
+    budget: int | None = None,
+):
+    """走真的组装器，拿到最终会发给模型的消息序列。"""
+    from nucleamind.kernel.turn.context_builder import ContextProviderBinding
+
+    return await assemble(
+        snapshot=snapshot,
+        user_input=user_input,
+        correlation=make_correlation(),
+        cancel=ManualCancel(),
+        limits=TurnLimits(context_max_tokens=budget) if budget else TurnLimits(),
+        bindings=[ContextProviderBinding(provider=provider, owner=Builtin(), name="basic")],
+        now=FIXED_NOW,
+    )
+
+
+# --------------------------------------------------------------------------- 契约
+
+
+class TestBasicContextProvider(ContextProviderContract):
+    """`ContextProviderContract` 的全部通用用例。"""
+
+    def make_provider(self) -> ContextProvider:
+        return make_provider()
+
+
+# ------------------------------------------------------------------- CTX-006 / EDG-307
+
+
+class TestUsableWithoutPlugins:
+    """没有 Memory、没有检索插件、没有任何配置时，仍必须产出可用上下文。"""
+
+    async def test_an_empty_session_still_yields_system_instructions(self) -> None:
+        fragments = await provide(make_provider(), SessionSnapshot(session_key=KEY))
+        assert fragments, "空会话必须仍有系统指令，否则 CTX-006 不成立"
+        assert fragments[0].content == BASELINE_INSTRUCTIONS
+        assert fragments[0].trust is TrustLevel.SYSTEM
+
+    async def test_assembly_completes_with_no_other_providers(self) -> None:
+        """`EDG-307`：未安装 Memory 插件不得产生缺失依赖错误。"""
+        assembled = await assemble_with(make_provider(), SessionSnapshot(session_key=KEY))
+        assert assembled.messages[0].role is Role.SYSTEM
+        assert BASELINE_INSTRUCTIONS in assembled.messages[0].content
+        assert assembled.messages[-1].content == "你好"
+        assert assembled.dropped == ()
+
+    async def test_the_provider_never_raises_on_a_valid_configuration(self) -> None:
+        """配置合法时 `provide()` 没有可失败的外部依赖——`critical=True` 才敢这么设。"""
+        for snapshot in (
+            SessionSnapshot(session_key=KEY),
+            snapshot_with("hi", "hello"),
+            snapshot_with("hi", "hello", "again", compacted_through=2),
+        ):
+            assert await provide(make_provider(), snapshot)
+
+    async def test_runtime_facts_report_how_much_history_is_visible(self) -> None:
+        """模型据此才知道自己看到的是全部历史还是一截。"""
+        fragments = await provide(
+            make_provider(), snapshot_with("a", "b", "c", compacted_through=2)
+        )
+        facts = next(item for item in fragments if item.kind is FragmentKind.RUNTIME)
+        assert facts.content == (
+            f"当前时间：{FIXED_NOW.isoformat()}\n"
+            "会话：cli / local（scope=default）\n"
+            "可见历史消息：1 条\n"
+            "已被摘要覆盖、原文不可见的更早消息：2 条"
+        )
+        assert facts.scope is FragmentScope.SESSION
+
+    async def test_runtime_facts_omit_the_compaction_line_when_nothing_is_compacted(
+        self,
+    ) -> None:
+        fragments = await provide(make_provider(), snapshot_with("a"))
+        facts = next(item for item in fragments if item.kind is FragmentKind.RUNTIME)
+        assert "已被摘要覆盖" not in facts.content
+
+    async def test_runtime_facts_can_be_switched_off(self) -> None:
+        fragments = await provide(make_provider(include_runtime_facts=False), snapshot_with("a"))
+        assert [item.kind for item in fragments] == [FragmentKind.SYSTEM]
+
+
+# --------------------------------------------------------------------------- CMD-005
+
+
+class TestTrustPlacement:
+    """`trust` 决定位置，`kind` 不参与判定（组装器的规则 2）。"""
+
+    async def test_operator_instructions_are_not_system_trusted(self) -> None:
+        fragments = await provide(make_provider(instructions="你只说中文。"), snapshot_with("a"))
+        operator = next(item for item in fragments if item.trust is TrustLevel.OPERATOR)
+        # 种类说的是「它是一段指令」，位置由 trust 决定——两者刻意不同。
+        assert operator.kind is FragmentKind.SYSTEM
+        assert operator.may_act_as_instruction is False
+
+    async def test_operator_instructions_stay_out_of_the_system_message(self) -> None:
+        """`CMD-005` 的落地检查：配置文本不得取得系统指令级别的优先级。"""
+        assembled = await assemble_with(
+            make_provider(instructions="你只说中文。"), snapshot_with("a")
+        )
+        system = assembled.messages[0]
+        assert system.role is Role.SYSTEM
+        assert "你只说中文。" not in system.content
+        assert any(
+            message.role is Role.USER and "你只说中文。" in message.content
+            for message in assembled.messages[1:]
+        )
+
+    async def test_every_fragment_declares_the_builtin_source(self) -> None:
+        """`CTX-001`：诊断里「这段是谁塞进来的」必须查得到。"""
+        fragments = await provide(make_provider(instructions="x"), snapshot_with("a"))
+        assert {item.source for item in fragments} == {FRAGMENT_SOURCE}
+        assert len(fragments) == 3
+
+    async def test_nothing_this_provider_emits_gets_wrapped_as_untrusted(self) -> None:
+        """本内建不产出 `UNTRUSTED` 片段：它不引入任何外部内容。
+
+        断言的是**包裹**而不是那句前缀——基线指令自己就引用了 `UNTRUSTED_DATA_PREFIX`
+        （模型得认得这个暗号），拿前缀当判据会把那段刻意的引用误判成越界。
+        """
+        fragments = await provide(make_provider(instructions="x"), snapshot_with("a"))
+        assert all(item.trust is not TrustLevel.UNTRUSTED for item in fragments)
+        assert all("<untrusted-data" not in item.as_model_text() for item in fragments)
+        assert all(item.as_model_text() == item.content for item in fragments)
+
+    def test_the_baseline_teaches_the_model_the_untrusted_marker(self) -> None:
+        """包裹只有在模型认得那句前缀时才有意义（`EDG-306`）。"""
+        assert UNTRUSTED_DATA_PREFIX in BASELINE_INSTRUCTIONS
+
+    async def test_the_provider_does_not_replay_history_itself(self) -> None:
+        """历史由组装器重放（`EDG-305`）；再贡献一份就是把同一段对话讲两遍。"""
+        fragments = await provide(make_provider(), snapshot_with("独一无二的历史内容"))
+        assert all("独一无二的历史内容" not in item.content for item in fragments)
+        assert all(item.kind is not FragmentKind.HISTORY for item in fragments)
+
+
+# --------------------------------------------------------------------------- CTX-003
+
+
+class TestTokenEstimate:
+    """自报的 `estimated_tokens` 与组装器真正用的那把尺必须同口径。"""
+
+    @pytest.mark.parametrize(
+        "text", ["", "a", "ab", "abc", "abcd", "你好", BASELINE_INSTRUCTIONS, "x" * 5000]
+    )
+    def test_token_estimate_matches_the_kernel_trimmer(self, text: str) -> None:
+        """`R4` 逼着公式写两份，这条负责让两份永远相等。"""
+        assert estimate_tokens(text) == kernel_estimate_tokens(text)
+
+    async def test_each_fragment_reports_its_own_size(self) -> None:
+        fragments = await provide(make_provider(instructions="你只说中文。"), snapshot_with("a"))
+        for fragment in fragments:
+            assert fragment.estimated_tokens == estimate_tokens(fragment.content)
+
+    async def test_the_assembled_budget_accounts_for_every_fragment(self) -> None:
+        """组装器算出的总量 = 各片段自报之和 + 历史 + 本次输入，没有漏账。"""
+        snapshot = snapshot_with("历史一", "历史二")
+        assembled = await assemble_with(make_provider(instructions="你只说中文。"), snapshot)
+        expected = sum(item.estimated_tokens for item in assembled.fragments)
+        expected += sum(estimate_tokens(item.content) for item in snapshot.messages)
+        expected += estimate_tokens("你好")
+        assert assembled.estimated_tokens == expected
+
+    async def test_a_tight_budget_drops_the_operator_block_before_history(self) -> None:
+        """运维指令与历史同为 priority 0，同优先级下先丢片段（组装器的约定）。"""
+        snapshot = snapshot_with("历史一", "历史二")
+        fixed = estimate_tokens(BASELINE_INSTRUCTIONS) + estimate_tokens("你好")
+        assembled = await assemble_with(
+            make_provider(instructions="你只说中文。", include_runtime_facts=False),
+            snapshot,
+            budget=fixed + estimate_tokens("历史一") + estimate_tokens("历史二"),
+        )
+        assert [item.reason for item in assembled.dropped] == ["budget"]
+        assert assembled.dropped[0].fragment.trust is TrustLevel.OPERATOR
+        # 系统指令与历史都还在：预算刚好够，丢掉那一块就不必再动历史。
+        assert BASELINE_INSTRUCTIONS in assembled.messages[0].content
+        assert any("历史一" in message.content for message in assembled.messages)
+
+    async def test_the_system_instructions_are_never_trimmed(self) -> None:
+        """裁到只剩系统段与本次输入仍超预算时报错，而不是悄悄丢掉指令（`CTX-003`）。"""
+        with pytest.raises(NucleaError) as caught:
+            await assemble_with(make_provider(), snapshot_with("历史"), budget=1)
+        assert caught.value.code is ErrorCode.INPUT_TOO_LARGE
+
+
+# --------------------------------------------------------------------------- 配置
+
+
+class TestSettings:
+    """`resolve_settings()` 在 `setup` 时校验一次；一份写错的配置不该拖到第一次 turn 才炸。"""
+
+    def test_defaults_need_no_configuration(self) -> None:
+        settings = resolve_settings(FakePluginContext())
+        assert settings.use_baseline is True
+        assert settings.include_runtime_facts is True
+        assert settings.instructions == ""
+
+    def test_instructions_accept_a_plain_string(self) -> None:
+        ctx = FakePluginContext(config={CONFIG_INSTRUCTIONS_KEY: "  你只说中文。  \n\n"})
+        assert resolve_settings(ctx).instructions == "  你只说中文。"
+
+    def test_instructions_accept_a_string_array(self) -> None:
+        """JSON 里写多行提示词只有这两种写法，两种都得认。"""
+        ctx = FakePluginContext(
+            config={CONFIG_INSTRUCTIONS_KEY: ["", "第一行  ", "", "第三行", ""]}
+        )
+        assert resolve_settings(ctx).instructions == "第一行\n\n第三行"
+
+    @pytest.mark.parametrize("configured", [123, {"a": 1}, ["ok", 5], True])
+    def test_a_bad_instructions_type_is_a_config_error(self, configured: object) -> None:
+        ctx = FakePluginContext(config={CONFIG_INSTRUCTIONS_KEY: configured})  # type: ignore[dict-item]
+        with pytest.raises(NucleaError) as caught:
+            resolve_settings(ctx)
+        assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+    @pytest.mark.parametrize("key", [CONFIG_USE_BASELINE_KEY, CONFIG_RUNTIME_FACTS_KEY])
+    @pytest.mark.parametrize("configured", ["true", 1, 0, []])
+    def test_a_bad_switch_type_is_a_config_error(self, key: str, configured: object) -> None:
+        """`1` 不是 `True`：静默接受它，用户就永远不知道自己那行配置写错了。"""
+        ctx = FakePluginContext(config={key: configured})  # type: ignore[dict-item]
+        with pytest.raises(NucleaError) as caught:
+            resolve_settings(ctx)
+        assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+    def test_disabling_the_baseline_without_instructions_is_rejected(self) -> None:
+        """那等于要一个没有任何系统指令的 Agent；正规做法是禁用本内建。"""
+        ctx = FakePluginContext(config={CONFIG_USE_BASELINE_KEY: False})
+        with pytest.raises(NucleaError) as caught:
+            resolve_settings(ctx)
+        assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+    async def test_disabling_the_baseline_with_instructions_is_allowed(self) -> None:
+        ctx = FakePluginContext(
+            config={CONFIG_USE_BASELINE_KEY: False, CONFIG_INSTRUCTIONS_KEY: "只说中文。"}
+        )
+        provider = BasicContextProvider(resolve_settings(ctx), clock=lambda: FIXED_NOW)
+        fragments = await provider.provide(
+            snapshot_with("a"), make_correlation(), ManualCancel()
+        )
+        assert all(BASELINE_INSTRUCTIONS not in item.content for item in fragments)
+
+    def test_the_config_schema_lists_exactly_the_keys_the_code_reads(self) -> None:
+        """manifest 的 `config_schema` 与实现读的键是同一组，不多不少。"""
+        properties = CONTEXT_BASIC.config_schema["properties"]
+        assert isinstance(properties, dict)
+        assert set(properties) == {
+            CONFIG_INSTRUCTIONS_KEY,
+            CONFIG_USE_BASELINE_KEY,
+            CONFIG_RUNTIME_FACTS_KEY,
+        }
+        assert CONTEXT_BASIC.config_schema["additionalProperties"] is False
+
+
+# --------------------------------------------------------------------------- 注册
+
+
+class TestRegistration:
+    """内建的落地形态：一份普通 manifest + 一个 `setup(api)`，没有第二条路（`BAS-005`）。"""
+
+    def test_the_manifest_is_listed_as_a_builtin(self) -> None:
+        assert CONTEXT_BASIC in BUILTIN_MANIFESTS
+        assert CONTEXT_BASIC.id == "context-basic"
+        assert CONTEXT_BASIC.critical is True
+        declaration = CONTEXT_BASIC.capabilities[0]
+        assert declaration.kind is CapabilityKind.CONTEXT
+        assert declaration.name == CAPABILITY_NAME
+        assert declaration.overrides is None
+        # `priority` 不写：内建基准是 0，写了（哪怕写的是默认值 100）就会被原样采纳。
+        assert "priority" not in declaration.model_fields_set
+
+    def test_the_manifest_declares_no_permissions_at_all(self) -> None:
+        """Provider 只读不写：它连一条权限都用不上，声明一条就是让审计失真。"""
+        assert CONTEXT_BASIC.permissions == ()
+
+    async def test_wiring_registers_the_provider_at_the_builtin_priority(self) -> None:
+        """走真实装配链：manifest -> `import_setup` -> Host -> registry。"""
+
+        def context_for(provider: ProviderId) -> PluginContext:
+            del provider
+            return FakePluginContext(config={CONFIG_INSTRUCTIONS_KEY: "只说中文。"})
+
+        wiring = await wire_capabilities(manifests=[CONTEXT_BASIC], context_for=context_for)
+
+        assert wiring.report.ok
+        bindings = context_providers_from(wiring.registry)
+        assert len(bindings) == 1
+        binding = bindings[0]
+        assert binding.name == CAPABILITY_NAME
+        assert binding.priority == 0, "内建必须排在插件（基准 100）之前"
+        assert binding.critical is True
+        assert isinstance(binding.provider, BasicContextProvider)
+        assert binding.provider.settings.instructions == "只说中文。"
+
+    async def test_setup_registers_exactly_one_context_provider(self) -> None:
+        """`setup` 只做注册，不做 IO——`nm capabilities` 这类只读命令因此没有副作用。"""
+        registered: list[tuple[str, object]] = []
+
+        class RecordingApi:
+            ctx = FakePluginContext()
+
+            def register_context_provider(self, name: str, provider: object) -> None:
+                registered.append((name, provider))
+
+        setup(RecordingApi())  # type: ignore[arg-type]
+        assert len(registered) == 1
+        assert registered[0][0] == CAPABILITY_NAME
+
+    def test_a_bad_configuration_fails_at_setup_rather_than_at_the_first_turn(self) -> None:
+        class RecordingApi:
+            ctx = FakePluginContext(config={CONFIG_USE_BASELINE_KEY: "no"})  # type: ignore[dict-item]
+
+            def register_context_provider(self, name: str, provider: object) -> None:
+                raise AssertionError("配置非法时不该注册任何东西")
+
+        with pytest.raises(NucleaError) as caught:
+            setup(RecordingApi())  # type: ignore[arg-type]
+        assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+
+def test_json_value_typing_is_satisfied_by_the_documented_config() -> None:
+    """文档化的三个键都是 `JsonValue`——配置块会原样穿过 JSON。"""
+    config: dict[str, JsonValue] = {
+        CONFIG_INSTRUCTIONS_KEY: ["一", "二"],
+        CONFIG_USE_BASELINE_KEY: True,
+        CONFIG_RUNTIME_FACTS_KEY: False,
+    }
+    settings = resolve_settings(FakePluginContext(config=config))
+    assert settings.instructions == "一\n二"
+    assert settings.include_runtime_facts is False

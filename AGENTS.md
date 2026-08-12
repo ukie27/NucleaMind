@@ -23,8 +23,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `context_builder` / `invoker` / `transcript` / `translation`），`D15` 已落地骨架集成验收
   （`tests/integration/`，28 个用例），**阶段 4 收口**；`D16` 已落地内建加载路径与契约测试
   套件（`kernel/plugins/` 四个模块 + `builtins/registry.py` + `runtime/wiring.py`），
-  `D17` 已落地内建 Session（`builtins/session_jsonl/`），**阶段 5 进行中**，
-  下一步 `D18`–`D22`。
+  `D17` 已落地内建 Session（`builtins/session_jsonl/`），`D18` 已落地内建 Context
+  （`builtins/context_basic/`），**阶段 5 进行中**，下一步 `D19`–`D22`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
   `config/`、`observability/`、`routing/` 与 `plugins/`。
@@ -214,7 +214,7 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   （`to_declaration()` 用 `model_fields_set` 判断作者写没写）。
 
 `builtins/`（`D17` 起）的落地形态只有一种：一份 `PluginManifest` 追加进
-`builtins/registry.py::BUILTIN_MANIFESTS`，加一个 `setup(api)`。三条通用约束：
+`builtins/registry.py::BUILTIN_MANIFESTS`，加一个 `setup(api)`。五条通用约束：
 
 - **内建拿不到实例布局**（`R4`），要写盘就只能让装配根把路径经 `ctx.config` 交下来。
   `session_jsonl` 用 `dir` 键，没配时退回 `ctx.state_dir`；`D23` 装配时必须真的填上，
@@ -225,6 +225,16 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `tests/builtins/test_session_jsonl.py` 直接解析，改 `codec.py` 的字段就得改文档。
   `committed_bytes` 提交水位是整批原子性的全部机制，读只认水位内的字节，写最后才换
   `meta.json`；文件比水位**短**是损坏，不是「就这些了」。
+- **声明为只读的内建连持久化的语法途径都不许有**（`D18`）：`context_basic` 在
+  `test_builtin_no_privilege.py::_READ_ONLY_BUILTIN_PACKAGES` 里，因此它不得出现
+  `os` / `pathlib` / `socket` / 裸 `open` 之类的名字，manifest 的 `permissions` 必须为空。
+  要写盘的内建（`tools_fs` / `tools_shell`）**不进**那张表，走 `session_jsonl` 那条路
+  ——如实声明权限，而不是绕道。
+- **自报的 `estimated_tokens` 要和组装器同一把尺**：`R4` 逼得公式在
+  `builtins/context_basic/instructions.py` 与 `kernel/turn/context_builder.py` 各写一份
+  （都是 `ceil(len/3)`），由一条逐字符对照测试钉住。自报偏小会让请求真的超出模型窗口，
+  偏大则白丢内容。运维配置的自定义指令是 `TrustLevel.OPERATOR` 而不是 `SYSTEM`，
+  它因此进不了 system 消息位置——那是 `CMD-005` 的分级，不是可以顺手改掉的实现细节。
 
 ## 开发命令
 

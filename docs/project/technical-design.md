@@ -1251,6 +1251,28 @@ JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式�
   会落在插件私有状态目录。文件名在 `layout.session_paths()` 与内建实现里各写一份，由
   `tests/builtins/` 的一条对照测试盯着。
 
+`D18` 落地时对本段「Context」一行的四处细化（实现在 `builtins/context_basic/`）：
+
+- **它不贡献历史**。本段原文写的是「系统指令 + 历史 + 按 token 预算的尾部保留裁剪」，
+  但 `D14` 之后历史重放（`context_builder.replay_messages`，含 `EDG-305` 的投影规则）与
+  从最旧丢起的裁剪都在组装器里。Provider 再贡献一份历史片段，等于把同一段对话讲两遍，
+  还绕过了投影规则。因此内建 Provider 的产出恰好是三类片段：基线系统指令、运行时事实、
+  运维配置的自定义指令。所谓「尾部保留裁剪」由组装器履行，不在本内建内。
+- **运维在 `config.json` 里写的 `instructions` 是 `TrustLevel.OPERATOR` 而不是 `SYSTEM`**。
+  契约对这一级的定义就是「实例拥有者通过配置显式提供的内容，可信但不是系统本身」。
+  代价是它落在历史之后的一条 user 消息里而不是 system 消息里，因此给它 `priority=0`
+  （与内建基准同级、最晚被裁）。把配置文本升为 `SYSTEM` 等于取消 `CMD-005` 的分级，
+  那不是一个内建能力该自行决定的事。只有基线指令与运行时事实是 `trust=SYSTEM`。
+- **零权限、零 IO**（技术方案 §14 的「Provider 只读不写」）。manifest 一条权限也不声明，
+  模块连 `os` / `pathlib` 都不 import，由
+  `tests/architecture/test_builtin_no_privilege.py::test_read_only_builtins_have_no_syntactic_route_to_persistence`
+  按「没有语法途径」而不是「看起来没写盘」来断言。因此它不可能因为缺少某个可选插件而
+  失败，`CTX-006`/`EDG-307` 由此成立。
+- **token 估算的公式在 `builtins/` 与 `kernel/` 各写一份**。`R4` 禁止内建 import kernel，
+  而片段自报的 `estimated_tokens` 与组装器裁剪时用的尺子必须同口径——自报偏小则请求真的
+  超窗，偏大则白丢内容。两份由 `tests/builtins/test_context_basic.py` 的一条逐字符对照
+  测试钉住，与 `kernel/config/schema.py` 重写六个默认值是同一种做法。
+
 ### 8.2 基础工具集的冻结清单
 
 内建工具**恰好 6 个**，清单本身是接口（`BAS-008`）：

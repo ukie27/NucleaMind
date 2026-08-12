@@ -24,7 +24,7 @@ from typing import Final
 from nucleamind.contracts import CapabilityKind, PermissionKind
 from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
 
-__all__ = ["BUILTIN_MANIFESTS", "SESSION_JSONL"]
+__all__ = ["BUILTIN_MANIFESTS", "CONTEXT_BASIC", "SESSION_JSONL"]
 
 #: `D17` 内建 Session（技术方案 §8.1）。
 #:
@@ -59,6 +59,47 @@ SESSION_JSONL: Final = PluginManifest(
     critical=True,
 )
 
-#: 全部内建能力的 manifest。`D18`–`D22` 逐个追加（context_basic / model_openai /
-#: tools_fs / tools_shell / commands_core / cli_entry）。
-BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (SESSION_JSONL,)
+#: `D18` 内建 Context Provider（技术方案 §8.1）。
+#:
+#: `critical=True`：它是 `CTX-006` 的兜底——没有它、也没装任何 Memory 或检索插件时，
+#: 模型将拿不到任何系统指令。一份写错的配置（`resolve_settings` 抛 `CONFIG_INVALID`）
+#: 应当让实例启动失败，而不是让一个「没人告诉它自己是谁」的 Agent 上线。
+#:
+#: **一个权限也不声明**：本内建纯内存、不读盘、不出网（技术方案 §14 的「Provider 只读
+#: 不写」）。声明一条用不到的权限就是把「越界意图可审计」这件事变得不可审计。
+CONTEXT_BASIC: Final = PluginManifest(
+    id="context-basic",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind.builtins.context_basic:setup",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.CONTEXT, name="basic"),),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "instructions": {
+                "description": "运维自定义的指令文本。它以 TrustLevel.OPERATOR 进入上下文，"
+                "不占据系统指令位置（`CMD-005`）。",
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ],
+            },
+            "use_baseline_instructions": {
+                "type": "boolean",
+                "default": True,
+                "description": "是否附上内建基线系统指令。关掉它就必须提供 instructions。",
+            },
+            "include_runtime_facts": {
+                "type": "boolean",
+                "default": True,
+                "description": "是否附上当前时间、会话身份与历史条数这几项运行时事实。",
+            },
+        },
+        "additionalProperties": False,
+    },
+    critical=True,
+)
+
+#: 全部内建能力的 manifest。`D19`–`D22` 逐个追加（model_openai / tools_fs /
+#: tools_shell / commands_core / cli_entry）。
+BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (SESSION_JSONL, CONTEXT_BASIC)
