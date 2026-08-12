@@ -1,0 +1,137 @@
+"""组装根：把 manifest 清单经唯一 Host 注册进能力表（技术方案 §10.1 步骤 3、7）。
+
+职责：把 `PluginManifest` 翻译成 kernel 认识的 `LoadRequest`，驱动
+`kernel.plugins.load_into`，再解析覆盖并冻结 registry；产出 `Wiring`。
+不负责：读配置、取实例锁、构造生产级 `PluginContext`（`D26`）、装 `OrchestratorDeps`、
+启动长生命周期服务、决定失败后果——那些全在 `D23` 的 bootstrap。
+
+**这是 `R5` 的落点**：全项目只有 `runtime/` 可以同时 import `kernel/` 与 `sdk/`
+（外加 `builtins/`），因此 manifest 到 `LoadRequest` 的翻译只能在这里。这不是权宜——
+`kernel/` 里不出现第二套 manifest 校验，正是 `D06` 就定下的约定。
+
+**顺带地，这里是「Host 真的满足 `NucleaAPI`」的唯一证明地**。`pyproject.toml` 的
+basedpyright 配置是 `include = ["src/nucleamind"]` + `exclude = ["**/tests"]`，所以测试
+承担不了这个角色；而 `contracts/protocols.py` 写死了 `runtime_checkable` 只作诊断、
+永不参与控制流，`isinstance` 也证明不了签名兼容。`_host_for()` 里那句
+`host: NucleaAPI = ...` 的类型标注就是全部证明——它一旦不成立，严格模式当场报错。
+
+**内建与外部插件走同一个函数**：`wire_capabilities()` 只是默认 `manifests=BUILTIN_MANIFESTS`
+且默认「一切都是 `Builtin()`」。`D27` 传外部 manifest 与 `Plugin(PluginId(...))` 进来，
+不需要第二条注册路径（`SDK-007`）。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+
+from nucleamind.builtins.registry import BUILTIN_MANIFESTS
+from nucleamind.contracts import Builtin, ProviderId
+from nucleamind.kernel.plugins import (
+    CapabilityDeclaration,
+    CapabilityHost,
+    LoadOutcome,
+    LoadRequest,
+    SetupFn,
+    import_setup,
+    load_into,
+)
+from nucleamind.kernel.registry import (
+    CapabilityRegistry,
+    RegistrationBatch,
+    ResolutionReport,
+    resolve_into,
+)
+from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginContext, PluginManifest
+
+__all__ = ["Wiring", "builtin_provider", "to_declaration", "to_load_request", "wire_capabilities"]
+
+
+@dataclass(frozen=True, slots=True)
+class Wiring:
+    """一次装配的产物：冻结的能力表、覆盖解析报告与逐提供方的加载结果。
+
+    **不在这里 `raise_if_failed()`**：失败后果（`critical`、`on_override_failure`、
+    CLI 入口强制回落）是 `D23` 的策略，装配只负责如实交出发生了什么。
+    """
+
+    registry: CapabilityRegistry
+    report: ResolutionReport
+    outcomes: tuple[LoadOutcome, ...] = ()
+
+
+def builtin_provider(manifest: PluginManifest) -> ProviderId:
+    """内建清单里的一切都以 `Builtin()` 身份注册（priority 基准值 0）。"""
+    del manifest
+    return Builtin()
+
+
+def to_declaration(decl: CapabilityDecl) -> CapabilityDeclaration:
+    """把一条 manifest 能力声明翻成 kernel 投影。
+
+    **`priority` 只在作者显式写过时才传下去**。`CapabilityDecl.priority` 的默认值是 100
+    （技术方案 §7.2），照搬会让每一项内建能力都拿到 100，而 §6.1 规则 1 定的内建基准是
+    **0**。pydantic 的 `model_fields_set` 恰好能回答「作者到底写没写」，因此留 `None`
+    让 `base_priority_for()` 决定——内建 0、插件 100，规则仍只有一处实现。
+    """
+    stated = "priority" in decl.model_fields_set
+    return CapabilityDeclaration(
+        kind=decl.kind,
+        name=decl.name,
+        overrides=decl.overrides,
+        priority=decl.priority if stated else None,
+    )
+
+
+def to_load_request(manifest: PluginManifest, provider: ProviderId) -> LoadRequest:
+    """把一份 manifest 投影成 kernel 认识的加载请求。
+
+    `critical` 是提供方级的，Host 会把它灌进 `RegisteredHook` 与
+    `RegisteredContextProvider`——`kernel/` 不认识 manifest，而 `CTX-005`/`PLG-004`
+    的分叉必须在 kernel 里判。
+    """
+    return LoadRequest(
+        provider=provider,
+        setup=manifest.setup,
+        declarations=tuple(to_declaration(decl) for decl in manifest.capabilities),
+        critical=manifest.critical,
+    )
+
+
+async def wire_capabilities(
+    *,
+    manifests: Sequence[PluginManifest] = BUILTIN_MANIFESTS,
+    context_for: Callable[[ProviderId], PluginContext],
+    provider_for: Callable[[PluginManifest], ProviderId] = builtin_provider,
+    resolve_setup: Callable[[str], SetupFn] = import_setup,
+    disabled: Mapping[ProviderId, str] | None = None,
+) -> Wiring:
+    """注册全部 manifest 声明的能力 → 解析覆盖 → 冻结，返回装配产物。
+
+    `manifests` 默认取 `BUILTIN_MANIFESTS`（`D16` 时为空元组，那正是 `EDG-101` 要求可用的
+    形状）。`context_for` 必填：`D16` 还没有生产级 `PluginContext`（那是 `D26`），
+    给一个默认值等于邀请别人把无权限的桩子带进生产。
+
+    **异常约定**：`critical=True` 的提供方加载失败时原样抛出；其余失败记进
+    `Wiring.outcomes`。覆盖冲突不抛，进 `report.failures` 由调用方处置。
+    """
+    registry = CapabilityRegistry()
+    requests = [to_load_request(manifest, provider_for(manifest)) for manifest in manifests]
+
+    def host_for(batch: RegistrationBatch, request: LoadRequest) -> CapabilityHost[PluginContext]:
+        host = CapabilityHost(
+            batch,
+            context_for(request.provider),
+            declarations=request.declarations,
+            critical=request.critical,
+        )
+        # 「Host 满足 `NucleaAPI`」的唯一证明点，见模块 docstring。
+        conformance: NucleaAPI = host
+        del conformance
+        return host
+
+    outcomes = await load_into(
+        registry, requests, host_for=host_for, resolve_setup=resolve_setup
+    )
+    report = resolve_into(registry, disabled=disabled)
+    return Wiring(registry=registry, report=report, outcomes=outcomes)

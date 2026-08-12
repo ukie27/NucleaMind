@@ -42,15 +42,23 @@ SDK_PUBLIC_NAMES: Final[tuple[str, ...]] = (
 
 #: `nucleamind.sdk.testing` 同样是公开面：它是插件作者的验收工具（§12.3）。
 SDK_TESTING_PUBLIC_NAMES: Final[tuple[str, ...]] = (
+    "ECHO_SPEC",
     "FAKE_MODEL_ID",
     "ChannelContract",
     "ContextProviderContract",
+    "EchoTool",
+    "FakeCliEntry",
+    "FakeMemoryProvider",
     "FakeModelProvider",
+    "FakePluginContext",
     "InMemorySessionStore",
     "ManualCancel",
     "ModelProviderContract",
+    "NullChannel",
+    "RecordingEventSubscriber",
     "RecordingHook",
     "SessionStoreContract",
+    "StaticContextProvider",
     "ToolContract",
     "make_correlation",
     "text_response",

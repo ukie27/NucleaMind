@@ -1,0 +1,343 @@
+"""能力边界上的 Fake：工具、Channel、Context Provider、Memory、CLI 与受限运行时。
+
+职责：为 `TOOL` / `CHANNEL` / `CONTEXT` / `MEMORY` / `CLI_ENTRY` 与 `PluginContext` 各提供
+一个**最小合规**的参考实现，供契约测试基类与插件作者直接使用。
+不负责：任何生产行为；也不覆盖 `fakes.py` 已有的模型与会话存储两类。
+
+**为什么与 `fakes.py` 分开**：`fakes.py` 已有 276 行，`sdk/` 的单文件上限是 800，本模块
+再塞进去会逼近上限；更要紧的是两者的定位不同——`fakes.py` 里的
+`FakeModelProvider` / `InMemorySessionStore` 是**可编脚本的**测试替身（有状态、可断言
+调用序列），这里的几个是**参考实现**：它们存在的意义是「契约基类有一个跑得通的样例」，
+`ToolContract` 与 `ChannelContract` 自 `D05` 发布至今都没有这样的东西，`D15` 与
+`tests/sdk/` 因此各自私下写了一份。两个入口都由 `sdk.testing` 统一导出。
+
+**`FakePluginContext` 的权限语义是认真的**（不是空壳）：四个资源访问器只有在构造时显式
+授予才拿得到，否则**属性访问**就抛 `PERMISSION_DENIED`——与 `sdk/api.py` 写死的语义一致。
+这让 `D26` 的权限模型在落地之前就有一个可对照的行为基准，也让插件作者能在没有 Kernel 的
+情况下测出自己的越权路径。
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from logging import Logger, getLogger
+from pathlib import Path
+
+from nucleamind.contracts import (
+    CancelSignal,
+    ContextFragment,
+    Correlation,
+    ErrorCode,
+    EventName,
+    FragmentKind,
+    FragmentScope,
+    InboundMessage,
+    JsonValue,
+    NucleaError,
+    OutboundMessage,
+    PermissionKind,
+    RiskLevel,
+    SecretStr,
+    SessionSnapshot,
+    SideEffect,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+    TrustLevel,
+)
+
+__all__ = [
+    "ECHO_SPEC",
+    "EchoTool",
+    "FakeCliEntry",
+    "FakeMemoryProvider",
+    "FakePluginContext",
+    "NullChannel",
+    "RecordingEventSubscriber",
+    "StaticContextProvider",
+]
+
+
+# ------------------------------------------------------------------------------------ 工具
+
+#: `EchoTool` 的声明。只读 + `SAFE`，因此 `ToolContract` 的「只读工具不产生副作用」
+#: 那条用例在它身上是可断言的。
+ECHO_SPEC = ToolSpec(
+    name="test.echo",
+    description="原样返回 text 参数。",
+    parameters={
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    },
+    read_only=True,
+    risk=RiskLevel.SAFE,
+)
+
+
+class EchoTool:
+    """最小合规 `ToolHandler`：回显 `text`，坏参数返回失败结果而**不是**抛异常。
+
+    「失败是一等结果」是 `ToolHandler` 契约的核心（逸出的异常会让 Kernel 只能把副作用
+    标成 `UNKNOWN`），因此参考实现必须把这条演示出来。
+    """
+
+    def __init__(self) -> None:
+        #: 收到过的全部调用，按顺序。「这个工具真的跑了吗」直接读它。
+        self.calls: list[ToolInvocation] = []
+
+    async def execute(self, invocation: ToolInvocation, cancel: CancelSignal) -> ToolResult:
+        del cancel
+        self.calls.append(invocation)
+        text = invocation.call.arguments.get("text")
+        if not isinstance(text, str):
+            return ToolResult(
+                call_id=invocation.call.call_id,
+                ok=False,
+                content="text 必须是字符串。",
+                truncated=False,
+                side_effect=SideEffect.NONE,
+                error=NucleaError(ErrorCode.INPUT_MALFORMED, "text 必须是字符串。"),
+            )
+        return ToolResult(
+            call_id=invocation.call.call_id,
+            ok=True,
+            content=text,
+            truncated=False,
+            side_effect=SideEffect.NONE,
+        )
+
+
+# -------------------------------------------------------------------------- Context Provider
+
+
+class StaticContextProvider:
+    """最小合规 `ContextProvider`：每轮贡献同一批片段。
+
+    默认那一条是 `trust=SYSTEM`——它是唯一能进系统指令位置的凭据（`kind` 不参与判定），
+    参考实现演示的正是这条。
+    """
+
+    def __init__(self, *fragments: ContextFragment) -> None:
+        self._fragments = fragments or (
+            ContextFragment(
+                source="builtin:test",
+                kind=FragmentKind.SYSTEM,
+                content="你是一个测试助手。",
+                priority=0,
+                estimated_tokens=8,
+                scope=FragmentScope.SESSION,
+                trust=TrustLevel.SYSTEM,
+            ),
+        )
+        #: 被调用过几次。
+        self.calls = 0
+
+    async def provide(
+        self, snapshot: SessionSnapshot, correlation: Correlation, cancel: CancelSignal
+    ) -> tuple[ContextFragment, ...]:
+        del snapshot, correlation, cancel
+        self.calls += 1
+        return self._fragments
+
+
+# ---------------------------------------------------------------------------------- Channel
+
+
+class NullChannel:
+    """最小合规 `Channel`：可启停、可投递，`receive()` 产出预置的入站消息后即结束。
+
+    `stop()` 可重复调用（契约要求它不抛），`deliver()` 只是记录——断言「发出去了什么」
+    直接读 `delivered`。
+    """
+
+    def __init__(self, channel_id: str = "fake", inbox: Iterable[InboundMessage] = ()) -> None:
+        self._channel_id = channel_id
+        self._inbox = tuple(inbox)
+        #: 投递出去的全部消息，按顺序。
+        self.delivered: list[OutboundMessage] = []
+        self.started = 0
+        self.stopped = 0
+
+    @property
+    def channel_id(self) -> str:
+        return self._channel_id
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+    def receive(self) -> AsyncIterator[InboundMessage]:
+        return self._receive()
+
+    async def _receive(self) -> AsyncIterator[InboundMessage]:
+        for message in self._inbox:
+            yield message
+
+    async def deliver(self, message: OutboundMessage) -> None:
+        self.delivered.append(message)
+
+
+# ----------------------------------------------------------------------------------- Memory
+
+
+class FakeMemoryProvider:
+    """内存版 `MemoryProvider`。`recall()` 按插入顺序返回，即「相关度顺序」。
+
+    刻意不做任何检索：契约只要求「按相关度顺序返回」，而一个假的相关度模型只会让继承者
+    去模仿它。子串匹配足以让调用方的代码路径跑通。
+    """
+
+    def __init__(self) -> None:
+        self._records: dict[str, ContextFragment] = {}
+        self._next = 0
+
+    async def remember(self, fragment: ContextFragment, cancel: CancelSignal) -> str:
+        del cancel
+        self._next += 1
+        record_id = f"mem-{self._next}"
+        self._records[record_id] = fragment
+        return record_id
+
+    async def recall(
+        self,
+        query: str,
+        *,
+        scope: FragmentScope,
+        limit: int,
+        cancel: CancelSignal,
+    ) -> Mapping[str, ContextFragment]:
+        del cancel
+        hits = {
+            record_id: fragment
+            for record_id, fragment in self._records.items()
+            if fragment.scope is scope and query in fragment.content
+        }
+        return dict(list(hits.items())[:limit])
+
+    async def forget(self, record_id: str) -> bool:
+        return self._records.pop(record_id, None) is not None
+
+
+# -------------------------------------------------------------------------------- CLI 入口
+
+
+class FakeCliEntry:
+    """最小合规 `CliEntry`：记录 argv 并返回预置的退出码。"""
+
+    def __init__(self, exit_code: int = 0) -> None:
+        self._exit_code = exit_code
+        #: 每次 `run()` 收到的 argv，按顺序。
+        self.invocations: list[tuple[str, ...]] = []
+
+    async def run(self, argv: Sequence[str], cancel: CancelSignal) -> int:
+        cancel.raise_if_requested()
+        self.invocations.append(tuple(argv))
+        return self._exit_code
+
+
+# --------------------------------------------------------------------------- PluginContext
+
+
+class RecordingEventSubscriber:
+    """记录订阅关系的 `EventSubscriber`。重复订阅同一 `(event, handler)` 视为一次。"""
+
+    def __init__(self) -> None:
+        self.subscriptions: list[tuple[EventName, object]] = []
+
+    def subscribe(self, event: EventName, handler: object) -> None:
+        if (event, handler) not in self.subscriptions:
+            self.subscriptions.append((event, handler))
+
+
+class FakePluginContext:
+    """最小合规 `PluginContext`，权限语义是**真的**（`D26` 之前的行为基准）。
+
+    四个资源访问器是 property：未授予时**属性访问**就抛 `PERMISSION_DENIED`，
+    插件拿不到「看起来能用、调用才失败」的对象。`D16` 的 Host 只持有并转交它，
+    因此这里不需要 fs / net / shell 的真实实现——`granted` 里给了也只会拿到一个
+    `NotImplementedError`，那正是「D16 不做权限」的诚实形态。
+    """
+
+    def __init__(
+        self,
+        plugin_id: str = "fake",
+        *,
+        config: Mapping[str, JsonValue] | None = None,
+        state_dir: Path | None = None,
+        granted: frozenset[PermissionKind] = frozenset(),
+        secrets: Mapping[str, str] | None = None,
+    ) -> None:
+        self._plugin_id = plugin_id
+        self._config = dict(config or {})
+        self._state_dir = state_dir or Path(".")
+        self._granted = granted
+        self._secrets = dict(secrets or {})
+        self._events = RecordingEventSubscriber()
+        #: 经 `spawn_task()` 登记过的任务名，按顺序。不真的起协程——「谁的任务」可判定
+        #: 才是这个 API 存在的理由，而那件事记下名字就够断言了。
+        self.tasks: list[str] = []
+
+    @property
+    def plugin_id(self) -> str:
+        return self._plugin_id
+
+    @property
+    def config(self) -> Mapping[str, JsonValue]:
+        return dict(self._config)
+
+    @property
+    def state_dir(self) -> Path:
+        return self._state_dir
+
+    @property
+    def logger(self) -> Logger:
+        return getLogger(f"nucleamind.plugin.{self._plugin_id}")
+
+    @property
+    def events(self) -> RecordingEventSubscriber:
+        return self._events
+
+    def spawn_task(self, coro: object, *, name: str) -> None:
+        del coro
+        self.tasks.append(name)
+
+    def _require(self, permission: PermissionKind) -> None:
+        if permission not in self._granted:
+            raise NucleaError(
+                ErrorCode.PERMISSION_DENIED,
+                "插件未被授予该权限。",
+                detail={"plugin": self._plugin_id, "permission": permission.value},
+            )
+
+    @property
+    def fs(self) -> object:
+        self._require(PermissionKind.FS_READ)
+        raise NotImplementedError("FakePluginContext 不提供真实文件访问（D26 落地）。")
+
+    @property
+    def net(self) -> object:
+        self._require(PermissionKind.NET)
+        raise NotImplementedError("FakePluginContext 不提供真实出网（D26 落地）。")
+
+    @property
+    def shell(self) -> object:
+        self._require(PermissionKind.SHELL)
+        raise NotImplementedError("FakePluginContext 不提供真实子进程（D26 落地）。")
+
+    def secret(self, name: str) -> SecretStr:
+        """取一个凭据。
+
+        **未授权与「授权了但没配」必须可区分**（`sdk/api.py` 写死的约定）：前者
+        `PERMISSION_DENIED`，后者 `CONFIG_SECRET_MISSING`——用户才知道该去改权限还是补配置。
+        """
+        self._require(PermissionKind.SECRET)
+        if name not in self._secrets:
+            raise NucleaError(
+                ErrorCode.CONFIG_SECRET_MISSING,
+                "已授权但配置里没有该凭据。",
+                detail={"plugin": self._plugin_id, "secret": name},
+            )
+        return SecretStr(self._secrets[name])

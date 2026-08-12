@@ -1,0 +1,99 @@
+"""注册意图的 kernel 侧投影：`CapabilityDeclaration` 与 `LoadRequest`（技术方案 §7.2）。
+
+职责：以契约层认识的类型描述「一个提供方声明了哪些能力、从哪导入 `setup`、是否关键」，
+作为 Host 与 loader 的输入。
+不负责：解析或校验 manifest（那是 `sdk/manifest.py`，且 `R2` 禁止 `kernel/` import
+`sdk/`）、导入实现、判定谁生效。本模块是纯数据，无 IO。
+
+**为什么不直接用 `sdk.PluginManifest`**：`R2` 禁止 `kernel/` import `sdk/`。因此由
+`runtime/`（唯一组装根）把 manifest 翻译成这里的形状——这与 `D06` 定下的
+「`overrides` 以原始串跨层传递、两侧共用 `contracts.parse_capability_target()`」是同一条
+思路，kernel 侧不出现第二套 manifest 校验。内建与外部插件因此共用同一条注册路径
+（`SDK-007`），差异只在「谁来产出 `LoadRequest`」。
+
+**`priority: int | None` 是本模块最要紧的一个字段**，也是与 `sdk.CapabilityDecl` 唯一的
+实质差别。后者的默认值是 `100`（技术方案 §7.2），照搬过来会让每一项内建能力都拿到 100，
+而 §6.1 规则 1 定的内建基准是 **0**——这两条方案彼此打架，`D16` 的结论是：
+**`None` 表示「声明里没写」**，交给 `RegistrationBatch.add(priority=None)` 落到
+`base_priority_for()`（内建 0 / 插件 100）。翻译方（`runtime/wiring.py`）用 pydantic 的
+`model_fields_set` 判断作者是否真的写过这个字段。若不这么做，§10.2 的裁剪顺序
+（「其余按 priority 逆序丢弃」）就会失去「内建最后被裁」这个前提。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from nucleamind.contracts import (
+    Builtin,
+    CapabilityKind,
+    CapabilityRef,
+    ErrorCode,
+    NucleaError,
+    ProviderId,
+    parse_capability_target,
+)
+
+__all__ = ["CapabilityDeclaration", "LoadRequest"]
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityDeclaration:
+    """manifest 里一项能力声明的 kernel 投影。
+
+    `overrides` 保持**原始串**（`"builtin:fs.read"` / `"plugin:<id>:<name>"`），与
+    `Registration.overrides` 同形：解码只用 `contracts.parse_capability_target()` 一处
+    实现，两侧不会出现两套对不上的正则。
+    """
+
+    kind: CapabilityKind
+    name: str
+    overrides: str | None = None
+    priority: int | None = None
+
+    def __post_init__(self) -> None:
+        # 名字的形状借 `CapabilityRef` 校验——与 manifest 侧同一份实现（`sdk/manifest.py`
+        # 也是这么做的），因此「manifest 通过了但 kernel 拒绝」不可能发生。
+        CapabilityRef(kind=self.kind, name=self.name, provider=Builtin())
+        if self.overrides is not None:
+            parse_capability_target(self.overrides)
+        if self.priority is not None and self.priority < 0:
+            raise NucleaError(
+                ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                "能力优先级不得为负。",
+                detail={"capability": f"{self.kind.value}:{self.name}", "priority": self.priority},
+            )
+
+    @property
+    def slot(self) -> tuple[CapabilityKind, str]:
+        """`(kind, name)`，Host 回查声明表用的键。与 `sdk.CapabilityDecl.slot` 同形。"""
+        return (self.kind, self.name)
+
+
+@dataclass(frozen=True, slots=True)
+class LoadRequest:
+    """一个提供方的一次加载请求：谁、从哪导入 `setup`、声明了什么、是否关键。
+
+    `critical` 是**提供方级**的（`PluginManifest.critical`，不是每项能力各有一个），
+    Host 把它原样灌进 `RegisteredHook` 与 `RegisteredContextProvider`——`CTX-005` 与
+    `PLG-004` 的分叉必须在 kernel 里判，而 kernel 不认识 manifest。
+    """
+
+    provider: ProviderId
+    setup: str
+    declarations: tuple[CapabilityDeclaration, ...]
+    critical: bool = False
+
+    def __post_init__(self) -> None:
+        seen: set[tuple[CapabilityKind, str]] = set()
+        for declaration in self.declarations:
+            if declaration.slot in seen:
+                raise NucleaError(
+                    ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                    "同一提供方重复声明了同一能力。",
+                    detail={
+                        "provider": str(self.provider),
+                        "capability": f"{declaration.kind.value}:{declaration.name}",
+                    },
+                )
+            seen.add(declaration.slot)

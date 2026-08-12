@@ -11,11 +11,14 @@ Fake（`RecordingToolInvoker` / `RecordingHookDispatcher`），因为它要单�
 `DedupCache`、`EventBus` 全是生产实现，Fake 只出现在**能力边界**上（模型、会话存储、
 工具、Context Provider）。D15 要暴露的正是这条真实装配链上的问题。
 
-**能力经 `RegistrationBatch` 注册再由 `*_from(registry)` 取回**，而不是直接把列表塞进
+**能力经真 Host 注册再由 `*_from(registry)` 取回**，而不是直接把列表塞进
 `OrchestratorDeps`：`D14` 定死的四个注册载荷形状（`RegisteredHook` /
 `RegisteredContextProvider` / `RegisteredTool` / `RegisteredCommand`）只有走这条路才会被
-真正核对，而那正是 `D16` 的 Host 将要走的路。模型与会话存储仍直接注入——`kernel/turn/`
-还没有 `model_from()` / `session_store_from()`，那是 `D23` 的装配根的事。
+真正核对。**`D16` 之后这里用的就是生产 Host（`kernel.plugins.CapabilityHost`）**——
+`D15` 时它还是手写的 `batch.add(...)`，那是权宜；留着两套注册路径就等于让集成测试证明的
+是一条没人会走的路。模型与会话存储仍直接注入 `OrchestratorDeps`：`kernel/turn/` 至今没有
+`model_from()` / `session_store_from()` 那样的槽位（取回函数本身 `D16` 已补在
+`kernel/plugins/capabilities.py`，接进 deps 是 `D23` 装配根的事）。
 """
 
 from __future__ import annotations
@@ -59,6 +62,7 @@ from nucleamind.contracts import (
     TurnId,
 )
 from nucleamind.kernel.observability import EventBus, MemoryRingSink
+from nucleamind.kernel.plugins import CapabilityDeclaration, CapabilityHost
 from nucleamind.kernel.registry import CapabilityRegistry, ResolutionReport, resolve_into
 from nucleamind.kernel.routing import (
     DedupCache,
@@ -81,7 +85,12 @@ from nucleamind.kernel.turn import (
     context_providers_from,
     tools_from,
 )
-from nucleamind.sdk.testing import FAKE_MODEL_ID, FakeModelProvider, InMemorySessionStore
+from nucleamind.sdk.testing import (
+    FAKE_MODEL_ID,
+    FakeModelProvider,
+    FakePluginContext,
+    InMemorySessionStore,
+)
 
 __all__ = [
     "INSTANCE",
@@ -264,6 +273,28 @@ def continued(rewritten: str, *fragments: ContextFragment) -> CommandResult:
 # ---------------------------------------------------------------------------------- 装配
 
 
+def _declare(kind: CapabilityKind, name: str) -> CapabilityDeclaration:
+    return CapabilityDeclaration(kind=kind, name=name)
+
+
+def _dispatch(
+    host: CapabilityHost[FakePluginContext],
+    declaration: CapabilityDeclaration,
+    payload: object,
+) -> None:
+    """按 kind 走对应的注册方法。载荷形状由 Host 自己再构造一遍——这正是要核对的。"""
+    if isinstance(payload, RegisteredTool):
+        host.register_tool(payload.spec, payload.handler)
+    elif isinstance(payload, RegisteredHook):
+        host.on(payload.hook, payload.handler)
+    elif isinstance(payload, RegisteredContextProvider):
+        host.register_context_provider(declaration.name, payload.provider)
+    elif isinstance(payload, RegisteredCommand):
+        host.register_command(payload.spec, payload.handler)
+    else:  # pragma: no cover - 骨架只用这四类
+        raise AssertionError(f"未知的注册载荷：{type(payload).__name__}")
+
+
 @dataclass(slots=True)
 class Skeleton:
     """一次装配的全部把手。"""
@@ -300,17 +331,43 @@ def wire(
     limits: TurnLimits | None = None,
     stream: bool = True,
 ) -> Skeleton:
-    """注册能力 → 解析并冻结 → 派生绑定 → 装成一个可用的 `TurnOrchestrator`。"""
+    """注册能力 → 解析并冻结 → 派生绑定 → 装成一个可用的 `TurnOrchestrator`。
+
+    注册**走生产 Host**（`CapabilityHost`），因此这条链子顺带核对了 Host 的分派：
+    能力名怎么定、载荷是什么形状、声明表是否与实际注册一致，全都由它说了算。
+
+    **`critical` 按提供方分批**：它在 manifest 里是**提供方级**字段（`PluginManifest.critical`），
+    Host 因此把同一个值灌给自己注册的每一项——`D15` 手写 `batch.add` 时可以逐项指定，
+    生产路径上不能。这里按 `critical` 把能力分成两批、各开一个 Host，两批共用
+    `Builtin()`（`ProviderId` 与 priority 基准因此完全不变），既保住了各用例原有的语义，
+    也如实反映了「关键性是插件的属性，不是单个能力的属性」。
+    """
     registry = CapabilityRegistry()
-    with registry.batch(Builtin()) as batch:
-        for item in tools:
-            batch.add(CapabilityKind.TOOL, item.spec.name, item)
-        for name, hook in hooks:
-            batch.add(CapabilityKind.HOOK, name, hook)
-        for name, provider in context:
-            batch.add(CapabilityKind.CONTEXT, name, provider)
-        for name, registered in commands:
-            batch.add(CapabilityKind.COMMAND, name, registered)
+    groups: dict[bool, list[tuple[CapabilityDeclaration, object]]] = {False: [], True: []}
+    for item in tools:
+        groups[False].append((_declare(CapabilityKind.TOOL, item.spec.name), item))
+    for _, hook in hooks:
+        groups[hook.critical].append((_declare(CapabilityKind.HOOK, hook.hook.value), hook))
+    for name, provider in context:
+        groups[provider.critical].append((_declare(CapabilityKind.CONTEXT, name), provider))
+    for name, registered in commands:
+        groups[False].append((_declare(CapabilityKind.COMMAND, name), registered))
+
+    for critical, entries in groups.items():
+        if not entries:
+            continue
+        batch = registry.batch(Builtin())
+        host = CapabilityHost(
+            batch,
+            FakePluginContext("d15-skeleton"),
+            declarations=tuple(declaration for declaration, _ in entries),
+            critical=critical,
+        )
+        for declaration, payload in entries:
+            _dispatch(host, declaration, payload)
+        host.finish()
+        batch.commit()
+
     report = resolve_into(registry)
     # 冲突就地失败：一个装不起来的实例继续跑下去，后面的断言全部失去意义（`CMD-002`
     # 的「启动期报错」在真实装配里也是这个位置）。

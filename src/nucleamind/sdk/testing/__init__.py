@@ -10,6 +10,16 @@
 
 from __future__ import annotations
 
+from .capabilities import (
+    ECHO_SPEC,
+    EchoTool,
+    FakeCliEntry,
+    FakeMemoryProvider,
+    FakePluginContext,
+    NullChannel,
+    RecordingEventSubscriber,
+    StaticContextProvider,
+)
 from .contracts import (
     ChannelContract,
     ContextProviderContract,
@@ -29,15 +39,23 @@ from .fakes import (
 )
 
 __all__ = [
+    "ECHO_SPEC",
     "FAKE_MODEL_ID",
     "ChannelContract",
     "ContextProviderContract",
+    "EchoTool",
+    "FakeCliEntry",
+    "FakeMemoryProvider",
     "FakeModelProvider",
+    "FakePluginContext",
     "InMemorySessionStore",
     "ManualCancel",
     "ModelProviderContract",
+    "NullChannel",
+    "RecordingEventSubscriber",
     "RecordingHook",
     "SessionStoreContract",
+    "StaticContextProvider",
     "ToolContract",
     "make_correlation",
     "text_response",

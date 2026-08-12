@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-12
-- 当前阶段：阶段 4 编排闭环**已收口**（`D00`–`D15` 均已完成，下一步 `D16`，进入阶段 5）
+- 当前阶段：阶段 5 内建能力**开工**（`D00`–`D16` 均已完成，下一步 `D17`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -667,6 +667,98 @@
     `check_startup_cost --check` OK。CI 门禁第 4 步已加上 `tests/integration`
     （技术方案 §12.4；CI 实际跑的是裸 `pytest`，`testpaths` 已覆盖）。
 
+- **`D16` 内建加载路径与契约测试套件**（`kernel/plugins/` 4 个文件约 830 行 +
+  `builtins/registry.py` + `runtime/wiring.py` + `sdk/testing/capabilities.py`，
+  外加 `tests/kernel/test_{host,plugin_capabilities,plugin_declarations,builtin_loader}.py`、
+  `tests/runtime/`、`tests/sdk/test_contract_reverse_samples.py`、
+  `tests/architecture/test_builtin_no_privilege.py`、`tests/integration/test_no_builtins.py`
+  共 104 个新用例）：
+  - **`NucleaAPI` / `PluginContext` 没有下沉 `contracts/`**，`CapabilityHost` 是它们的
+    **结构化**实现（仓库先例：`HookRouter`「结构化满足 `deps.HookDispatcher`」）。与 `D05`
+    下沉 `CliEntry`、`D11` 下沉 `SecretStr` 不同——那两个是 kernel **要调用**的类型，而
+    Host 只是**持有并转交** ctx、自己一个成员都不碰。ctx 因此做成泛型参数
+    `CapabilityHost[ContextT]`：kernel 对它连一个结构假设都不做。
+    **标成 `object` 是行不通的**（试过）：那样 `ctx` 的返回类型与 `NucleaAPI.ctx` 声明的
+    `PluginContext` 不兼容，一致性就在任何地方都证明不了。
+  - **一致性的证明落在 `runtime/wiring.py` 的一句类型标注上**
+    （`conformance: NucleaAPI = host`）。理由是硬的：`pyproject.toml` 的 basedpyright 配置是
+    `exclude = ["**/tests"]`，测试**验不了**签名兼容；而 `contracts/protocols.py` 写死了
+    `runtime_checkable` 只作诊断、永不参与控制流，`isinstance` 同样证明不了。`runtime/` 是
+    唯一同时看得见 kernel 与 sdk、又在严格检查范围内的层。证明**放在生产路径上**
+    （`load_into(host_for=...)` 真的会调它），不是一个只为证明而存在、随时会被当成死代码
+    删掉的函数——`tests/runtime/test_wiring.py` 另有一条 AST 断言盯着「那句标注还在、
+    且没被改成 `cast`」。
+  - **五个缺口 kind 一律包一层 dataclass**（`RegisteredModelProvider` /
+    `RegisteredSessionStore` / `RegisteredChannel` / `RegisteredMemoryProvider` /
+    `RegisteredCliEntry`），哪怕字段只有一个。这不是形式主义：取回函数要把
+    `payload: object` 窄化，而 Protocol 的 `isinstance` 既被契约层禁止用于控制流、
+    本身也只看方法名——`test_a_bare_implementation_object_is_not_an_acceptable_payload`
+    就是拿 `FakeModelProvider` 证明裸实现能蒙混过关的。五个 binding 共用一个泛型
+    `CapabilityBinding[T]`（它们的元数据完全相同，五份同构 dataclass 只会让「改一处忘四处」
+    有五倍机会），与 `HookBinding` / `ContextProviderBinding` 各自独立并不矛盾——那两个
+    各有独有字段。**两个 SINGLETON 的取回函数返回 `| None`**：`BUILTIN_MANIFESTS` 是空元组，
+    非可选会让每条装配路径当场炸掉；`EDG-108` 的「CLI 入口必须存在」是 `D23` 的判定。
+  - **`builtin_loader.py` 读不到 `BUILTIN_MANIFESTS`，这是刻意的**（与开发方案
+    「静态内建清单 bootstrap」的字面表述有出入，已回写技术方案）：`R2` 只允许 `kernel/`
+    import `contracts` 与 `kernel`，而 `PluginManifest` 在 `sdk/`、`BUILTIN_MANIFESTS` 在
+    `builtins/`，两个都够不着。于是它做成**对 `LoadRequest` 泛化的 setup 运行器**，
+    manifest 的翻译留给 `runtime/wiring.py`。好处不止是绕开规则：`D27` 的外部 loader 因此是
+    它的同级调用方而不是第二份实现，`SDK-007` 才真正成立。
+  - **两个 `priority` 默认值与内建基准 0 打架，各修一处**。① `CapabilityDecl.priority` 的
+    默认值是 100（技术方案 §7.2），照搬会让每一项内建能力都落在 100，而 §6.1 规则 1 定的
+    内建基准是 **0**——`to_declaration()` 用 pydantic 的 `model_fields_set` 判断作者**是否真的
+    写过**这个字段，没写就留 `None` 交给 `base_priority_for()`。② `NucleaAPI.on()` 的签名默认值
+    同样是 100，调用侧分不清「写了 100」和「什么都没写」，Host 因此把「等于
+    `PLUGIN_BASE_PRIORITY`」一律视为未声明。**两条都不修的话，§10.2 的「内建最后被裁」与
+    §6.1 的「内建排在插件前」会同时静默失效，且不报任何错。** 有
+    `test_on_default_priority_equals_the_plugin_baseline` 用 `inspect.signature` 把 SDK 那个
+    默认值钉住。
+  - **未声明的注册与声明了却没注册都是 `PLUGIN_LOAD_FAILED`**，靠 `detail` 区分。放行前者
+    等于让 manifest 的 `capabilities` 变成没有约束力的文档，而 `overrides` 只能从那里来
+    （`EDG-102`）；放行后者则会让用户看到一项查得到却不存在的能力。**没有新增错误码**——
+    `PLUGIN_REGISTRATION_CONFLICT` 是「两个提供方抢一个槽位」，与这两件事在诊断里必须可分；
+    `PLUGIN_MANIFEST_UNSUPPORTED` 属 `INCOMPATIBLE` 类，会误导用户去升级 SDK。
+  - **HOOK 的能力名由 `hook` 派生**：`on()` 没有 name 形参而 registry 需要一个。同一提供方
+    对同一 Hook 绑第二个 handler 是合法的（HOOK 是 MULTI），但批次内 `(kind, name)` 必须唯一，
+    因此第二次起用 `<hook>.2`；**声明表始终按基名回查**，N 次注册共享同一条声明。
+  - **`tests/integration/_support.py` 已改用生产 Host**（README 点名的「不要留两套注册路径」）。
+    改完暴露出一条**真实语义差异**：`critical` 在 manifest 里是**提供方级**字段，Host 因此把
+    同一个值灌给自己注册的每一项，而 `D15` 手写 `batch.add` 时是逐项指定的。修法是按
+    `critical` 把能力分成两批、各开一个 Host，**两批共用 `Builtin()`**（`ProviderId` 与
+    priority 基准完全不变）——既保住各用例原有语义，也如实反映「关键性是插件的属性，不是
+    单个能力的属性」。`test_skeleton_turn.py` 那 9 条事件名序列与 7 个 Hook 顺序**一字未改
+    地通过了**，那正是这次改接想要的结论。
+  - **`sdk.testing` 补了五类参考实现**：`EchoTool` + `ECHO_SPEC` / `NullChannel` /
+    `StaticContextProvider` / `FakeMemoryProvider` / `FakeCliEntry` / `FakePluginContext` /
+    `RecordingEventSubscriber`，放在新的 `sdk/testing/capabilities.py`（`fakes.py` 已 276 行，
+    且两者定位不同：那边是**可编脚本的测试替身**，这边是**参考实现**）。`ToolContract` 与
+    `ChannelContract` 自 `D05` 发布至今没有任何随 SDK 发布的样例，`D15` 与 `tests/sdk/` 因此
+    各自私下写了一份——`D16` 把第三份的需求消掉了。**`FakePluginContext` 的权限语义是真的**：
+    四个访问器未授予时**属性访问**就抛 `PERMISSION_DENIED`，`secret()` 区分
+    `PERMISSION_DENIED` 与 `CONFIG_SECRET_MISSING`，给 `D26` 留一个行为基准。
+  - **5 个契约基类各配了一个「故意不合规」的反向样例**（`test_contract_reverse_samples.py`，
+    `ModelProviderContract` 的那个 `D05` 已有）。开发方案把「契约基类的用例质量」列为本模块
+    的真实风险，而**一个不会失败的契约基类比没有契约基类更危险**——它给的是虚假的可替换性
+    保证。四个违约实现都不是臆造的：空会话抛错、坏参数抛异常而不返回失败结果、
+    `stop()` 不幂等，都是实现方最常见的偷懒方式。
+  - **与开发方案交付清单的两处偏差**：① `test_kernel_runs_without_builtins.py` 改放
+    `tests/integration/test_no_builtins.py`——它必须真的跑一次 turn，而
+    `tests/architecture/` 的既定职责是「只做 AST 与文本读取、不导入被测模块」
+    （由 `test_guard_integrity.py` 守着）；② `kernel/plugins/` 交付 4 个模块而不是 2 个
+    （`declarations` / `capabilities` / `host` / `builtin_loader`），理由与 `D10`、`D12` 同：
+    `kernel/` 单文件上限 500 行。
+  - `test_builtin_no_privilege.py` 除了复用 `R4` 的依赖判定，另加一条**符号扫描**：
+    `builtins/` 不得**提到** `RegistrationBatch` / `CapabilityRegistry` / `CapabilityHost` /
+    `resolve_into`。理由是 `R4` 拦得住 import，却拦不住「在 `builtins/` 里写一套内建专用的
+    注册辅助函数」——那不违反任何依赖规则。
+  - 验收：`tests/architecture`(60) + `contracts` + `sdk`(134) + `kernel` + `baseline` +
+    `integration`(32) + `runtime`(11) 共 **1342 个用例全绿**（`D15` 收口时 1238）；
+    `kernel/plugins/` 语句覆盖率 **100%**。`ruff check`（src + plugins + tests）、
+    `basedpyright`（新层 0 报错）、`legacy_debt --check` 未变、`check_startup_cost --check` OK
+    （`import nucleamind` 仍只拉入 1 个模块，`wiring` 没有被急切导入）；新层 `Any` 数仍为 0。
+    完整 `tests/legacy` 14 failed / 4808 passed / 30 skipped，失败全部落在既有那批网络、
+    子进程时序与 oauth-cli-kit 家族。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -684,9 +776,12 @@
   `D07` 基线里 `test_loop_behavior.py` 的编排决定项、`D08` 欠的 `tool.cancel_timeout` 码、
   `D09` 欠的检查点 1/4 与总超时看门狗一并兑现，**turn 事件从此有了唯一发布点**；
   `D15` 已完成，`tests/integration/` 用 Fake 能力把整条装配链跑通（28 个用例、0.67 s），
-  **阶段 4 收口**。
-  `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/` 与 `routing/`；
-  `builtins/`、`runtime/`、`embed/` 仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
+  **阶段 4 收口**；`D16` 已完成，唯一的 Host `NucleaAPI` 实现、九个 kind 的注册载荷与取回
+  函数、静态清单 bootstrap 与组装根就位，`D15` 暴露的五个 kind 缺口一并补齐，
+  **阶段 5 开工**。
+  `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
+  `plugins/`；`builtins/` 有 `registry.py`（`BUILTIN_MANIFESTS` 为空元组，`D17`–`D22`
+  逐个追加），`runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -734,34 +829,54 @@
 
 ## 下一步工作
 
-1. 进入阶段 5 的 `D16` 内建加载路径与契约测试套件：`builtins/registry.py`
-   （`BUILTIN_MANIFESTS`，此时为空元组）、`kernel/plugins/host.py`（唯一的 Host
-   `NucleaAPI` 实现，统一注册到 `RegistrationBatch`）、`kernel/plugins/builtin_loader.py`、
-   `runtime/wiring.py`（`R5` 的唯一落点）、补全 `sdk/testing/contracts.py` 的 5 个契约基类，
-   外加 `tests/architecture/test_builtin_no_privilege.py`。前置依赖 `D15` 已就绪。
-   **`D15` 的 `tests/integration/_support.py::wire()` 就是 Host 分派的形状预演**——
-   它已经在走「`RegistrationBatch` 注册 → `resolve_into` → `*_from(registry)` 取回」这条路，
-   `D16` 落地 Host 之后应当让 `wire()` 改用真 Host，而不是留两套注册路径。
-2. 随后 `D17` 起逐个填 `builtins/`：至今仍是空骨架。
+1. 进入 `D17` 内建 Session：`builtins/session_jsonl/`（每 session 一个 JSONL + meta.json，
+   追加写 + 原子替换）。`D17`–`D22` 之间无相互依赖，可并行开发。
+   **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
+   `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
+   注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
+   自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
+2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
 
-`D15` 留下的、`D16`/`D23` 必须用到的事实：
+`D16` 留下的、`D17`–`D23` 必须用到的事实：
 
-- **五个 kind 还没有取回函数与注册载荷形状**：`MODEL` / `SESSION_STORE` / `CHANNEL` /
-  `MEMORY` / `CLI_ENTRY`。已落地的四个是 `turn.tools_from` / `turn.bindings_from` /
-  `turn.context_providers_from` / `routing.build_command_index`。`D16` 建立 Host 分派时
-  **必须在同一处把五个载荷形状定下**（技术方案 §6.1 已回写），否则「谁定义形状」会散落到
-  每个消费点上。骨架目前把 `ModelProvider` 与 `SessionStore` 直接注入 `OrchestratorDeps`，
-  那是权宜，不是结论。
+- **注册载荷形状现在九个 kind 全齐了**。`D14` 的四个（`RegisteredTool` / `RegisteredHook` /
+  `RegisteredContextProvider` / `RegisteredCommand`）加 `D16` 的五个（`RegisteredModelProvider`
+  / `RegisteredSessionStore` / `RegisteredChannel` / `RegisteredMemoryProvider` /
+  `RegisteredCliEntry`，都在 `kernel/plugins/capabilities.py`）。取回函数同理九个。
+  **内建能力自己不构造这些形状**——Host 会按 `register_*` 的参数替你构造。
+- **`session_store_from()` 与 `cli_entry_from()` 返回 `| None`**。`D23` 必须在装配根上把
+  「MODEL / SESSION_STORE / CLI_ENTRY 各须有一个生效实现」变成明确的启动错误
+  （§10.1 步骤 8），并实现 `EDG-108` 的「覆盖失败时 CLI 强制回落内建」——kernel 层不做这个
+  判定，它只如实回答有没有。
+- **`critical` 是提供方级的，不是每项能力各有一个**。同一份 manifest 里的全部能力共享一个
+  `critical`；需要不同关键性就得是两个插件。`tests/integration/_support.py` 因此按 `critical`
+  分批注册，`D17`–`D22` 写 manifest 时要意识到这一点。
+- **`priority` 在 manifest 里别写**，除非真的要偏离基准值。写了就会被原样采纳（哪怕写的
+  正好是默认值 100），而内建的基准是 0——`D18` 的 `context_basic` 尤其要注意，§10.2 的
+  「其余按 priority 逆序丢弃」依赖内建排在最前。
+- **`wire_capabilities(context_for=...)` 没有默认值**，因为 `D16` 还没有生产级
+  `PluginContext`（那是 `D26`）。`D23` 之前一律传 `FakePluginContext`；`D26` 落地后在
+  `host.py` 之外补 `PluginContext` 的实现，**不得重写注册分派**。
+- **`BUILTIN_MANIFESTS` 现在是空元组**，`PluginManifest` 拒绝 `capabilities=()`，
+  所以放占位条目是构造不出来的。`D17` 起逐个追加。
+- **五个契约基类各有一个反向样例盯着**（`tests/sdk/test_contract_reverse_samples.py`）。
+  往基类里加用例时，要同时想清楚「什么样的实现会被这条拦下」——加不出反向样例的用例，
+  多半是在描述某个具体实现的行为而不是契约。
+
+`D15` 留下的、`D16` 已兑现的事实：
+
+- ~~**五个 kind 还没有取回函数与注册载荷形状**~~ **`D16` 已补齐**，见上。
+- ~~**`sdk.testing` 目前没有 Fake 工具 / Fake Channel / Fake Context Provider**~~
+  **`D16` 已补**（另加 `FakeMemoryProvider` / `FakeCliEntry` / `FakePluginContext`），
+  `sdk.testing.__all__` 快照相应更新。
+- ~~**`tests/integration/_support.py::wire()` 应当改用真 Host**~~ **`D16` 已改**，
+  并因此发现了 `critical` 的层级差异（见上）。
 - **`tests/integration/` 的 Fake 边界不要往里挪**：Fake 只在能力边界上，能力之间一律生产
   实现。往里挪一层，这套测试就退化成 `tests/kernel/` 的重复。
-- **`sdk.testing` 目前没有 Fake 工具 / Fake Channel / Fake Context Provider**，
-  `D15` 因此在 `tests/integration/_support.py` 里自带了三个最小合规实现（`EchoTool` /
-  `StaticContextProvider` / `StaticCommand`）。**`D15` 刻意没有扩 `sdk.testing.__all__`**
-  ——那是冻结表面，而 `D15` 的要点是「不写新功能」。要不要把它们提升进 SDK，是 `D16`
-  补全契约基类时该一并论证的事（`ToolContract` 至今没有一个随 SDK 发布的参考实现）。
 - **一次 turn 的事件名序列与 Hook 触发顺序都以字面量钉在
   `tests/integration/test_skeleton_turn.py` 里**。改动编排顺序会让它们失败——那是刻意的
-  评审闸门，不要通过放宽断言绕过。
+  评审闸门，不要通过放宽断言绕过。（`D16` 改接真 Host 之后它们仍一字未改地通过。）
+
 
 `D14` 留下的、`D15`/`D16`/`D22`/`D23` 必须用到的事实：
 
@@ -1038,7 +1153,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅   D16– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅   D17– ⬜（尚未开始）
 
 ## 本目录文档分类
 

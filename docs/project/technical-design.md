@@ -223,13 +223,17 @@ src/nucleamind/
 │   │   ├── dispatcher.py      # 命令 / 模型 turn 分流
 │   │   ├── session_lock.py    # 同 session 串行 / 合并 / 拒绝
 │   │   └── dedup.py           # (channel_id, message_id) 有界 LRU
-│   ├── plugins/               # 插件运行时（宿主侧）
-│   │   ├── manifest.py        # PluginManifest 解析与校验
-│   │   ├── discovery.py       # entry point + 显式路径发现
-│   │   ├── loader.py          # 两阶段加载 + 事务性注册
-│   │   ├── lifecycle.py       # 启动 / 停止 / 依赖排序
-│   │   ├── host.py            # NucleaAPI 宿主侧实现
-│   │   └── permissions.py     # 权限授予与 Grant 派发
+│   ├── plugins/               # 插件运行时（宿主侧）。注意**没有** manifest.py：
+│   │                          # manifest 校验只在 sdk/manifest.py，翻译在 runtime/wiring.py
+│   │                          # （R2 禁止 kernel import sdk，见 §6.1 末段）
+│   │   ├── discovery.py       # entry point + 显式路径发现（D25）
+│   │   ├── loader.py          # 两阶段加载 + 事务性注册（D27）
+│   │   ├── lifecycle.py       # 启动 / 停止 / 依赖排序（D27）
+│   │   ├── declarations.py    # CapabilityDeclaration / LoadRequest（D16）
+│   │   ├── capabilities.py    # 五个单值 kind 的载荷形状与取回函数（D16）
+│   │   ├── builtin_loader.py  # 对 LoadRequest 泛化的 setup 运行器（D16）
+│   │   ├── host.py            # NucleaAPI 宿主侧实现（D16）
+│   │   └── permissions.py     # 权限授予与 Grant 派发（D26）
 │   ├── config/
 │   │   ├── layout.py          # 实例目录的路径代数（不含锁）
 │   │   ├── process.py         # 跨平台 PID 存活探测（Liveness 三态）
@@ -253,6 +257,8 @@ src/nucleamind/
 │   ├── version.py             # SDK_VERSION
 │   └── testing/               # 公开测试工具（插件开发者的验收手段）
 │       ├── fakes.py           # FakeModelProvider / InMemorySessionStore / RecordingHook
+│       ├── capabilities.py    # 参考实现：EchoTool / NullChannel / StaticContextProvider
+│       │                      # / FakeMemoryProvider / FakeCliEntry / FakePluginContext（D16）
 │       └── contracts.py       # 5 个契约测试基类
 │
 ├── builtins/                  # 第 4 层：内建默认能力，与插件同等身份
@@ -531,12 +537,25 @@ class CapabilityRef:
 当场核对（`kernel/` 不认识 manifest，因此 `critical` 这类元数据只能由注册方带进载荷里）。
 `D14` 已落地四个：`turn.tools_from` / `turn.bindings_from` / `turn.context_providers_from`
 与 `routing.build_command_index`，对应载荷 `RegisteredTool` / `RegisteredHook` /
-`RegisteredContextProvider` / `RegisteredCommand`。**`D15` 暴露的缺口**：`MODEL` /
-`SESSION_STORE` / `CHANNEL` / `MEMORY` / `CLI_ENTRY` 这五个 kind 既没有取回函数，也没有
-定下载荷形状——骨架集成因此只能把 `ModelProvider` 与 `SessionStore` 直接注入
-`OrchestratorDeps`。这不是 `D14` 的疏漏（那五个都不归 `kernel/turn/`），而是 `D16` 的
-Host 与 `D23` 的 wiring 必须先补的一步：**载荷形状必须在建立注册分派的同一处定下**，
-留到装配时各自 `isinstance` 一遍，就等于把「谁定义形状」这件事分散到每个消费点上。
+`RegisteredContextProvider` / `RegisteredCommand`。**`D15` 暴露的缺口已由 `D16` 补齐**：
+`MODEL` / `SESSION_STORE` / `CHANNEL` / `MEMORY` / `CLI_ENTRY` 五个 kind 的载荷形状与取回
+函数落在 `kernel/plugins/capabilities.py`（`RegisteredModelProvider` /
+`RegisteredSessionStore` / `RegisteredChannel` / `RegisteredMemoryProvider` /
+`RegisteredCliEntry`，配 `model_providers_from` / `session_store_from` / `channels_from` /
+`memory_providers_from` / `cli_entry_from`），与 Host 分派同包——**载荷形状必须在建立注册
+分派的同一处定下**，留到装配时各自 `isinstance` 一遍，就等于把「谁定义形状」这件事分散到
+每个消费点上。
+
+**为什么五个单值 kind 也要包一层 dataclass**（`D16` 的结论）：取回函数必须把
+`Registration.payload`（类型是 `object`）窄化成具体类型，而 `contracts/protocols.py` 写死了
+`runtime_checkable` 只用于诊断输出、**永不参与控制流**——`isinstance(payload, ModelProvider)`
+正是它禁止的用法，且 Protocol 的 `isinstance` 只看方法名存不存在，一个凑巧同形的对象就能
+蒙混过去。具体 dataclass 是唯一既可靠又不违规的窄化手段。
+
+两个 SINGLETON 的取回函数（`session_store_from` / `cli_entry_from`）返回 `| None` 而不是
+抛错：`BUILTIN_MANIFESTS` 在 `D16` 时是空元组，非可选会让每条装配路径当场炸掉。
+`BAS-009`/`EDG-108` 的「CLI 入口必须始终存在」以及 §10.1 步骤 8 的必需能力校验，
+都是 `D23` 在装配根上的判定，kernel 层只如实回答有没有。
 
 **覆盖只能显式声明，永不由加载顺序决定**（`EDG-102`、`EDG-107`）：
 
@@ -580,6 +599,33 @@ class ResolutionReport:
 外部插件还需经过 §7.3 的发现、校验和生命周期流程。
 Host 的注册分派与 `PluginContext` 的资源门面是两个职责：前者在 D16 建立并接收注入的
 Context，后者在 D26 补齐生产级权限实现，禁止为外部插件复制第二套注册分派。
+
+**Host 与 `NucleaAPI` 的层间张力，`D16` 的结论是「结构化实现 + 在 `runtime/` 静态证明」**：
+`R2` 禁止 `kernel/` import `sdk/`，因此 `kernel/plugins/host.py` 的 `CapabilityHost` 不继承
+`NucleaAPI`，而是结构化满足它（仓库先例：`HookRouter` 结构化满足 `deps.HookDispatcher`）。
+`NucleaAPI` 与 `PluginContext` **不下沉 `contracts/`**——与 `D05` 下沉 `CliEntry`、`D11` 下沉
+`SecretStr` 不同，那两个是 kernel **要调用**的类型，而 Host 只是**持有并转交** ctx、自己
+一个成员都不碰。ctx 因此做成泛型参数（`CapabilityHost[ContextT]`）；标成 `object` 行不通，
+那样 `ctx` 的返回类型与 `NucleaAPI.ctx` 声明的 `PluginContext` 不兼容，一致性就无从证明。
+
+一致性由 **`runtime/wiring.py` 里一句类型标注**（`conformance: NucleaAPI = host`）兑现，
+且必须落在生产路径上（`load_into(host_for=...)` 真的会调那个工厂）。理由是硬的：
+`pyproject.toml` 的 basedpyright 配置是 `exclude = ["**/tests"]`，测试验不了签名兼容；
+而 `runtime_checkable` 的 `isinstance` 只看方法名，同样证明不了。`runtime/` 是唯一同时
+看得见 kernel 与 sdk、又在严格类型检查范围内的层。
+
+**`kernel/plugins/builtin_loader.py` 读不到 `BUILTIN_MANIFESTS`**（与开发方案「静态内建清单
+bootstrap」的字面表述有出入，取其意不取其形）：`R2` 只允许 `kernel/` import `contracts` 与
+`kernel`，而 `PluginManifest` 在 `sdk/`、`BUILTIN_MANIFESTS` 在 `builtins/`。因此它是一个
+**对 `LoadRequest` 泛化的 setup 运行器**，manifest 到 `LoadRequest` 的翻译在
+`runtime/wiring.py`。这正是内建与外部插件共用一条注册路径的落点：`D27` 的外部 loader 是它的
+同级调用方而不是第二份实现。
+
+**两处 `priority` 默认值与内建基准 0 的冲突，`D16` 各修一处**：`CapabilityDecl.priority`
+默认 100（§7.2）而内建基准是 0（§6.1 规则 1），`to_declaration()` 用 pydantic 的
+`model_fields_set` 判断作者是否真的写过该字段，没写就留 `None` 交给 `base_priority_for()`；
+`NucleaAPI.on()` 的签名默认值同样是 100，Host 把「等于 `PLUGIN_BASE_PRIORITY`」一律视为
+未声明。两条都不修的话，§10.2 的「内建最后被裁」与「内建排在插件前」会同时静默失效。
 
 ### 6.2 Turn 执行：两层拆分
 
@@ -1456,6 +1502,14 @@ nm capabilities                                 # 报告中可见 provider 与 s
 `ModelProviderContract`、`SessionStoreContract`、`ContextProviderContract`、
 `ToolContract`、`ChannelContract`。每个实现（内建或插件）继承对应契约类并提供
 构造夹具即获得全部用例。契约测试同时是插件开发者的验收工具，因此必须在公开 SDK 内。
+
+**每个契约基类必须有一个「故意不合规」的反向样例**（`D16` 落地，
+`tests/sdk/test_contract_reverse_samples.py`）：一个不会失败的契约基类比没有契约基类更
+危险——继承它的实现会全绿地通过一组什么都没断言的用例，给出的是虚假的可替换性保证。
+往基类里加用例时要同时想清楚「什么样的实现会被这条拦下」；加不出反向样例的用例，多半是在
+描述某个具体实现的行为而不是契约。`sdk/testing/capabilities.py` 另为 5 类能力各提供一个
+**通过**全部基类的参考实现——`ToolContract` 与 `ChannelContract` 自 `D05` 发布到 `D16` 之前
+都没有这样的样例，`D15` 与 `tests/sdk/` 因此各自私下写了一份。
 
 跨平台（`NFR-602`、`NFR-605`）：CI 矩阵 Windows + Linux × Python 3.11/3.12，
 `tests/builtins/test_cross_platform_contract.py` 对 6 个内建工具断言相同的对外行为。
