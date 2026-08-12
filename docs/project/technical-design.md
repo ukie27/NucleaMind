@@ -527,6 +527,17 @@ class CapabilityRef:
 后端不必先卸载现有的。本表的可执行形态是 `contracts/capability.py::CAPABILITY_ARITY`，
 由 `tests/contracts/test_capability.py` 逐行断言。
 
+**从冻结的 registry 取回生效实现，每个 kind 一个具名函数**，且注册载荷的形状由那个函数
+当场核对（`kernel/` 不认识 manifest，因此 `critical` 这类元数据只能由注册方带进载荷里）。
+`D14` 已落地四个：`turn.tools_from` / `turn.bindings_from` / `turn.context_providers_from`
+与 `routing.build_command_index`，对应载荷 `RegisteredTool` / `RegisteredHook` /
+`RegisteredContextProvider` / `RegisteredCommand`。**`D15` 暴露的缺口**：`MODEL` /
+`SESSION_STORE` / `CHANNEL` / `MEMORY` / `CLI_ENTRY` 这五个 kind 既没有取回函数，也没有
+定下载荷形状——骨架集成因此只能把 `ModelProvider` 与 `SessionStore` 直接注入
+`OrchestratorDeps`。这不是 `D14` 的疏漏（那五个都不归 `kernel/turn/`），而是 `D16` 的
+Host 与 `D23` 的 wiring 必须先补的一步：**载荷形状必须在建立注册分派的同一处定下**，
+留到装配时各自 `isinstance` 一遍，就等于把「谁定义形状」这件事分散到每个消费点上。
+
 **覆盖只能显式声明，永不由加载顺序决定**（`EDG-102`、`EDG-107`）：
 
 ```python
@@ -1449,13 +1460,27 @@ nm capabilities                                 # 报告中可见 provider 与 s
 跨平台（`NFR-602`、`NFR-605`）：CI 矩阵 Windows + Linux × Python 3.11/3.12，
 `tests/builtins/test_cross_platform_contract.py` 对 6 个内建工具断言相同的对外行为。
 
+**`tests/integration/` 的边界（`D15` 落地时定下）**：Fake 只出现在**能力边界**上
+（模型、会话存储、工具、Context Provider、命令 handler），能力**之间**的一切
+——`CapabilityRegistry`、覆盖解析、`HookRouter`、`ToolExecutor`、`Dispatcher`、
+`SessionScheduler`、`DedupCache`、`EventBus`、`TurnOrchestrator`——一律是生产实现。
+这条线不是风格偏好：`tests/kernel/` 在 kernel 边界上也放 Fake（那是单测该做的），
+如果集成测试跟着做，两层测的就是同一件事，而「装配链本身装不起来」这类问题恰好落在
+两者之间。同理，能力一律经 `RegistrationBatch` 注册、再由 `*_from(registry)` 取回，
+`D14` 定死的四个注册载荷形状才会被真正核对——那正是 `D16` 的 Host 将要走的路。
+
+「不触碰真实网络」是一条 autouse 夹具而不是一句承诺（`tests/integration/conftest.py`）：
+拦 `socket.connect` / `connect_ex` / `getaddrinfo` 的**目标**，回环放行。不拦
+`socket.socket` 的构造——Windows 的 `ProactorEventLoop` 用 `socketpair()` 做 self-pipe，
+拦构造只会证明事件循环起不来。夹具本身有一条自证用例。
+
 ### 12.4 CI 门禁
 
 ```text
 1  ruff check src/ plugins/
 2  basedpyright（严格）
 3  pytest tests/architecture   -> 失败即阻断，不允许 skip
-4  pytest tests/contracts tests/kernel tests/builtins tests/plugins
+4  pytest tests/contracts tests/kernel tests/builtins tests/plugins tests/integration
 5  pytest tests/e2e            -> 使用录制的模型响应，不依赖真实网络
 6  启动开销回归指标记录
 7  secret 泄漏扫描（哨兵值扫全部 sink 输出）

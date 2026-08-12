@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-12
-- 当前阶段：阶段 4 编排闭环推进中（`D00`–`D14` 均已完成，下一步 `D15`）
+- 当前阶段：阶段 4 编排闭环**已收口**（`D00`–`D15` 均已完成，下一步 `D16`，进入阶段 5）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -624,6 +624,48 @@
     legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
     完整套件 14 failed / 7370 passed / 35 skipped，失败全部落在既有那批网络、子进程时序与
     oauth-cli-kit 家族。
+- **`D15` 骨架集成验收**（`tests/integration/` 4 个文件，约 750 行 / 28 个用例，
+  `src/` 一行未改）：
+  - **Fake 只出现在能力边界上**（模型、会话存储、工具、Context Provider、命令 handler），
+    能力**之间**的一切是生产实现：`CapabilityRegistry` + `resolve_into()`、`HookRouter`、
+    `ToolExecutor`、`Dispatcher`、`SessionScheduler`、`DedupCache`、`EventBus` +
+    `MemoryRingSink`、`TurnOrchestrator`。这条线不是风格偏好——`tests/kernel/` 在 kernel
+    边界上也放 Fake（单测该那么做），集成测试若跟着做，两层测的就是同一件事，而「装配链
+    本身装不起来」恰好落在两者之间。已回写技术方案 §12.3。
+  - **能力一律经 `RegistrationBatch` 注册、再由 `*_from(registry)` 取回**，而不是把列表
+    直接塞进 `OrchestratorDeps`：`D14` 定死的四个注册载荷形状只有走这条路才会被真正核对，
+    而那正是 `D16` 的 Host 将要走的路。
+  - **`D15` 暴露的一个真实缺口**（已回写技术方案 §6.1）：`MODEL` / `SESSION_STORE` /
+    `CHANNEL` / `MEMORY` / `CLI_ENTRY` 五个 kind **既没有取回函数、也没有定下注册载荷
+    形状**，骨架因此只能把 `ModelProvider` 与 `SessionStore` 直接注入 `OrchestratorDeps`。
+    这不是 `D14` 的疏漏（那五个都不归 `kernel/turn/`），是 `D16`/`D23` 必须先补的一步：
+    **载荷形状要在建立注册分派的同一处定下**，留到装配时各自 `isinstance` 一遍，就等于把
+    「谁定义形状」分散到每个消费点上。
+  - **「不触碰真实网络」是一条 autouse 夹具而不是一句承诺**（`conftest.py`）：拦
+    `socket.connect` / `connect_ex` / `getaddrinfo` 的**目标**，回环放行。刻意**不**拦
+    `socket.socket` 的构造——Windows 的 `ProactorEventLoop` 用 `socketpair()` 做 self-pipe，
+    拦构造只会证明事件循环起不来。夹具自身有一条自证用例（探针连 `example.com` 必须被拦）。
+  - **一次含工具调用的 turn 的事件名序列以字面量写死**（9 条，`turn.started` →
+    `session.started` → 两轮 `model.request_started` / `model.response_received` +
+    `tool.call_started` / `tool.call_completed` → `turn.completed`），另有序号连续无缺口、
+    `by_turn()` 覆盖全部事件、以及 `event_to_json` → `json.dumps/loads` 往返三条断言——
+    「可重放」的可执行形态。7 个 Hook 的跨 turn 触发顺序同样以字面量写死，并当场断言
+    「`before_model_request` 分发次数 == 迭代数 == `model.request_started` 条数」。
+  - **中断路径**：取消发生在工具阶段时，已执行工具保留真实结果、未执行的发
+    `tool.call_blocked` 且 `side_effect=NONE`、终态 `CANCELLED` 且 `cancel_reason=USER`、
+    已产生的 assistant 正文落库并 `interrupted=True`、同一 session 的下一条消息照常跑完
+    并看得见上一轮历史。**一处值得记下的事实**：被跳过的工具**也会**留下一条 tool 记录
+    ——模型声明过的每次调用都必须有对应的 tool 消息，缺一条会让续写请求在 Provider 侧被拒。
+  - **写这批用例时踩到的两个坑**（都是「测试写错了」而不是实现有问题，但下一个人会再踩）：
+    ① 两个工具同轮返回时默认**并发**执行（`Concurrency.PARALLEL` 是 `ToolSpec` 的默认值），
+    要制造「未执行的工具」必须显式给第二个工具 `EXCLUSIVE` 让它单独成批；
+    ② `TrustLevel` 的四个取值是 `SYSTEM`/`OPERATOR`/`USER`/`UNTRUSTED`，没有 `TRUSTED`。
+  - 验收：`tests/architecture` + `contracts` + `sdk` + `kernel` + `baseline` +
+    `integration` 共 **1238 个用例全绿**（`D14` 收口时 1210）；`tests/integration` 单跑
+    **0.67 s**（预算 5 s），且有一条单 turn ≤1 s 的墙钟断言。并发一律用 `asyncio.Event`
+    制造确定的重叠窗口，**全程不用 `sleep`**。`ruff check`、`legacy_debt --check` 未变、
+    `check_startup_cost --check` OK。CI 门禁第 4 步已加上 `tests/integration`
+    （技术方案 §12.4；CI 实际跑的是裸 `pytest`，`testpaths` 已覆盖）。
 
 ## 正在进行
 
@@ -640,7 +682,9 @@
   `D13` 已完成，输入分流、Session 并发三策略与去重就位，阶段 4 开工；
   `D14` 已完成，Turn Orchestrator（≤500 行）、Hook 调度、Context 组装与工具执行器就位，
   `D07` 基线里 `test_loop_behavior.py` 的编排决定项、`D08` 欠的 `tool.cancel_timeout` 码、
-  `D09` 欠的检查点 1/4 与总超时看门狗一并兑现，**turn 事件从此有了唯一发布点**。
+  `D09` 欠的检查点 1/4 与总超时看门狗一并兑现，**turn 事件从此有了唯一发布点**；
+  `D15` 已完成，`tests/integration/` 用 Fake 能力把整条装配链跑通（28 个用例、0.67 s），
+  **阶段 4 收口**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/` 与 `routing/`；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
@@ -690,11 +734,34 @@
 
 ## 下一步工作
 
-1. 执行阶段 4 的 `D15` 骨架集成验收（`tests/integration/test_skeleton_turn.py`）：不写任何
-   新功能，只用 `sdk.testing` 的 Fake 能力把整条路径跑通，并记录实现过程中发现的技术方案
-   偏差。前置依赖 `D14` 已就绪。**`D14` 的 `tests/kernel/_orchestrator_support.py::build()`
-   已经是一套装配好的把手，`D15` 应当换成 `sdk.testing` 的 Fake 而不是再抄一份夹具。**
-2. 随后进入阶段 5（`D16` 起）的内建默认能力：`builtins/` 至今仍是空骨架。
+1. 进入阶段 5 的 `D16` 内建加载路径与契约测试套件：`builtins/registry.py`
+   （`BUILTIN_MANIFESTS`，此时为空元组）、`kernel/plugins/host.py`（唯一的 Host
+   `NucleaAPI` 实现，统一注册到 `RegistrationBatch`）、`kernel/plugins/builtin_loader.py`、
+   `runtime/wiring.py`（`R5` 的唯一落点）、补全 `sdk/testing/contracts.py` 的 5 个契约基类，
+   外加 `tests/architecture/test_builtin_no_privilege.py`。前置依赖 `D15` 已就绪。
+   **`D15` 的 `tests/integration/_support.py::wire()` 就是 Host 分派的形状预演**——
+   它已经在走「`RegistrationBatch` 注册 → `resolve_into` → `*_from(registry)` 取回」这条路，
+   `D16` 落地 Host 之后应当让 `wire()` 改用真 Host，而不是留两套注册路径。
+2. 随后 `D17` 起逐个填 `builtins/`：至今仍是空骨架。
+
+`D15` 留下的、`D16`/`D23` 必须用到的事实：
+
+- **五个 kind 还没有取回函数与注册载荷形状**：`MODEL` / `SESSION_STORE` / `CHANNEL` /
+  `MEMORY` / `CLI_ENTRY`。已落地的四个是 `turn.tools_from` / `turn.bindings_from` /
+  `turn.context_providers_from` / `routing.build_command_index`。`D16` 建立 Host 分派时
+  **必须在同一处把五个载荷形状定下**（技术方案 §6.1 已回写），否则「谁定义形状」会散落到
+  每个消费点上。骨架目前把 `ModelProvider` 与 `SessionStore` 直接注入 `OrchestratorDeps`，
+  那是权宜，不是结论。
+- **`tests/integration/` 的 Fake 边界不要往里挪**：Fake 只在能力边界上，能力之间一律生产
+  实现。往里挪一层，这套测试就退化成 `tests/kernel/` 的重复。
+- **`sdk.testing` 目前没有 Fake 工具 / Fake Channel / Fake Context Provider**，
+  `D15` 因此在 `tests/integration/_support.py` 里自带了三个最小合规实现（`EchoTool` /
+  `StaticContextProvider` / `StaticCommand`）。**`D15` 刻意没有扩 `sdk.testing.__all__`**
+  ——那是冻结表面，而 `D15` 的要点是「不写新功能」。要不要把它们提升进 SDK，是 `D16`
+  补全契约基类时该一并论证的事（`ToolContract` 至今没有一个随 SDK 发布的参考实现）。
+- **一次 turn 的事件名序列与 Hook 触发顺序都以字面量钉在
+  `tests/integration/test_skeleton_turn.py` 里**。改动编排顺序会让它们失败——那是刻意的
+  评审闸门，不要通过放宽断言绕过。
 
 `D14` 留下的、`D15`/`D16`/`D22`/`D23` 必须用到的事实：
 
@@ -971,7 +1038,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅   D15– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅   D16– ⬜（尚未开始）
 
 ## 本目录文档分类
 

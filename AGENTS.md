@@ -20,7 +20,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   阶段 3 支撑设施收口；`D13` 已落地输入分流与 Session 并发
   （`kernel/routing/{dispatcher,session_lock,dedup}.py`），`D14` 已落地 Turn Orchestrator
   （`kernel/turn/` 再加六个模块：`orchestrator` / `orchestration` / `hooks` /
-  `context_builder` / `invoker` / `transcript` / `translation`），阶段 4 只剩 `D15` 集成验收。
+  `context_builder` / `invoker` / `transcript` / `translation`），`D15` 已落地骨架集成验收
+  （`tests/integration/`，28 个用例），**阶段 4 收口**，下一步 `D16` 进入阶段 5。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
   `config/`、`observability/` 与 `routing/`。
@@ -181,6 +182,24 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 供 `D09` 的 Turn Engine 与 `D14` 的 Orchestrator 对照，**`D31` 删 `legacy/agent/` 时一并
 删除**。用法是「换构造、不换断言」——断言改不动说明新旧语义有差异，要给结论而不是放宽断言；
 也不要往里加与那五类无关的测试。
+
+`tests/integration/`（`D15`）是骨架集成验收，写进去或改到它之前记住四条：
+
+- **Fake 只在能力边界上**（模型 / 会话存储 / 工具 / Context Provider / 命令 handler），
+  能力**之间**一律生产实现（registry + 覆盖解析、`HookRouter`、`ToolExecutor`、
+  `Dispatcher`、`SessionScheduler`、`DedupCache`、`EventBus`、`TurnOrchestrator`）。
+  往里挪一层，这套测试就退化成 `tests/kernel/` 的重复。
+- **能力经 `RegistrationBatch` 注册、再由 `*_from(registry)` 取回**，不要把列表直接塞进
+  `OrchestratorDeps`——`D14` 定死的四个注册载荷形状只有走这条路才会被核对。
+- **一次 turn 的事件名序列（9 条）与 7 个 Hook 的触发顺序都以字面量钉在
+  `test_skeleton_turn.py` 里**，改编排顺序会让它们失败，那是刻意的评审闸门。
+- **「不触碰真实网络」是 `conftest.py` 的 autouse 夹具**：拦 `connect` / `connect_ex` /
+  `getaddrinfo` 的**目标**、回环放行。别改成拦 `socket.socket` 的构造——Windows 的
+  `ProactorEventLoop` 用 `socketpair()` 做 self-pipe，那样只会证明事件循环起不来。
+
+`MODEL` / `SESSION_STORE` / `CHANNEL` / `MEMORY` / `CLI_ENTRY` 五个 kind **还没有取回函数、
+也没有注册载荷形状**（`D15` 暴露的缺口，技术方案 §6.1 已记）。`D16` 建立 Host 分派时要在
+同一处把它们定下，不要留到装配时各自 `isinstance` 一遍。
 
 ## 开发命令
 
