@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-12
-- 当前阶段：阶段 5 内建能力**开工**（`D00`–`D16` 均已完成，下一步 `D17`）
+- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D17` 均已完成，下一步 `D18`–`D22`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -759,6 +759,58 @@
     完整 `tests/legacy` 14 failed / 4808 passed / 30 skipped，失败全部落在既有那批网络、
     子进程时序与 oauth-cli-kit 家族。
 
+- **`D17` 内建 Session：`session_jsonl`**（`builtins/session_jsonl/` 三个模块约 480 行 +
+  `builtins/registry.py` 的第一条 manifest + `docs/session-storage.md` +
+  `tests/builtins/test_session_jsonl.py` 共 70 个用例）：
+  - **整批原子性由 `meta.json` 的 `committed_bytes` 承担**，这是本模块最关键的一个决定。
+    `SessionStore.append()` 要求整批原子生效（`SES-002`），而 JSONL 是追加写的：不引入
+    提交水位，就只有两条路——每次追加重写整个文件，或者承认「崩溃时可能留下半批」。
+    水位把它变成两条规则：**读只认 `[0, committed_bytes)`；写先截断到水位、追加、`fsync`，
+    最后才原子替换 `meta.json`**。于是崩在任何一步，下次读到的要么整批都在、要么整批都
+    不在（`EDG-504`）。副作用是「半条记录」这种情况根本不需要单独处理——它按定义在水位
+    之外。
+  - **文件比水位短是错误，不是「就这些了」**。这条与上一条是一对：水位之外的字节不算数，
+    但水位之内的字节必须都在。少了就说明文件被外部截断，此时返回一个短历史等于静默丢用户
+    的上下文，所以抛 `PERSISTENCE_RECORD_CORRUPT`。`SessionStore.load()` 的异常约定
+    （「不得返回空快照冒充没有历史」）在这里被认真对待了：整个 `codec.py` 只可能抛这一个码。
+  - **压缩插入摘要而不是替换前缀，原始记录不物理删除**。契约要求 `load()` 之后
+    `compacted_through == through` 且摘要出现在 `live_messages` 里——物理删除前缀会让这两条
+    同时不成立（水位会指向不存在的记录）。与 `InMemorySessionStore` 的做法一致，因此 Fake
+    与真实实现的语义可以互相对照。`SES-005` 的三条保留语义由此各有确定答案：压缩保留原文、
+    删除物理不可撤销、**不做任何自动过期**。
+  - **水位只能前进**：后退会让已被摘要覆盖的记录重新进入上下文，而摘要还留在原处，同一段
+    历史被讲两遍。这是调用方的错，折成 `INPUT_MALFORMED` 而不是「尽力而为」。
+  - **存储目录由 `ctx.config["dir"]` 交下来**。`R4` 禁止 `builtins/` import `kernel/`，
+    而 `InstanceLayout.sessions_dir` 在 `kernel/config/`——内建能力**不可能**自己知道实例
+    布局。因此目录走配置块（`CFG-002`：插件只看得见自己那一块），`D23` 装配时填
+    `layout.sessions_dir`；没配时退回 `ctx.state_dir`。文件名（`<storage_id>.jsonl` /
+    `<storage_id>.meta.json`）两边各写一份，由 `test_filenames_match_the_instance_layout`
+    对照——两处都「自洽」而对不上时，`nm session` 会在一个空目录里找文件，没有别的测试会失败。
+  - **不用 `ctx.fs`**：`FileAccess` 只有 `read_text` / `write_text` / `list_dir`，没有追加、
+    `fsync` 与原子替换。manifest 里如实声明 `fs:read` / `fs:write`，实现直接用 `pathlib`——
+    `sdk/api.py` 已经写明应用级权限的价值是「让越界意图可审计」而不是进程隔离，诚实声明比
+    绕道更符合它。
+  - **IO 全部经 `asyncio.to_thread`**：会话历史可以到几 MB，在事件循环里同步读写它会卡住同
+    一实例的其他 turn。契约说 `load`/`append` 不接受取消，那是「不许中途放弃」，不是「可以
+    阻塞事件循环」。
+  - **`contracts` 补出口 `SESSION_SCHEMA_VERSION`**：它本来就在 `contracts/session.py` 的
+    `__all__` 里，只是包根忘了转发。会话存储实现是它的第一个、也是主要的消费者。
+  - **`tests/` 新增 `__init__.py`**：没有它，`tests/builtins/` 会被 pytest 当成顶层包
+    `builtins`，而 `sys.modules` 里那个位置早被标准库占住，整个目录收集失败。加上之后各测试
+    包变成 `tests.*` 的子包，相对导入不受影响。
+  - **`D16` 的三条「`BUILTIN_MANIFESTS` 为空」断言按棘轮更新**：两条改成显式
+    `wire_capabilities(manifests=())`（要测的是「零内建可装配」，不是「默认清单恰好是空的」），
+    第三条改成对每一项内建断言 **manifest 里没写 `priority`**——内建基准是 0，写了就会被原样
+    采纳，§10.2 的「内建最后被裁」会静默失效。
+  - **格式文档 `docs/session-storage.md` 里的示例由测试直接解析**。`SES-006` 承诺的是外部
+    实现能读懂这个格式，而外部实现读的是文档不是源码；文档漂移因此必须在这里失败，而不是在
+    某个用户的迁移脚本里。字段清单常量（`RECORD_FIELDS` / `META_FIELDS`）同时钉住「写出去的
+    键」与「文档里列出的键」。
+  - 验收：`tests/builtins`(70) 全绿，`builtins/` 语句覆盖率 **99%**（未覆盖的 3 行是
+    `_fsync_dir` 的 POSIX 分支，Windows 上 `os.open` 目录会被拒绝并按设计吞掉）；
+    新层七个测试目录共 **1412 个用例全绿**（`D16` 收口时 1342）。`ruff check`、
+    `basedpyright`（新层 0 报错）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -778,10 +830,12 @@
   `D15` 已完成，`tests/integration/` 用 Fake 能力把整条装配链跑通（28 个用例、0.67 s），
   **阶段 4 收口**；`D16` 已完成，唯一的 Host `NucleaAPI` 实现、九个 kind 的注册载荷与取回
   函数、静态清单 bootstrap 与组装根就位，`D15` 暴露的五个 kind 缺口一并补齐，
-  **阶段 5 开工**。
+  **阶段 5 开工**；`D17` 已完成，第一个内建能力 `builtins/session_jsonl/` 落地
+  （JSONL + `meta.json`、`committed_bytes` 提交水位、发布格式文档），
+  `BUILTIN_MANIFESTS` 从此不再是空元组。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
-  `plugins/`；`builtins/` 有 `registry.py`（`BUILTIN_MANIFESTS` 为空元组，`D17`–`D22`
-  逐个追加），`runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
+  `plugins/`；`builtins/` 有 `registry.py` 与 `session_jsonl/`（`D18`–`D22`
+  逐个追加其余六项），`runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -829,36 +883,55 @@
 
 ## 下一步工作
 
-1. 进入 `D17` 内建 Session：`builtins/session_jsonl/`（每 session 一个 JSONL + meta.json，
-   追加写 + 原子替换）。`D17`–`D22` 之间无相互依赖，可并行开发。
+1. 继续阶段 5 的其余内建能力：`D18` context_basic、`D19` model_openai、`D20` tools_fs、
+   `D21` tools_shell、`D22` commands_core。它们之间无相互依赖，可并行开发。
    **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
    `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
    注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
    自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
+   `D17` 的 `builtins/session_jsonl/` 是这个形态的第一个样例，照着它写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
 
-`D16` 留下的、`D17`–`D23` 必须用到的事实：
+`D17` 留下的、`D18`–`D23` 必须用到的事实：
+
+- **内建能力拿不到实例布局**（`R4` 禁止 import `kernel/`），要写盘就只能让装配根把路径
+  经 `ctx.config` 交下来。`session_jsonl` 用的键是 `dir`，没配时退回 `ctx.state_dir`。
+  **`D23` 必须在装配时把 `layout.sessions_dir` 填进 `session-jsonl` 的配置块**，否则会话
+  会写到 `<instance_dir>/plugins/session-jsonl/` 而不是 `sessions/`——两处都能跑，
+  只有 `nm session` 找不到文件。`D20` 的 `tools_fs`（workspace 根）会遇到同一件事。
+- **文件名在 `layout.session_paths()` 与 `session_jsonl` 里各写了一份**，由
+  `tests/builtins/test_session_jsonl.py::test_filenames_match_the_instance_layout` 对照。
+  改后缀要同时改两处。
+- **`docs/session-storage.md` 是发布出去的格式契约**（`SES-006`），文档里的示例被测试直接
+  解析。改 `codec.py` 的字段就得改文档，反之亦然——这是刻意的双向闸门。
+- **`tests/` 现在是一个包**（新增了 `tests/__init__.py`）。没有它 `tests/builtins/` 会与标准库
+  的 `builtins` 撞名、整个目录收集失败。新增测试目录时不需要再操心这件事。
+- **`SESSION_SCHEMA_VERSION` 现在从 `nucleamind.contracts` 直接可导**（`D17` 补的转发）。
+
+`D16` 留下的、`D18`–`D23` 必须用到的事实：
 
 - **注册载荷形状现在九个 kind 全齐了**。`D14` 的四个（`RegisteredTool` / `RegisteredHook` /
   `RegisteredContextProvider` / `RegisteredCommand`）加 `D16` 的五个（`RegisteredModelProvider`
   / `RegisteredSessionStore` / `RegisteredChannel` / `RegisteredMemoryProvider` /
-  `RegisteredCliEntry`，都在 `kernel/plugins/capabilities.py`）。取回函数同理九个。
+  `RegisteredCliEntry`，都在 `kernel/plugins/capabilities.py`）。取回函数同理九个，
+  取回后的实现体在 `binding.value` 上。
   **内建能力自己不构造这些形状**——Host 会按 `register_*` 的参数替你构造。
 - **`session_store_from()` 与 `cli_entry_from()` 返回 `| None`**。`D23` 必须在装配根上把
   「MODEL / SESSION_STORE / CLI_ENTRY 各须有一个生效实现」变成明确的启动错误
   （§10.1 步骤 8），并实现 `EDG-108` 的「覆盖失败时 CLI 强制回落内建」——kernel 层不做这个
-  判定，它只如实回答有没有。
+  判定，它只如实回答有没有。（`D17` 之后 SESSION_STORE 已经有了。）
 - **`critical` 是提供方级的，不是每项能力各有一个**。同一份 manifest 里的全部能力共享一个
   `critical`；需要不同关键性就得是两个插件。`tests/integration/_support.py` 因此按 `critical`
-  分批注册，`D17`–`D22` 写 manifest 时要意识到这一点。
+  分批注册，`D18`–`D22` 写 manifest 时要意识到这一点。
 - **`priority` 在 manifest 里别写**，除非真的要偏离基准值。写了就会被原样采纳（哪怕写的
   正好是默认值 100），而内建的基准是 0——`D18` 的 `context_basic` 尤其要注意，§10.2 的
   「其余按 priority 逆序丢弃」依赖内建排在最前。
+  `tests/runtime/test_wiring.py::test_every_builtin_manifest_leaves_priority_unset` 是这条的棘轮。
 - **`wire_capabilities(context_for=...)` 没有默认值**，因为 `D16` 还没有生产级
   `PluginContext`（那是 `D26`）。`D23` 之前一律传 `FakePluginContext`；`D26` 落地后在
   `host.py` 之外补 `PluginContext` 的实现，**不得重写注册分派**。
-- **`BUILTIN_MANIFESTS` 现在是空元组**，`PluginManifest` 拒绝 `capabilities=()`，
-  所以放占位条目是构造不出来的。`D17` 起逐个追加。
+- ~~**`BUILTIN_MANIFESTS` 现在是空元组**~~ **`D17` 起不再为空**，第一条是 `SESSION_JSONL`。
+  想验「零内建可装配」要显式传 `manifests=()`，不能指望默认值。
 - **五个契约基类各有一个反向样例盯着**（`tests/sdk/test_contract_reverse_samples.py`）。
   往基类里加用例时，要同时想清楚「什么样的实现会被这条拦下」——加不出反向样例的用例，
   多半是在描述某个具体实现的行为而不是契约。
@@ -1153,7 +1226,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅   D17– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅   D18– ⬜（尚未开始）
 
 ## 本目录文档分类
 

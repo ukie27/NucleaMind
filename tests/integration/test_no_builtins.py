@@ -11,7 +11,9 @@
 
 两种「没有内建」的形态各测一遍，因为它们的失败模式不同：
 
-- **`BUILTIN_MANIFESTS` 为空**（`D16` 的真实状态）：装配链本身要能跑完并冻结。
+- **一个 manifest 都不加载**（`manifests=()`）：装配链本身要能跑完并冻结。`D17` 起
+  `BUILTIN_MANIFESTS` 不再是空元组，因此这条改为显式传空清单——要证明的性质是「零内建可
+  装配」，而不是「默认清单恰好是空的」。
 - **有内建但被全部禁用**（`D17` 之后的形态）：`resolve(disabled=...)` 按提供方索引，
   被禁用的项进 `disabled` 段而不是消失——「它去哪了」必须查得到（`NFR-502`）。
 """
@@ -51,16 +53,16 @@ def context_for(provider: ProviderId) -> PluginContext:
     return FakePluginContext()
 
 
-# ------------------------------------------------------- 形态一：BUILTIN_MANIFESTS 为空
+# ------------------------------------------------------------ 形态一：一个 manifest 都不加载
 
 
-async def test_the_default_wiring_has_no_builtins_and_still_freezes() -> None:
-    """`D16` 的真实状态：一个内建都没有，装配链照常跑完（`EDG-101`、`PLG-007`）。"""
-    result = await wire_capabilities(context_for=context_for)
+async def test_wiring_without_any_manifest_still_freezes() -> None:
+    """零内建照常装配完（`EDG-101`、`PLG-007`）。"""
+    result = await wire_capabilities(manifests=(), context_for=context_for)
     assert result.registry.frozen
     assert result.report.ok
     assert result.report.active == ()
-    # 三项必需能力都还没有实现——`D23` 会在装配根上把这件事变成明确的启动错误，
+    # 三项必需能力都没有实现——`D23` 会在装配根上把这件事变成明确的启动错误，
     # 本层只如实回答「没有」。
     assert model_providers_from(result.registry) == ()
     assert session_store_from(result.registry) is None

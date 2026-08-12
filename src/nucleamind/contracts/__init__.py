@@ -126,6 +126,7 @@ from .protocols import (  # noqa: E402
     ToolHandler,
 )
 from .session import (  # noqa: E402
+    SESSION_SCHEMA_VERSION,
     CancelReason,
     Role,
     SessionMessage,
@@ -151,6 +152,7 @@ __all__ = [
     "EMPTY_METADATA",
     "HOOK_KINDS",
     "HOOK_REQUIRED_SLOTS",
+    "SESSION_SCHEMA_VERSION",
     "UNTRUSTED_DATA_PREFIX",
     "ArtifactRef",
     "AttachmentRef",

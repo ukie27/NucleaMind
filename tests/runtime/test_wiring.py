@@ -8,7 +8,9 @@
   而 §6.1 规则 1 定的内建基准是 0——两条方案彼此打架。结论是「作者没写就当没写」，
   靠 pydantic 的 `model_fields_set` 判定。这条如果错了，内建能力会全部落在 100，
   §10.2 的「内建最后被裁」随之失效，而且不会有任何报错。
-- **空清单可装配**（`EDG-101`）：`D16` 的 `BUILTIN_MANIFESTS` 就是空元组。
+- **空清单可装配**（`EDG-101`）：`wire_capabilities(manifests=())` 必须跑完并冻结。
+  `D17` 起 `BUILTIN_MANIFESTS` 不再是空元组，因此这条显式传空清单——要测的性质是「零内建
+  可装配」，不是「默认清单恰好是空的」。
 
 另有一条 AST 断言盯着「Host 一致性的证明还在」——证明本身由 basedpyright 完成，
 但 `exclude = ["**/tests"]` 意味着测试验不了它，能验的只有「那句标注没被人删掉或改成
@@ -76,13 +78,21 @@ def resolver(setup: SetupFn = setup_model) -> object:
 # ------------------------------------------------------------------------------ 空清单可装配
 
 
-async def test_the_default_manifest_list_is_empty_at_d16() -> None:
-    """`D17`–`D22` 逐个追加；现在是空的，而空正是 `EDG-101` 要求可用的形状。"""
-    assert BUILTIN_MANIFESTS == ()
+async def test_every_builtin_manifest_leaves_priority_unset() -> None:
+    """`D17` 起 `BUILTIN_MANIFESTS` 不再为空，这条随之变成对每一项内建的棘轮。
+
+    内建的 priority 基准是 0，而 `CapabilityDecl.priority` 的默认值是 100：在 manifest 里
+    写了它（哪怕写的正好是 100）就会被原样采纳，§10.2 的「内建最后被裁」随之静默失效。
+    """
+    assert BUILTIN_MANIFESTS, "内建清单为空——`D17` 之后这说明有人把它清掉了"
+    for builtin in BUILTIN_MANIFESTS:
+        for declaration in builtin.capabilities:
+            assert "priority" not in declaration.model_fields_set, builtin.id
 
 
 async def test_wiring_with_no_manifests_produces_an_empty_frozen_registry() -> None:
-    result = await wire_capabilities(context_for=context_for)
+    """零内建可装配（`EDG-101`）：显式传空清单，而不是指望默认清单恰好是空的。"""
+    result = await wire_capabilities(manifests=(), context_for=context_for)
     assert result.outcomes == ()
     assert result.report.ok
     assert result.registry.frozen

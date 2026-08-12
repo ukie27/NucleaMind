@@ -21,10 +21,13 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/routing/{dispatcher,session_lock,dedup}.py`），`D14` 已落地 Turn Orchestrator
   （`kernel/turn/` 再加六个模块：`orchestrator` / `orchestration` / `hooks` /
   `context_builder` / `invoker` / `transcript` / `translation`），`D15` 已落地骨架集成验收
-  （`tests/integration/`，28 个用例），**阶段 4 收口**，下一步 `D16` 进入阶段 5。
+  （`tests/integration/`，28 个用例），**阶段 4 收口**；`D16` 已落地内建加载路径与契约测试
+  套件（`kernel/plugins/` 四个模块 + `builtins/registry.py` + `runtime/wiring.py`），
+  `D17` 已落地内建 Session（`builtins/session_jsonl/`），**阶段 5 进行中**，
+  下一步 `D18`–`D22`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
-  `config/`、`observability/` 与 `routing/`。
+  `runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
+  `config/`、`observability/`、`routing/` 与 `plugins/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -48,15 +51,16 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 plugins/                   # 一等公民：官方插件，各自独立发行
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
+                           # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
                            # 外加 baseline/：旧实现行为基线，D31 随 legacy/agent/ 一并删除
 deploy/                    # Dockerfile / compose / entrypoint
 webui/                     # 前端源码（TypeScript）
 ```
 
 `contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面，
-`kernel/registry/` 已落地；`builtins/`、`runtime/`、`embed/` 仍是空骨架
-（只有 `__init__.py` 与 docstring），按开发方案逐个填充。**新代码直接写在最终位置**，
-不要放临时目录。
+`kernel/registry/` 已落地；`builtins/` 有 `registry.py` 与 `session_jsonl/`，
+`runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，按开发方案逐个填充。
+**新代码直接写在最终位置**，不要放临时目录。
 
 契约层已冻结、后续模块必须复用而不是另起炉灶的三样东西：
 
@@ -197,9 +201,30 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `getaddrinfo` 的**目标**、回环放行。别改成拦 `socket.socket` 的构造——Windows 的
   `ProactorEventLoop` 用 `socketpair()` 做 self-pipe，那样只会证明事件循环起不来。
 
-`MODEL` / `SESSION_STORE` / `CHANNEL` / `MEMORY` / `CLI_ENTRY` 五个 kind **还没有取回函数、
-也没有注册载荷形状**（`D15` 暴露的缺口，技术方案 §6.1 已记）。`D16` 建立 Host 分派时要在
-同一处把它们定下，不要留到装配时各自 `isinstance` 一遍。
+`kernel/plugins/`（`D16`）是能力注册的唯一通道。写内建或插件前记住四条：
+
+- **`CapabilityHost` 是唯一的 `NucleaAPI` 实现**，内建与外部插件共用它（`SDK-007`、
+  `BAS-005`）。它不继承 `NucleaAPI`（`R2` 禁止 `kernel/` import `sdk/`），一致性由
+  `runtime/wiring.py` 里那句 `conformance: NucleaAPI = host` 静态证明——有 AST 测试盯着。
+- **九个 kind 的注册载荷形状与取回函数全齐**（`D14` 四个 + `D16` 五个）。内建能力自己不
+  构造它们，Host 会按 `register_*` 的参数替你构造；取回后的实现体在 `binding.value` 上。
+- **未声明的注册与声明了却没注册都是 `PLUGIN_LOAD_FAILED`**，靠 `detail` 区分。manifest 的
+  `capabilities` 是有约束力的全集，`overrides` 只能从那里来（`EDG-102`）。
+- **manifest 里别写 `priority`**：默认值 100 会被原样采纳，而内建基准是 0
+  （`to_declaration()` 用 `model_fields_set` 判断作者写没写）。
+
+`builtins/`（`D17` 起）的落地形态只有一种：一份 `PluginManifest` 追加进
+`builtins/registry.py::BUILTIN_MANIFESTS`，加一个 `setup(api)`。三条通用约束：
+
+- **内建拿不到实例布局**（`R4`），要写盘就只能让装配根把路径经 `ctx.config` 交下来。
+  `session_jsonl` 用 `dir` 键，没配时退回 `ctx.state_dir`；`D23` 装配时必须真的填上，
+  否则数据会安静地写到插件私有目录去。
+- **不要在 `builtins/` 里写注册辅助函数**：`R4` 拦得住 import，拦不住自建通道，
+  `tests/architecture/test_builtin_no_privilege.py` 的符号扫描是为此存在的。
+- **格式一旦发布就是契约**（`SES-006`）：`docs/session-storage.md` 里的示例由
+  `tests/builtins/test_session_jsonl.py` 直接解析，改 `codec.py` 的字段就得改文档。
+  `committed_bytes` 提交水位是整批原子性的全部机制，读只认水位内的字节，写最后才换
+  `meta.json`；文件比水位**短**是损坏，不是「就这些了」。
 
 ## 开发命令
 

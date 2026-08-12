@@ -323,7 +323,7 @@ src/nucleamind/
 ### 4.4 测试目录镜像分层
 
 ```text
-tests/
+tests/                 # 是一个包（__init__.py），否则 builtins/ 与标准库的同名模块撞车
 ├── architecture/      # R1–R6 守卫、SDK 公开面快照、文件规模、legacy 债务
 ├── contracts/         # 契约类型与不可变性
 ├── kernel/            # 各机制单测（Fake 驱动，无 IO）
@@ -1228,8 +1228,28 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 不支持项（如扩展 thinking），不做静默降级。Anthropic 原生等其余 provider 走插件。
 
 `builtins/session_jsonl/` 的格式必须是文档化的、可被外部实现读取的（`SES-006`）：
-JSONL 每行一条 `TurnRecord`，字段即 `contracts/session.py` 的序列化形式，
+JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式，
 `docs/` 中给出格式说明与迁移示例。
+
+`D17` 落地时对本段的三处细化（实现在 `builtins/session_jsonl/`，格式说明在
+[`docs/session-storage.md`](../session-storage.md)）：
+
+- **JSONL 每行是一条 `SessionMessage` 而不是「一条 `TurnRecord`」**。`contracts/session.py`
+  的持久化单元就是 `SessionMessage`（一次 turn 会产生若干条），本段原先的措辞与契约不符。
+- **整批原子性由 `meta.json` 的 `committed_bytes` 承担**。追加写的文件上，`SES-002` 的
+  「整批原子生效」只有两种实现方式：每次重写整个文件，或者引入提交水位。选后者——
+  读只认 `[0, committed_bytes)`，写先截断到水位、追加、`fsync`，最后才原子替换 `meta.json`。
+  崩在任何一步，下次读到的要么整批都在、要么整批都不在（`EDG-504`），「半条记录」按定义
+  落在水位之外，不需要单独处理。历史文件比水位**短**则是真的损坏，必须抛
+  `PERSISTENCE_RECORD_CORRUPT` 而不是当成「少了几条」。
+- **压缩插入摘要、不删原文**。契约要求 `load()` 之后 `compacted_through == through` 且摘要
+  出现在 `live_messages` 里，物理删除前缀会让两者同时不成立。`SES-005` 的三条保留语义因此
+  是：压缩保留原文（只是不再送进模型）、删除物理不可撤销、**不做任何自动过期**。
+  水位只能前进——后退会让同一段历史被摘要和原文各讲一遍。
+- **存储目录经 `ctx.config["dir"]` 交下来**。`R4` 禁止 `builtins/` import `kernel/`，内建
+  能力不可能自己知道 `InstanceLayout.sessions_dir`。`D23` 装配时必须填上这个键，否则会话
+  会落在插件私有状态目录。文件名在 `layout.session_paths()` 与内建实现里各写一份，由
+  `tests/builtins/` 的一条对照测试盯着。
 
 ### 8.2 基础工具集的冻结清单
 

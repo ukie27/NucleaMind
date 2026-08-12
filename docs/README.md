@@ -21,8 +21,14 @@ marketing guides have intentionally been removed during the refactoring phase.
 | Inspect configuration fields and defaults | [`configuration.md`](./configuration.md) |
 | Understand provider selection | [`providers.md`](./providers.md) |
 | Understand session and runtime concepts | [`concepts.md`](./concepts.md) |
+| Read or migrate the built-in session storage format | [`session-storage.md`](./session-storage.md) |
 | Inspect WebSocket behavior | [`websocket.md`](./websocket.md) |
 | Inspect the current Python SDK | [`python-sdk.md`](./python-sdk.md) |
+
+Exception: [`session-storage.md`](./session-storage.md) documents the **new** kernel's
+built-in session storage format (`builtins/session_jsonl/`), not the inherited one. It is a
+published compatibility contract for external implementations, so keep it in sync with
+`src/nucleamind/builtins/session_jsonl/codec.py`.
 
 ## Current Feature References
 
