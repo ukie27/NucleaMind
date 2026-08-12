@@ -86,6 +86,7 @@ class ErrorCode(StrEnum):
     # PERMISSION_DENIED
     PERMISSION_DENIED = "permission.denied"
     PERMISSION_PATH_OUTSIDE_WORKSPACE = "permission.path_outside_workspace"
+    PERMISSION_TURN_REJECTED = "permission.turn_rejected"
 
     # INCOMPATIBLE
     PLUGIN_SDK_INCOMPATIBLE = "plugin.sdk_incompatible"
@@ -94,6 +95,7 @@ class ErrorCode(StrEnum):
     # TIMEOUT
     TIMEOUT_MODEL_REQUEST = "timeout.model_request"
     TIMEOUT_TOOL_CALL = "timeout.tool_call"
+    TIMEOUT_TOOL_CANCEL = "timeout.tool_cancel"
     TIMEOUT_HOOK = "timeout.hook"
 
     # CANCELLED
@@ -144,10 +146,18 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.CAPABILITY_OVERRIDE_TARGET_MISSING: ErrorCategory.CAPABILITY_MISSING,
         ErrorCode.PERMISSION_DENIED: ErrorCategory.PERMISSION_DENIED,
         ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE: ErrorCategory.PERMISSION_DENIED,
+        # `turn_start` 拦截器返回 REJECT：这是一次**策略性拒绝**，不是插件故障。
+        # 复用 PLUGIN_HOOK_FAILED 会把「插件按规则挡下了这次 turn」记成「插件坏了」，
+        # 而两者的补救完全不同（改策略 vs 修插件）。先例是 `D13` 的 INPUT_SESSION_BUSY（`D14`）。
+        ErrorCode.PERMISSION_TURN_REJECTED: ErrorCategory.PERMISSION_DENIED,
         ErrorCode.PLUGIN_SDK_INCOMPATIBLE: ErrorCategory.INCOMPATIBLE,
         ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED: ErrorCategory.INCOMPATIBLE,
         ErrorCode.TIMEOUT_MODEL_REQUEST: ErrorCategory.TIMEOUT,
         ErrorCode.TIMEOUT_TOOL_CALL: ErrorCategory.TIMEOUT,
+        # 「宽限期到了工具还没回来」与「工具按时超时并干净返回」是两件事：前者的
+        # `side_effect` 只能是 UNKNOWN 且协程已被登记为孤儿任务（`EDG-407`、`EDG-104`），
+        # 后者仍是一次有结论的调用。共用一个码就查不出哪些 turn 留下了在跑的副作用（`D14`）。
+        ErrorCode.TIMEOUT_TOOL_CANCEL: ErrorCategory.TIMEOUT,
         ErrorCode.TIMEOUT_HOOK: ErrorCategory.TIMEOUT,
         ErrorCode.CANCELLED_BY_USER: ErrorCategory.CANCELLED,
         ErrorCode.CANCELLED_BY_BUDGET: ErrorCategory.CANCELLED,

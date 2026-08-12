@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 __all__ = [
     "SECTION_SPECS",
     "SESSION_CONCURRENCY_CHOICES",
+    "ContextSection",
+    "HooksSection",
     "LoggingSection",
     "ModelSection",
     "NucleaConfig",
@@ -76,6 +78,14 @@ DEFAULT_DEDUP_TTL_MS: Final = 600_000
 #: `session_concurrency` 的合法取值，与 `routing.ConcurrencyPolicy` 的三个取值同名。
 SESSION_CONCURRENCY_CHOICES: Final = ("queue", "merge", "reject")
 
+#: Hook 与 Context Provider 的三项超时（技术方案 §6.6、§10.2 第 7 步 b）。
+#: **与 `kernel/turn/hooks.py` 与 `context_builder.py` 的同名 `DEFAULT_*` 必须逐一相等**，
+#: 由 `test_orchestration_defaults_match_the_turn_package` 盯着。同样重写字面量而不是
+#: import：`kernel.turn` 会把 engine 与 asyncio 拖上配置路径（见上面的注释）。
+DEFAULT_OBSERVER_TIMEOUT_MS: Final = 2_000
+DEFAULT_INTERCEPTOR_TIMEOUT_MS: Final = 5_000
+DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS: Final = 3_000
+
 
 #: 全部已知字段。**这是 `extra="forbid"` 的唯一依据**：不在表里的键即未知字段。
 #: `D11`（secrets）/`D12`（可观测性）/`D19` 在此扩展，不要在别处另开一张表。
@@ -107,6 +117,17 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
     "plugins": {
         "disable": FieldSpec(FieldKind.STR_LIST, ()),
         "search_paths": FieldSpec(FieldKind.STR_LIST, ()),
+    },
+    "hooks": {
+        "observer_timeout_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_OBSERVER_TIMEOUT_MS),
+        "interceptor_timeout_ms": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_INTERCEPTOR_TIMEOUT_MS
+        ),
+    },
+    "context": {
+        "provider_timeout_ms": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+        ),
     },
     "model": {
         "provider": FieldSpec(FieldKind.OPTIONAL_STR, None),
@@ -167,6 +188,30 @@ class RoutingSection:
 
 
 @dataclass(frozen=True, slots=True)
+class HooksSection:
+    """Hook 分发的两项超时（技术方案 §6.6）。
+
+    观察者是**整批**超时、拦截器是**每个 handler** 超时：前者并发执行、返回值被忽略，
+    整体拖不动 turn 就行；后者串行且能改流水线，一个慢 handler 会连累后面全部。
+    """
+
+    observer_timeout_ms: int = DEFAULT_OBSERVER_TIMEOUT_MS
+    interceptor_timeout_ms: int = DEFAULT_INTERCEPTOR_TIMEOUT_MS
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSection:
+    """Context 组装（技术方案 §10.2 第 7 步 b）。
+
+    `context_max_tokens` **不在这里**：它是 turn 的六项预算之一，字段名与 `LimitKind`
+    的取值一一对应，搬过来会破坏那条已被测试钉死的对应关系。
+    """
+
+    #: 单个 Context Provider 的独立超时。超时按其关键性中止或跳过（`CTX-005`、`EDG-302`）。
+    provider_timeout_ms: int = DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceSection:
     """workspace 位置。`None` = 用实例目录下的 `workspace/`（`InstanceLayout.workspace_dir`）。"""
 
@@ -206,6 +251,8 @@ class NucleaConfig:
 
     turn: TurnSection = field(default_factory=TurnSection)
     routing: RoutingSection = field(default_factory=RoutingSection)
+    hooks: HooksSection = field(default_factory=HooksSection)
+    context: ContextSection = field(default_factory=ContextSection)
     workspace: WorkspaceSection = field(default_factory=WorkspaceSection)
     plugins: PluginsSection = field(default_factory=PluginsSection)
     model: ModelSection = field(default_factory=ModelSection)
@@ -230,6 +277,11 @@ class NucleaConfig:
                 "dedup_capacity": self.routing.dedup_capacity,
                 "dedup_ttl_ms": self.routing.dedup_ttl_ms,
             },
+            "hooks": {
+                "observer_timeout_ms": self.hooks.observer_timeout_ms,
+                "interceptor_timeout_ms": self.hooks.interceptor_timeout_ms,
+            },
+            "context": {"provider_timeout_ms": self.context.provider_timeout_ms},
             "plugins": {
                 "disable": list(self.plugins.disable),
                 "search_paths": list(self.plugins.search_paths),
@@ -367,6 +419,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     # 展开一个 `dict[str, JsonValue]` 会让每个字段都退化成 `JsonValue`。
     turn = sections["turn"]
     routing = sections["routing"]
+    hooks = sections["hooks"]
     plugins = sections["plugins"]
     model = sections["model"]
     logging_values = sections["logging"]
@@ -392,6 +445,19 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             queue_max_size=_int_at(routing, "queue_max_size", DEFAULT_QUEUE_MAX_SIZE),
             dedup_capacity=_int_at(routing, "dedup_capacity", DEFAULT_DEDUP_CAPACITY),
             dedup_ttl_ms=_int_at(routing, "dedup_ttl_ms", DEFAULT_DEDUP_TTL_MS),
+        ),
+        hooks=HooksSection(
+            observer_timeout_ms=_int_at(
+                hooks, "observer_timeout_ms", DEFAULT_OBSERVER_TIMEOUT_MS
+            ),
+            interceptor_timeout_ms=_int_at(
+                hooks, "interceptor_timeout_ms", DEFAULT_INTERCEPTOR_TIMEOUT_MS
+            ),
+        ),
+        context=ContextSection(
+            provider_timeout_ms=_int_at(
+                sections["context"], "provider_timeout_ms", DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+            ),
         ),
         plugins=PluginsSection(
             disable=_str_tuple_at(plugins, "disable"),
