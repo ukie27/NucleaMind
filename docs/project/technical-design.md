@@ -233,8 +233,9 @@ src/nucleamind/
 │   │   ├── secrets.py         # Secret 引用解析（D11）
 │   │   └── scaffold.py        # 首次运行生成最小配置（D24，另名 bootstrap.py）
 │   └── observability/
-│       ├── bus.py             # 事件总线（只扇出）
-│       ├── redaction.py       # 脱敏（在事件构造时生效）
+│       ├── redaction.py       # 脱敏（在事件构造时生效）+ 事件/错误的 JSON 序列化
+│       ├── bus.py             # 事件总线（只扇出，同步、不 await 订阅者）
+│       ├── sinks.py           # 内建 sink：有界内存环 / JSONL 文件 / 配置错误落盘
 │       └── diagnostics.py     # 能力 / 插件 / turn 只读查询
 │
 ├── sdk/                       # 第 3 层：插件唯一依赖面。只 import contracts
@@ -625,8 +626,9 @@ engine 的不变量（写进 docstring 并由测试守护）：
 ### 6.2.1 与旧实现的语义差异（`D09` 落地）
 
 以下差异是 `D09` 把 `legacy/agent/runner.py` 的纯循环拆成 `kernel/turn/engine.py` 时
-**有意**引入的，不是疏忽。完整对照表见 `docs/project/d09-turn-engine.md`（临时文档，
-收口时并入本节）：
+**有意**引入的，不是疏忽。逐条依据是 `tests/baseline/` 的 33 个基线用例，每条要么在
+`tests/kernel/test_engine.py` 里有对应用例（语义保留），要么落在下面的差异结论上，
+要么移交 `D14`（编排策略）：
 
 - **工具失败永不升级为 `TurnFailed`**。旧实现有 `fail_on_tool_error` 开关（subagent 用）；
   新 engine 的工具失败一律折成 `ToolResult(ok=False)` 回给模型，本轮继续——`D14` 若要在
@@ -650,6 +652,22 @@ engine 的不变量（写进 docstring 并由测试守护）：
   `TurnStoppedByLimit`，不替模型收尾。
 - **参数非法由 `ToolInvoker` 判定**。§10.2 第 10 步把 schema 校验划给 invoker，
   engine 不认识 JSON Schema；未知工具名仍由 engine 合成错误消息回给模型。
+- **工具错误不再追加重试提示**。旧实现给部分失败追加 `[Analyze the error above...]`；
+  「重试提示」是提示工程，不该由 engine 替所有模型厂商统一垫一句。错误本身仍以 tool
+  消息回给模型，语义不变。
+- **per-tool 超时是净增能力**。旧实现**没有** per-tool deadline（超时只是工具自己抛的
+  `TimeoutError`）；新层有 `tool_timeout_ms` 预算（§6.4）并压到 turn 剩余时间。
+- **模型墙钟超时的终态是 `TurnCancelled(TIMEOUT)`**。旧实现把它**伪造**成
+  `LLMResponse(finish_reason="error")` 并写一条占位 assistant 消息；新层的占位消息（若
+  需要）由 `D14` 生成，engine 不替编排层编内容。
+- **超长工具结果不落盘、也没有豁免名单**。旧实现会把超长结果写进
+  `.nanobot/tool-results/` 并豁免 `read_file`；那既是迁移期运行契约（新层不保留），
+  又要求 engine 认识具体工具名。engine 只截断，「超长结果如何呈现」归 `D14` 的 invoker。
+- **`partition_tool_batches` 是公开纯函数**，替代旧实现的私有方法
+  `_partition_tool_batches`：调度口径是一条要被 `D14` 和插件作者读懂的规则，藏在私有方法
+  里只能靠读 engine 源码反推。
+- **空工具结果的占位文案只作用于消息**，不改写 `ToolResult.content` 本身——`ToolResult`
+  是能力交出来的事实，渲染是另一回事。
 
 ### 6.3 输入分流：命令与模型 turn
 
@@ -835,15 +853,34 @@ Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
 
 事件族（`OBS-002` 要求能还原单次 turn）：`instance.*`、`plugin.*`、`turn.*`、`model.*`、
 `tool.*`、`session.*`、`capability.*`。每个事件必带 `Correlation` 与单调递增的
-`sequence`，因此单个 turn 的执行过程可以完全按序重放。
+`sequence`，因此单个 turn 的执行过程可以完全按序重放。`EventName` 共 31 个，
+以字面量快照钉在 `tests/contracts/test_events.py`（`NFR-104` 的评审闸门）；
+其中 `turn.stopped_by_limit` 由 `D12` 补入，让 `D09` 的四个 turn 终态在事件流里可区分。
 
-Sink 设计（`OBS-005`、`NFR-504`）：Bus 只做扇出，不认识任何具体消费者。内建两个 sink：
-JSONL 文件（`<instance_dir>/logs/events-<date>.jsonl`）和有界内存环（供 CLI 与诊断查询）。
-WebUI / 遥测插件通过 `api.events.subscribe()` 接入，且订阅者故障不影响 turn（`NFR-204`）。
+Sink 设计（`OBS-005`、`NFR-504`）：Bus 只做扇出，不认识任何具体消费者。内建两个 sink
+（`sinks.py`）：JSONL 文件（`<instance_dir>/logs/events-<date>.jsonl`，路径由调用方注入
+`layout.events_log_path`，sink 自己不认识实例布局）和有界内存环（供 CLI 与诊断查询，
+满了丢最旧并计数）。WebUI / 遥测插件通过 `api.events.subscribe()` 接入，
+且订阅者故障不影响 turn（`NFR-204`）。
+
+`publish()` **同步、绝不抛出、绝不 await 订阅者**（`D12` 落地时确定）：bus 一旦 await
+订阅者，一个慢订阅者就直接拉长 turn，`NFR-204` 在时间维度上便不成立；而 publish 还要在
+没有事件循环的路径上被调用（`instance.starting`、`nm config show`、绝大多数测试）。
+asyncio 抢占不了同步回调，因此「超时隔离」的形态是**测量 + 熔断**：超过
+`slow_after_ms` 记一次 strike、抛异常也记一次、健康投递清零，连续 strike 达到
+`max_strikes` 即自动退订，健康数据由 `bus.health()` 暴露。订阅者内部再 `publish()` 会
+排队而不是递归，序号因此保持严格单调。
 
 脱敏在事件构造时完成，不依赖 sink（`OBS-003`、`NFR-305`）：`redaction.py` 提供
-`redact(payload)`，对 `SecretStr`、已知敏感键名、以及超长内容做处理。契约测试
-`tests/observability/test_no_secret_leak.py` 用埋入的哨兵值扫描所有 sink 输出。
+`prepare_payload(payload)`，**先**复用 `contracts.errors.redact`（敏感键名、`SecretStr`、
+已知令牌形状、单串 512 字符、深度 6）**后**按条数上界收敛（映射 64 项 / 序列 128 项，
+`NFR-404`）。顺序不可颠倒：先截断会把一个长令牌切成不再匹配已知形状的明文前缀。
+同模块提供 `event_to_json` / `error_to_json`——序列化是脱敏承诺的兑现点，分开放就会分叉。
+哨兵测试落在 `tests/kernel/test_sinks.py`（测试目录镜像分层，`observability` 在 `kernel/`
+之下），用埋入的哨兵值扫描两个 sink 的全部输出。
+
+`EDG-501` 的「把配置解析错误写到 `logs/`」由 `sinks.write_config_error(path, error)` 兑现，
+它刻意**不是** sink：配置解析失败发生在启动第 2 步，事件总线那时还没建起来。
 
 诊断接口 `diagnostics.py` 暴露三个只读查询，CLI 和插件共用：
 

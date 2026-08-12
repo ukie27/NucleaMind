@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-11
-- 当前阶段：阶段 3 支撑设施推进中（`D00`–`D11` 均已完成，下一步 `D12`）
+- 更新时间：2026-08-12
+- 当前阶段：阶段 3 支撑设施推进中（`D00`–`D12` 均已完成，下一步 `D13`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -343,8 +343,8 @@
     后到覆盖先到并计数（增量拼装是 Provider 边界的职责）。
   - **与旧实现的语义差异**逐条写进技术方案 §6.2.1（合批口径从只读换成
     `concurrency is PARALLEL`、字节截断不追加后缀、`before_model_request` 归 engine 每轮
-    分发、续写 = 共享 ledger 再调 `run_turn`、收尾请求归 D14）。完整 33 行对照表在
-    `docs/project/d09-turn-engine.md`（临时文档，收口后删除）。
+    分发、续写 = 共享 ledger 再调 `run_turn`、收尾请求归 D14）。33 个基线用例的逐条
+    对照结论已并入 §6.2.1。
   - 验收：`engine.py` 380 行（≤400，自有测试 + D01 守卫双卡）；import 白名单测试
     （`os`/`pathlib`/`socket` 出现即失败 + 注入反向用例）；4 个检查点各有独立测试并断言
     `side_effect` 正确；每个 `deps` 回调注入异常产出终态事件而非穿透；四个终态各有测试；
@@ -441,6 +441,67 @@
     legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
     `secrets.py` 语句覆盖率 **100%**。完整套件（含 `tests/legacy`）14 failed /
     5798 passed / 30 skipped，失败全部落在既有的那批网络与子进程时序用例上。
+- **`D12` 可观测性**（`kernel/observability/` 5 个文件，约 820 行 +
+  `tests/kernel/test_{redaction,bus,sinks,diagnostics}.py` 58 个用例，另补 2 个契约测试）：
+  - **比开发方案多一个 `sinks.py`**（4 个模块而非 3 个）。理由与 `D10` 同：`kernel/`
+    单文件上限 500 行，而本仓库模块约 45% 是 docstring；更要紧的是**把两个 sink 塞进
+    `bus.py` 会毁掉本模块要立的那条规矩**——sink 与 bus 同文件，读代码的人第一反应就是
+    bus 拥有 sink，而 `OBS-005` 要的恰恰是「Bus 不认识任何具体消费者」。已回写技术方案
+    §4.2 的目录树。包内依赖单向：`bus`/`sinks` 用 `redaction`，`diagnostics` 用 `sinks`。
+  - **`publish()` 同步、绝不抛出、绝不 await 订阅者**。三条理由：`NFR-204` 要求观察者
+    故障不中断 turn，而 bus 一旦 await 订阅者，一个慢订阅者就直接拉长 turn，那条要求在
+    时间维度上已经不成立；publish 会在**没有事件循环**的路径上被调用（`instance.starting`
+    在启动第 1 步、`nm config show`、绝大多数测试），要求 bus 有 loop 等于要求每条诊断
+    路径先起一个 loop；asyncio 抢占不了同步回调，即便 bus 是 async 的，`wait_for` 对一个
+    CPU 阻塞的订阅者也无能为力。异步消费者在回调里把事件塞进自己的有界队列。
+  - **既然抢占不了，「超时隔离」就只能是测量 + 熔断**：超过 `slow_after_ms`（默认 50 ms）
+    记一次 strike，抛异常也记一次，健康投递把连续计数清零；连续 strike 达到
+    `max_strikes`（默认 5）即**自动退订**。一次性掉线比永久拖慢每一个 turn 诚实，
+    而 `bus.health()` 让这件事查得到——退订者的健康快照也保留（有界 64 条，且只留快照
+    不留 handler 引用），因为「事件没到 WebUI」最常见的原因就是它被熔断摘掉了，
+    而摘掉的那一刻没人在看。捕 `Exception` 不捕 `BaseException`，与 engine 同一条理由。
+  - **重入的 publish 入队而不是递归**：订阅者在回调里再 `publish()` 是合法的（sink 记录
+    自身失败、诊断插件派生事件），朴素实现会递归扇出——深度不可控，且投递顺序变成后序
+    遍历。序号在 `publish()` 里立刻分配（返回值总是完整的），扇出由最外层那次按序 flush，
+    因此序号严格单调、投递顺序 == 发布顺序（`OBS-002`）。
+  - **脱敏先于截断**。`prepare_payload()` = `contracts.errors.redact()` → 再按条数上界
+    收敛。顺序不能反：先截断会把一个 40 字符的 `sk-…` 切成 20 字符的前缀，那既不再匹配
+    已知令牌形状，又仍然是一段明文密钥。`redact()` 已经管了敏感键名、`SecretStr`、
+    令牌形状、单串 512 字符与深度 6，本模块**不写第二份规则**，只补它没有的那一项：
+    **条数上界**（映射 64 项 / 序列 128 项，溢出留计数标记）——一条带十万元素列表的事件
+    在契约层是合法 JSON，却足以撑爆内存环与日志盘（`NFR-404`）。
+  - **序列化与脱敏放同一个模块**（`event_to_json` / `error_to_json` 在 `redaction.py`）：
+    脱敏的意义在于「离开进程的字节里没有密文」，而序列化正是那些字节的产生点，
+    分开放，改了一边忘了另一边就是泄漏。`resolution.py` 里那个私有 `_error_json`
+    刻意**不**复用本模块——让 `registry` import `observability` 只为省 10 行不划算。
+  - **JSONL sink 不认识 `InstanceLayout`**：`JsonlFileSink(path_for_day)` 接一个
+    `Callable[[date], Path]`，由 `D23` 传 `layout.events_log_path`，既不 import
+    `kernel.config`，也不在这里第二次拼 `events-<date>.jsonl` 这个文件名。日期取自
+    `event.occurred_at`，跨天自动换文件；**写失败不抛**，自己计数并留 `last_error`
+    ——抛出去只会被 bus 的隔离层吞掉，counter 至少查得到。
+  - **内存环的 `dropped` 是必需的**：诊断查不到某个 turn 时，「环里从来没有这条」与
+    「它被挤出去了」是两个完全不同的结论，塌成「查不到」会让人去错的方向排查。
+  - **补上了 `D10` 欠的 `EDG-501` 后半句**：`write_config_error(path, error)` 落盘到
+    `layout.config_error_log_path(day)`。它刻意**不是** sink——配置解析失败发生在启动
+    第 2 步，事件总线那时还没建起来，做成订阅者就等于把这条需求推回它无法成立的时序里。
+    best-effort：失败返回 `False` 而不是抛出，在一条已经失败的启动路径上再抛一次只会
+    把真正的原因盖掉。接线在 `D23`。
+  - **`EventName` 补 `turn.stopped_by_limit`**（`D09` 留下的缺口，按 `NFR-104` 评审后
+    新增）：用 `turn.completed` 承载会让「模型自己说完了」与「撞上预算上限被拦下」在事件
+    流里不可区分，而 `EDG-304` 要求终态可区分。同时补了一张**以字面量写死的
+    `EventName` 快照**——`D02` 说「冻结 30 个事件名」，但当时没有快照，`NFR-104` 的闸门
+    实际是空的；现在是 31 个。
+  - `diagnostics` 的数据源是**注入的 callable 而不是三个单方法 Protocol**（「少结构」）；
+    `capabilities` 用 callable 是因为覆盖解析在启动期才产出，而诊断门面在此之前就装配好
+    了。`PluginState` 的取值直接对应 `EventName` 的 plugin 族，**不发明第二套插件生命周期
+    taxonomy**（那是 `D25`/`D27` 的事），有测试盯着这条。`plugins()` 默认返回空元组。
+  - 验收：`tests/architecture` + `contracts` + `sdk` + `kernel` + `baseline` 共
+    **1050 个用例全绿**（`D11` 收口时 990）；`kernel/observability/` 语句覆盖率 **100%**；
+    慢订阅者用注入的假时钟制造、不用 `sleep`；哨兵扫描覆盖 JSONL 全文 + 内存环的
+    `repr` / payload / error 四条渲染路径。`ruff check`、`basedpyright`（新层 0 报错，
+    legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK；
+    新层 `Any` 数仍为 0。完整套件（含 `tests/legacy`）15 failed / 7209 passed /
+    35 skipped，失败全部落在既有那批家族（已用 `git stash` 逐一确认与 `D12` 无关）。
 
 ## 正在进行
 
@@ -451,9 +512,11 @@
   阶段 2 的 engine 一层完成；`D10` 已完成，实例布局、分层配置与实例锁就位，
   `D06`/`D08` 欠给配置层的两件事（`resolve(disabled=...)` 的输入、`TurnLimits` 的配置
   来源）已兑现，阶段 3 开始；`D11` 已完成，`${VAR}` 凭据引用、`SecretStr` 与写回保护
-  就位（`SecretStr` 下沉到 `contracts/errors.py`，`sdk` 表面相应调整）。
-  `kernel/` 目前有 `registry/`、`turn/` 与 `config/`；`builtins/`、`runtime/`、`embed/`
-  仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
+  就位（`SecretStr` 下沉到 `contracts/errors.py`，`sdk` 表面相应调整）；
+  `D12` 已完成，事件总线、脱敏与序列化、内建两个 sink 与诊断查询就位，
+  `D09` 欠的 `EventName` 缺口与 `D10` 欠的 `EDG-501` 后半句一并兑现。
+  `kernel/` 目前有 `registry/`、`turn/`、`config/` 与 `observability/`；
+  `builtins/`、`runtime/`、`embed/` 仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -501,17 +564,42 @@
 
 ## 下一步工作
 
-1. 执行 `D12` 可观测性：`kernel/observability/{bus,redaction,diagnostics}.py`。
-   `EventBus` 只做扇出；**脱敏在事件构造时完成**（`redaction.py` 复用
-   `contracts.errors.redact`，它在 `D11` 之后已经认得 `SecretStr`，不要另写一份）；
-   订阅者异常与超时被隔离（`NFR-204`）；内存环有容量上限（`NFR-404`）。
-   同时补上 `D10` 欠的 `EDG-501` 后半句（把配置解析错误写到 `logs/`，落点
-   `layout.config_error_log_path(day)`）。前置依赖 `D02` 早已就绪。
-2. 阶段 2 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
+1. 执行 `D13` 输入分流与 Session 并发：`kernel/routing/{dispatcher,session_lock}.py`。
+   四种 `Disposition`（复用 `contracts/command.py`，不另定义同义枚举）；命令名冲突在
+   **启动期**报错而非调用期择一（`CMD-002`）；命令即使不进模型也分配 `turn_id` 并发布
+   turn 事件（`KER-010`，现在 `D12` 的 `EventBus` 已经就位）；三种并发策略
+   （queue / merge / reject）共用「同 session 写入只经过持锁的单一写者」这条不变量；
+   去重 LRU 按 `(channel_id, message_id)`，默认 4096 条 / 10 分钟（`EDG-201`）。
+   前置依赖 `D06`、`D10` 均已就绪。
+2. 阶段 4 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
    承接 `test_loop_behavior.py` 的 12 条决定项，消费 `D09` 的事件流
    （`TurnEvent` 封闭联合 + `ToolCallCompleted.message` 直接持久化），实现
-   `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`）。
-   属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D10` 已就绪。
+   `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`），
+   并把 `D09` 的 9 个引擎事件翻译成 `EventName` 发布到 `D12` 的 bus。
+   属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D09`、`D12` 已就绪，
+   `D13` 待完成。
+
+`D12` 留下的、`D14`/`D23`/`D29` 必须用到的事实：
+
+- **`EventBus.publish()` 是同步的，不要 `await` 它**，也不要在订阅者里做慢活。
+  订阅者签名是 `Callable[[RuntimeEvent], None]`；要异步处理就在回调里塞进自己的有界队列。
+  连续 5 次失败或超过 50 ms 的投递会让订阅者被**自动退订**，查 `bus.health()`。
+- **发事件只走 `bus.publish(name, correlation=…, payload=…, error=…)`**，不要自己构造
+  `RuntimeEvent`：序号由 bus 分配，绕过它就会出现两个真相来源，`OBS-002` 的重放随之失效。
+  载荷不必自己脱敏——`prepare_payload()` 在构造前已经做完（`OBS-003`）。
+- **`D23` 必须接三根线**：`JsonlFileSink(layout.events_log_path)` 与 `MemoryRingSink()`
+  各 `bus.subscribe()` 一次；配置解析失败的 `except` 里调
+  `write_config_error(layout.config_error_log_path(today), error)`（`EDG-501` 后半句，
+  这是它唯一的落地点，漏了就没人实现）。实例停止时记得 `JsonlFileSink.close()`。
+- **`D14` 把 `D09` 的 9 个引擎事件翻译成 `EventName`**：`TurnStoppedByLimit` →
+  `turn.stopped_by_limit`（`D12` 新增的那个）。engine 自己不发布任何 `RuntimeEvent`，
+  它只产出封闭联合的引擎事件——那条边界不要在 `D14` 里模糊掉。
+- **`D29` 的 `nm capabilities` / `nm plugins` 与会话内 `/plugins` 共用
+  `Diagnostics`**，不各写一套查询；`D25`–`D27` 落地后只需给 `plugins_source` 传一个真
+  实现，`PluginStatus` / `PluginState` 已经备好。`PluginState` 的取值必须继续对得上
+  `EventName` 的 plugin 族，有测试盯着。
+- **`EventName` 现在有字面量快照**（`tests/contracts/test_events.py::EVENT_NAME_SNAPSHOT`）。
+  新增事件名要同时改那张表，那就是 `NFR-104` 的评审闸门。
 
 `D11` 留下的、`D19`/`D24`/`D26` 必须用到的事实：
 
@@ -525,13 +613,11 @@
 
 `D10` 留下的、`D11`/`D12`/`D14`/`D23` 必须用到的事实：
 
-- **`EDG-501` 的「把解析错误写到 `<instance_dir>/logs/`」`D10` 没有讨完**，是刻意的：
-  文件 sink 是 `D12` 的职责，事件总线此刻还不存在，而一个在自己错误路径上做 IO 的 loader
-  是第二个故障面。`layout.config_error_log_path(day)` 已备好落点，`NucleaError.detail`
-  本身可 JSON 序列化。**`D12` 落地 sink、`D23` 接线时必须补上这一句**，否则这条需求会
-  静默地没人实现。`EDG-501` 的核心（拒绝启动 + 原文件不被改写）在 `D10` 已完整兑现：
-  `config.json` 只以 `"rb"` 打开、只在 `sources.read_config_file` 一处，
-  `kernel/config/` 全包不出现任何写文件调用。
+- ~~**`EDG-501` 的「把解析错误写到 `<instance_dir>/logs/`」`D10` 没有讨完**~~
+  **`D12` 已落地** `write_config_error()`，落点 `layout.config_error_log_path(day)`；
+  **`D23` 接线时必须调用它一次**，否则这条需求仍然没人实现。`EDG-501` 的核心
+  （拒绝启动 + 原文件不被改写）在 `D10` 已完整兑现：`config.json` 只以 `"rb"` 打开、
+  只在 `sources.read_config_file` 一处，`kernel/config/` 全包不出现任何写文件调用。
 - **`EDG-108`（配置试图禁用 CLI 入口）超出 `D10` 能力范围**：`resolve(disabled=...)` 是按
   **提供方**索引的，表达不了「禁用某一个能力 kind」。**交给 `D23`/wiring**，在那里
   `BUILTIN_MANIFESTS` 才存在、能知道哪一项是 `CLI_ENTRY`。
@@ -569,9 +655,9 @@
 - **工具失败不升级为 `TurnFailed`**（与开发方案验收表措辞不同的一处，结论在
   `test_engine.py::test_tool_invoke_error_does_not_fail_the_turn` 与 §6.2.1）。
   `fail_on_tool_error` 若需要由编排层多次调用之间检查，engine 不认识它。
-- **`TurnStoppedByLimit` 的 `EventName` 缺口未解决**：`EventName` turn 族只有 5 个，
-  没有 `turn.stopped_by_limit`。`D12` 按 `NFR-104` 评审新增，或 `D14` 显式论证用
-  `turn.completed` 承载。倾向前者（`EDG-304`）。
+- ~~**`TurnStoppedByLimit` 的 `EventName` 缺口未解决**~~ **`D12` 已按 `NFR-104` 新增
+  `turn.stopped_by_limit`**，并给 `EventName` 补了字面量快照。`D14` 直接用它，不要拿
+  `turn.completed` 承载。
 - **「用完预算后发一次不带 tools 的收尾请求」归 `D14`**（引擎撞上限即停）。
 - **参数非法由 `ToolInvoker` 判定**（§10.2 第 10 步 schema 校验划给 invoker）；
   未知工具名仍由 engine 合成错误消息。
@@ -713,7 +799,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅   D12– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅   D13– ⬜（尚未开始）
 
 ## 本目录文档分类
 

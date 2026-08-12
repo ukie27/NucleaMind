@@ -16,10 +16,11 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/turn/{engine,events,deps,scheduling,folding}.py`，纯循环，≤400 行），
   阶段 2 Turn 内核收口；`D10` 已落地实例布局与配置加载（`kernel/config/` 八个模块），
   `D11` 已落地 Secret 与凭据（`kernel/config/secrets.py`，`SecretStr` 下沉到
-  `contracts/errors.py`），阶段 3 支撑设施推进中。
+  `contracts/errors.py`），`D12` 已落地可观测性（`kernel/observability/` 五个模块），
+  阶段 3 支撑设施收口。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`
-  与 `config/`。
+  `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
+  `config/` 与 `observability/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -108,6 +109,23 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   返回按 JSON Pointer 索引的 `SecretMap`，配置树自始至终持有 `${VAR}` 字面量，写回因此
   「没有别的东西可写」。要落盘一份配置前先过 `prepare_for_write()`。任何位置的引用都算
   密钥（整串或内嵌），没有 `${VAR:-默认值}` 回退、没有 `$${VAR}` 转义、空变量按缺失处理。
+
+`kernel/observability/`（`D12`）是事件发布与诊断的唯一来源。写代码前记住五条：
+
+- **发事件只走 `bus.publish(name, correlation=…, payload=…, error=…)`**，不要自己构造
+  `RuntimeEvent`：`sequence` 由 bus 分配，绕过它就有两个真相来源，`OBS-002` 的按序重放
+  随之失效。载荷不必自己脱敏，`prepare_payload()` 在事件构造**之前**已经做完。
+- **`publish()` 同步、绝不抛出、绝不 await 订阅者**，别去 `await` 它。订阅者签名是
+  `Callable[[RuntimeEvent], None]`，要异步处理就在回调里塞进自己的有界队列。连续 5 次
+  失败、或单次投递超过 50 ms 达 5 次，订阅者会被**自动退订**——查 `bus.health()`。
+- **脱敏规则只有一份**：`redaction.prepare_payload()` 先调 `contracts.errors.redact`
+  再按条数上界收敛，顺序不可颠倒（先截断会把长令牌切成不再匹配已知形状的明文前缀）。
+  不要在 sink 或调用点补第二道脱敏，也不要新写敏感键名规则。
+- **sink 只是普通订阅者，Bus 不认识它们**（`OBS-005`）。`JsonlFileSink` 接一个
+  `Callable[[date], Path]`，不 import `kernel.config`，也不自己拼
+  `events-<date>.jsonl`——那个文件名只在 `layout.py` 里有一份。
+- **`write_config_error()` 不是 sink**，是给 `EDG-501` 用的独立写函数：配置解析失败时
+  bus 还没建起来。`D23` 必须在配置解析的 `except` 里调它一次。
 
 `tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
 可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），

@@ -59,6 +59,60 @@ def test_event_names_are_unique() -> None:
     assert len(set(values)) == len(values)
 
 
+#: `EventName` 的规范性快照（`NFR-104`）。以**字面量**写死：从实现反推的清单只能证明代码
+#: 没改，证明不了它经过评审。增删事件名必须同时改这张表，那就是评审闸门。
+#: `turn.stopped_by_limit` 由 `D12` 按 `NFR-104` 补入（`D09` 的 `TurnStoppedByLimit`
+#: 原本没有落点，用 `turn.completed` 承载会让两种终态不可区分）。
+EVENT_NAME_SNAPSHOT = (
+    "instance.starting",
+    "instance.ready",
+    "instance.stopping",
+    "instance.stopped",
+    "plugin.discovered",
+    "plugin.loaded",
+    "plugin.load_failed",
+    "plugin.activated",
+    "plugin.deactivated",
+    "plugin.failed",
+    "capability.registered",
+    "capability.shadowed",
+    "capability.disabled",
+    "capability.resolved",
+    "session.started",
+    "session.loaded",
+    "session.compacted",
+    "session.closed",
+    "turn.started",
+    "turn.rejected",
+    "turn.completed",
+    "turn.failed",
+    "turn.cancelled",
+    "turn.stopped_by_limit",
+    "model.request_started",
+    "model.response_received",
+    "model.request_failed",
+    "tool.call_started",
+    "tool.call_completed",
+    "tool.call_blocked",
+    "tool.call_failed",
+)
+
+
+def test_event_name_snapshot() -> None:
+    assert tuple(name.value for name in EventName) == EVENT_NAME_SNAPSHOT
+
+
+def test_every_turn_terminal_status_has_its_own_event_name() -> None:
+    """四个终态在事件流里必须可区分（`EDG-304`）——`D09` 留下的缺口由 `D12` 补上。"""
+    turn_names = {name.value for name in EventName if name.family is EventFamily.TURN}
+    assert {
+        "turn.completed",
+        "turn.failed",
+        "turn.cancelled",
+        "turn.stopped_by_limit",
+    } <= turn_names
+
+
 def test_event_exposes_family() -> None:
     assert _event(name=EventName.TOOL_CALL_FAILED).family is EventFamily.TOOL
 

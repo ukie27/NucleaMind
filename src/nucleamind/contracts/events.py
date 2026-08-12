@@ -43,7 +43,12 @@ class EventFamily(StrEnum):
 
 
 class EventName(StrEnum):
-    """首版冻结的事件名清单。新增事件名视为公开表面变化，须按 `NFR-104` 论证。"""
+    """首版冻结的事件名清单。新增事件名视为公开表面变化，须按 `NFR-104` 论证。
+
+    `TURN_STOPPED_BY_LIMIT` 是 `D12` 按 `NFR-104` 评审后补入的（`D09` 的
+    `TurnStoppedByLimit` 在此原本没有落点）：用 `TURN_COMPLETED` 承载会让「模型自己
+    说完了」与「撞上预算上限被拦下」在事件流里不可区分，而 `EDG-304` 要求终态可区分。
+    """
 
     INSTANCE_STARTING = "instance.starting"
     INSTANCE_READY = "instance.ready"
@@ -72,6 +77,7 @@ class EventName(StrEnum):
     TURN_COMPLETED = "turn.completed"
     TURN_FAILED = "turn.failed"
     TURN_CANCELLED = "turn.cancelled"
+    TURN_STOPPED_BY_LIMIT = "turn.stopped_by_limit"
 
     MODEL_REQUEST_STARTED = "model.request_started"
     MODEL_RESPONSE_RECEIVED = "model.response_received"
