@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-12
-- 当前阶段：阶段 4 编排闭环推进中（`D00`–`D13` 均已完成，下一步 `D14`）
+- 当前阶段：阶段 4 编排闭环推进中（`D00`–`D14` 均已完成，下一步 `D15`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -554,6 +554,76 @@
     ⚠️ 跑测试时 **`--basetemp` 不要指到仓库内**：`tests/legacy` 的 36 个 git-store 用例会
     因为临时目录落在工作树里而误判失败。本机系统临时目录有 ACL 问题，用
     `--basetemp=D:/tmp/...` 之类的仓库外路径。
+- **`D14` Turn Orchestrator**（`kernel/turn/` 新增 6 个文件，约 1750 行 +
+  `tests/kernel/test_{hooks,context_builder,invoker,orchestrator}.py` 与
+  `_orchestrator_support.py` 共 94 个用例，另补 1 个配置测试）：
+  - **交付六个模块而不是开发方案点名的两个**。`orchestrator.py` 的 ≤500 行是技术方案 §6.2
+    写死的硬约束（实测 497 行），而 §10.2 那 14 步里有四件事各自成体系：Hook 归并
+    （`hooks.py`）、context 组装（`context_builder.py`，§4.2 目录树本来就有它）、工具执行
+    （`invoker.py`）、引擎事件到事件名/终态的翻译（`translation.py`）。另两个是编排自己的
+    切分：`orchestration.py` 装配面与产物（`D23` 的 wiring 只需要它，用不到流程）、
+    `transcript.py` 记录与账本。已回写技术方案 §4.2 的目录树。
+  - **turn 事件的唯一发布点在这里**（`KER-010`、`OBS-002`）。翻译表以字面量写死在
+    `translation.py`：`SKIPPED`（取消时未轮到）与 `BLOCKED`（Hook 拦下）都归
+    `tool.call_blocked`——它们的共同事实是**没有执行**，而 `tool.call_failed` 说的是
+    「执行了但没成」，冻结的 4 个 tool 事件名里没有第三种表达。`model.request_started` 由
+    `orchestration.EventTap` 在 `before_model_request` 分发时补上：那是编排层唯一能观察到
+    「又要发一次请求」的时刻，而 engine 每轮自己分发这个 Hook，**`D14` 没有再分发一次**
+    （有一条 `分发次数 == 迭代数` 的测试盯着）。
+  - **准入顺序 去重 → 并发 → 分流 让 §10.2 的步骤 2/3 对调**：`turn_id` 分配与去重在
+    `turn.started` **之前**，而 `turn.started` 在拿到 session 槽位**之后**。重复投递或被
+    队列拒绝的消息只发一条 `turn.rejected`——给它一个 `turn.started` 就会在事件流里留下
+    一个永远等不到终态的 turn。已回写 §10.2。
+  - **`MERGE` 下整批归一个 turn**：被吸收的消息不产生自己的事件流，只在执行 turn 的
+    `turn.started` 载荷里留 `merged_from`；提交方拿到的 `TurnReceipt` 就是执行 turn 的
+    那一份，「我的消息去哪了」不需要第二张映射表。**分流对整批逐条做**——`MERGE` 下第二条
+    消息也可能是命令，只看第一条会让它静默变成模型输入。
+  - **检查点 4 的取消必须翻成 `CANCELLED` 而不是 `FAILED`**（`translation.outcome_for_error`
+    按 `ErrorCategory` 分类）。这是测试先发现、再改实现的一条：检查点 1/4 由 orchestrator
+    自己抛，异常从 engine 之外逸出，最初被那个兜底的 `except Exception` 一律记成 `FAILED`，
+    而 `EDG-304` 要求四个终态可区分。
+  - **被打断的半句必须落库**（同样是测试先发现的）。`TurnState.pending` 与 `text` 分开：
+    每轮响应完整时 `pending` 清零（那一轮的正文已由 `ModelResponseCompleted.response`
+    权威记过一次），剩下的就是「最后一次完整响应之后又流出来的内容」，取消时以
+    `interrupted=True` 写入。合成一个列表就会在正常轮次重复写入 assistant 消息。
+  - **持久化的三条基线决定逐条落地**（`transcript.py`）：空 assistant 不入历史、孤儿 tool
+    结果丢弃、工具内容在持久化边界**再截断一次**（历史是长期资产，配置调小之后旧记录仍按
+    旧上限躺在文件里）。**与旧实现的一处差异**：assistant 的 `tool_calls` 不进
+    `SessionMessage`（契约没有这个字段），因此工具往返保真写入、但
+    `replay_messages()` 重放时跳过 `role=TOOL`——一条没有调用声明的 tool 消息会让下一次
+    请求在 Provider 侧直接被拒。
+  - **`trust=SYSTEM` 是进入系统指令位置的唯一凭据**，`kind` 不参与判定：一个
+    `kind=SYSTEM` 但 `trust=UNTRUSTED` 的片段（「从检索结果里捞到的系统提示」）只能落进
+    数据块。包裹仍由契约层的 `as_model_text()` 完成，组装器没有拼字符串的绕行路径
+    （`CMD-005`、`EDG-306`）。`sensitivity=SECRET` 与过期片段丢弃并记进 `dropped`——
+    「它去哪了」必须查得到。
+  - **裁剪的丢弃顺序**：`priority` 逆序；同优先级内先丢片段、再丢历史（从最旧）。
+    `HISTORY_TRIM_PRIORITY = 0` 与「契约保证 `priority >= 0`」两条合起来意味着片段总是
+    先走——片段下一轮还能重新产出，历史丢了就是丢了。**裁到只剩系统段与当前输入仍超预算
+    时抛 `INPUT_TOO_LARGE`**：压缩（`SessionStore.compact`）本轮不实现，把「压不下去」
+    伪装成「压缩了」会让用户拿到一个悄悄缺了半截历史的回答。
+  - **`jsonschema` 成为直接依赖**（`pyproject.toml`，此前只是 `mcp` 的传递依赖）。它没有
+    `py.typed`，因此在 `invoker._compile()` 一处收口：两个只声明「我们真正读的字段」的
+    Protocol + 一次有运行时检查支撑的 `cast`（`AGENTS.md` 原则 6）。**惰性 import**，
+    理由与 `config/schema.py::to_limits` 相同。`check_schema()` 必须显式调用——不调用的话
+    写错的 schema 要等到校验参数时才炸，异常从 `iter_errors` 逸出，「约定不抛」当场失效。
+  - **补了两个 `ErrorCode`**：`TIMEOUT_TOOL_CANCEL`（→ `TIMEOUT` 类，`D08` 点名要补的那个；
+    与 `TIMEOUT_TOOL_CALL` 分开是因为「宽限期到了它还没回来」意味着副作用未知 + 已登记
+    孤儿，而后者是一次有结论的调用）与 `PERMISSION_TURN_REJECTED`（→ `PERMISSION_DENIED`
+    类，`turn_start` 拦截器 `REJECT` 的落点；复用 `PLUGIN_HOOK_FAILED` 会把「插件按策略
+    挡下了这次 turn」记成「插件坏了」）。
+  - **配置多了 `hooks` 与 `context` 两个小节**（`observer_timeout_ms` 2000 /
+    `interceptor_timeout_ms` 5000 / `provider_timeout_ms` 3000）。**`tool_cancel_grace_ms`
+    刻意不做成配置项**：它在 `cancel.py` 里是取消参数而不是六项预算之一，塞进 `turn` 小节
+    会破坏「`TurnSection` 字段名 == `LimitKind` 取值」这条已被测试钉死的对应关系。
+  - 验收：`tests/architecture` + `contracts` + `sdk` + `kernel` + `baseline` 共
+    **1210 个用例全绿**（`D13` 收口时 1116）；`kernel/turn/` 语句覆盖率 **99%**
+    （未覆盖的 10 行全是防御性分支：`jsonschema` 交回怪东西、`utc_now` 的真实墙钟、
+    `mark_interrupted` 的空历史路径）。并发一律用 `asyncio.Barrier` / `asyncio.Event`
+    制造确定的重叠窗口，**全程不用 `sleep`**。`ruff check`、`basedpyright`（新层 0 报错，
+    legacy 仍是既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
+    完整套件 14 failed / 7370 passed / 35 skipped，失败全部落在既有那批网络、子进程时序与
+    oauth-cli-kit 家族。
 
 ## 正在进行
 
@@ -567,7 +637,10 @@
   就位（`SecretStr` 下沉到 `contracts/errors.py`，`sdk` 表面相应调整）；
   `D12` 已完成，事件总线、脱敏与序列化、内建两个 sink 与诊断查询就位，
   `D09` 欠的 `EventName` 缺口与 `D10` 欠的 `EDG-501` 后半句一并兑现，**阶段 3 收口**；
-  `D13` 已完成，输入分流、Session 并发三策略与去重就位，阶段 4 开工。
+  `D13` 已完成，输入分流、Session 并发三策略与去重就位，阶段 4 开工；
+  `D14` 已完成，Turn Orchestrator（≤500 行）、Hook 调度、Context 组装与工具执行器就位，
+  `D07` 基线里 `test_loop_behavior.py` 的编排决定项、`D08` 欠的 `tool.cancel_timeout` 码、
+  `D09` 欠的检查点 1/4 与总超时看门狗一并兑现，**turn 事件从此有了唯一发布点**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/` 与 `routing/`；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，尚未开始拆分 `legacy/` 的现有模块。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
@@ -617,20 +690,45 @@
 
 ## 下一步工作
 
-1. 执行阶段 4 的编排层 `D14` Orchestrator（≤500 行，`kernel/turn/orchestrator.py`）：
-   承接 `test_loop_behavior.py` 的 12 条决定项，消费 `D09` 的事件流
-   （`TurnEvent` 封闭联合 + `ToolCallCompleted.message` 直接持久化），实现
-   `ToolInvoker` / `HookDispatcher` 的真实版本（宽限期 + 孤儿任务表 `EDG-407`/`EDG-104`），
-   并把 `D09` 的 9 个引擎事件翻译成 `EventName` 发布到 `D12` 的 bus。
-   属于 4 个高风险模块之一，建议先单独评审实现方案。前置依赖 `D09`、`D12`、`D13`
-   全部就绪。
-2. 随后 `D15` 骨架集成验收：在写任何真实能力前，用 Fake 能力打通端到端 turn。
+1. 执行阶段 4 的 `D15` 骨架集成验收（`tests/integration/test_skeleton_turn.py`）：不写任何
+   新功能，只用 `sdk.testing` 的 Fake 能力把整条路径跑通，并记录实现过程中发现的技术方案
+   偏差。前置依赖 `D14` 已就绪。**`D14` 的 `tests/kernel/_orchestrator_support.py::build()`
+   已经是一套装配好的把手，`D15` 应当换成 `sdk.testing` 的 Fake 而不是再抄一份夹具。**
+2. 随后进入阶段 5（`D16` 起）的内建默认能力：`builtins/` 至今仍是空骨架。
 
-`D13` 留下的、`D14`/`D22`/`D23` 必须用到的事实：
+`D14` 留下的、`D15`/`D16`/`D22`/`D23` 必须用到的事实：
 
-- **turn 事件由 `D14` 独家发布**。dispatcher 不碰 `EventBus`、不分配 `turn_id`，
-  `Correlation` 由编排层传进来。`KER-010`「命令即使不进模型也发 turn 事件」因此是 `D14`
-  的活：命令类 turn 也要有 `turn.started` 与终态事件，否则事件流里会出现无头无尾的 turn。
+- **注册载荷的形状已定死三个**，`D16` 的 Host 分派必须按这个形状注册，
+  各自的 `*_from(registry)` 会当场核对：
+  `turn.RegisteredHook(hook, handler, critical)`、
+  `turn.RegisteredContextProvider(provider, critical)`、
+  `turn.RegisteredTool(spec, handler)`，外加 `D13` 已定的
+  `routing.RegisteredCommand(spec, handler)`。**`critical` 由注册方从 manifest 带进来**
+  ——`kernel/` 不认识 manifest，而 `CTX-005`/`PLG-004` 的分叉必须在 kernel 里判。
+- **`D23` 装配 `OrchestratorDeps` 的清单**（`kernel/turn/orchestration.py` 是唯一真相）：
+  必填 `instance_id` / `bus` / `sessions` / `model` / `tools` / `hooks` / `dispatcher` /
+  `scheduler` / `dedup` / `limits` / `model_id`；其余有默认值。三个超时从新的配置小节来：
+  `HookRouter(bindings, observer_timeout_ms=cfg.hooks.observer_timeout_ms,
+  interceptor_timeout_ms=cfg.hooks.interceptor_timeout_ms, on_failure=…)` 与
+  `context_provider_timeout_ms=cfg.context.provider_timeout_ms`。
+  `scheduler` 的类型参数必须是 `SessionScheduler[TurnReceipt]`。
+- **`ToolExecutor` 的 `granted` 是实例级授权**，默认全授予。`D26` 落地权限模型后要把它换成
+  真实集合——`prepare()` 取的是 `spec.permissions & granted`，缺权限在 `invoke()` 里折成
+  `PERMISSION_DENIED` 结果（`side_effect=NONE`，工具还没被碰过）。
+- **`ToolExecutor.orphans` 是 `EDG-104` 的落点**：实例停止时应当报告它（还有
+  `orphans_dropped`——「表里没有」与「被挤掉了」是两个结论）。目前没有调用方。
+- **`deliver` 回调是 Channel 的接线口**：`OrchestratorDeps.deliver` 缺省为 `None`（只攒不
+  发，测试与嵌入式用），`D23` 应当传一个按 `OutboundMessage.channel_id` 路由到对应
+  `Channel.deliver()` 的函数。
+- **`TurnOrchestrator.cancel(turn_id, reason)` 是 §10.3 的唯一入口**，`live_turns` 列出在跑
+  的 turn。`D23` 的 Ctrl-C 处理与 `D22` 的 `/cancel` 命令都走它，不要另建一张令牌表。
+- **`EventTap` 不要拆掉**：它是「engine 不发 `RuntimeEvent`」这条边界的兑现方式。想让
+  engine 直接拿一个 bus，就等于给 `EngineDeps` 开第五个槽。
+
+`D13` 留下的、`D22`/`D23` 必须用到的事实：
+
+- ~~**turn 事件由 `D14` 独家发布**~~ **`D14` 已落地**：`orchestrator.py` 是唯一发布点，
+  命令类 turn 同样有 `turn.started` 与终态事件（`KER-010`）。
 - **准入顺序是 去重 → 并发 → 分流**，不能换。`DedupCache.remember()` 返回 `DedupHit`
   就直接跳过执行并引用上一次的 `turn_id`（`EDG-201`），**不要**让它先进队列。
 - **`SessionScheduler.submit(key, message, run)` 的 `run` 拿到的是一批消息**
@@ -639,7 +737,8 @@
   那是「持锁的单一写者」唯一成立的地方。
 - **`D22` 的每个内建命令注册的载荷必须是 `routing.RegisteredCommand(spec, handler)`**，
   `build_command_index()` 会当场核对形状。权限（`operator_only`）与参数个数由 dispatcher
-  统一前置校验，命令自己不要再抄一遍。
+  统一前置校验，命令自己不要再抄一遍。**带自由文本的命令要声明一个 `repeated=True` 的尾
+  参**，否则 dispatcher 会按「参数过多」拒掉（`D14` 写测试时踩到的）。
 - **`D23` 装配时按配置构造三件套**：`Dispatcher(index, prefix=cfg.routing.command_prefix)`、
   `SessionScheduler(policy=ConcurrencyPolicy(cfg.routing.session_concurrency),
   queue_max_size=cfg.routing.queue_max_size)`、
@@ -725,9 +824,10 @@
 - ~~**`TurnStoppedByLimit` 的 `EventName` 缺口未解决**~~ **`D12` 已按 `NFR-104` 新增
   `turn.stopped_by_limit`**，并给 `EventName` 补了字面量快照。`D14` 直接用它，不要拿
   `turn.completed` 承载。
-- **「用完预算后发一次不带 tools 的收尾请求」归 `D14`**（引擎撞上限即停）。
-- **参数非法由 `ToolInvoker` 判定**（§10.2 第 10 步 schema 校验划给 invoker）；
-  未知工具名仍由 engine 合成错误消息。
+- ~~**「用完预算后发一次不带 tools 的收尾请求」归 `D14`**~~ **`D14` 已落地**
+  （`orchestrator._wrap_up`）；长度截断续写与空回复重试仍未实现，见技术方案 §6.2.2。
+- ~~**参数非法由 `ToolInvoker` 判定**~~ **`D14` 已落地**（`invoker.py` 用 `jsonschema`，
+  顺序固定为 schema → 权限 → 执行）；未知工具名仍由 engine 合成错误消息。
 - **写内建/插件工具时**：声明 `FS_WRITE` 或 `SHELL` 权限的工具必须显式
   `concurrency=EXCLUSIVE`（默认 `PARALLEL` 与旧行为相反，`scheduling.py` docstring 写死）。
 
@@ -748,11 +848,13 @@
 - **旧实现的 `_MAX_LENGTH_RECOVERIES = 3` / `_MAX_EMPTY_RETRIES = 2` 没有进
   `TurnLimits`**：六项是技术方案 §6.4 冻结的表格，这两个是「模型返回异常时重试几次」
   的编排策略（`EDG-303`），归 `D14`。engine 不该认识它们。工具超长结果落盘同理。
-- **取消宽限期在 `cancel.py`**（`DEFAULT_TOOL_CANCEL_GRACE_MS = 2000`），不在 `TurnLimits`
-  里。`EDG-407` 的等待与孤儿任务登记由 `D09` 的工具调用路径实现，用
-  `asyncio.wait_for(task, grace)` 或 `token.wait()` 赛跑；超时后写
-  `ToolResult(ok=False, side_effect=UNKNOWN)`，届时需要在 `contracts/errors.py` 补
-  `tool.cancel_timeout` 码（`D08` 未预先登记未被使用的码）。
+  **`D14` 也没有实现它们**（技术方案 §6.2.2 已记为待办）：做法已经明确——用同一个
+  `ledger` 再调一次 `run_turn`——但它需要真实 Provider 的 `stop_reason=LENGTH` 才有意义，
+  留到 `D19` 之后再论证次数。
+- ~~**取消宽限期……届时需要在 `contracts/errors.py` 补 `tool.cancel_timeout` 码**~~
+  **`D14` 已落地**：码是 `ErrorCode.TIMEOUT_TOOL_CANCEL`，宽限期赛跑与孤儿任务表在
+  `kernel/turn/invoker.py`（不 `task.cancel()`——`CancelledError` 会让工具没机会
+  「保存已做的事再退出」，那正是 `CancelToken` 存在的理由）。
 
 `D07` 留下的、`D09`/`D14` 必须用到的事实：
 
@@ -761,7 +863,10 @@
   不要往里加与那五类无关的测试——越像通用套件越删不动。
 - **`D09` 的用法是「换构造、不换断言」**：把 `AgentRunner` 与 `AgentRunSpec` 的构造换成新
   engine，断言尽量原样重跑。改不动的断言就是新旧语义差异，要在 `D09` 的文档里给结论，
-  **不要靠放宽断言让它通过**。`test_loop_behavior.py` 的决定项由 `D14` 的 orchestrator 承接。
+  **不要靠放宽断言让它通过**。`test_loop_behavior.py` 的决定项已由 `D14` 的 orchestrator
+  承接：预算耗尽推流（收尾请求）、工具失败不终止本轮、二次截断、孤儿 tool 丢弃、空
+  assistant 不入历史各有对应用例；两条不再成立的是 `fail_on_tool_error`（engine 不认识
+  这个开关）与 tool 结果的重放（新层保真存储但重放时跳过，见技术方案 §6.2.2）。
 - 旧实现的两条边界值得在新引擎里重新论证而不是照抄：`_MAX_LENGTH_RECOVERIES = 3`、
   `_MAX_EMPTY_RETRIES = 2` 与「工具超长结果落盘到 workspace」都属于 `D08` `TurnLimits`
   六项预算或 `D14` 的编排范畴，engine 本身不该再认识它们。
@@ -866,7 +971,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅   D14– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅   D15– ⬜（尚未开始）
 
 ## 本目录文档分类
 

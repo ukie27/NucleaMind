@@ -18,7 +18,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D11` 已落地 Secret 与凭据（`kernel/config/secrets.py`，`SecretStr` 下沉到
   `contracts/errors.py`），`D12` 已落地可观测性（`kernel/observability/` 五个模块），
   阶段 3 支撑设施收口；`D13` 已落地输入分流与 Session 并发
-  （`kernel/routing/{dispatcher,session_lock,dedup}.py`），阶段 4 开工。
+  （`kernel/routing/{dispatcher,session_lock,dedup}.py`），`D14` 已落地 Turn Orchestrator
+  （`kernel/turn/` 再加六个模块：`orchestrator` / `orchestration` / `hooks` /
+  `context_builder` / `invoker` / `transcript` / `translation`），阶段 4 只剩 `D15` 集成验收。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `builtins/`、`runtime/`、`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
   `config/`、`observability/` 与 `routing/`。
@@ -77,7 +79,7 @@ webui/                     # 前端源码（TypeScript）
 不存在内建专用注册 API。`kernel/` 不 import `sdk/`，因此 manifest 的 `overrides` 以**原始串**
 跨层传递，两侧共用 `contracts.parse_capability_target()` 解码。
 
-`kernel/turn/` 目前有 `cancel.py` 与 `limits.py`：取消一律用 `CancelToken` 而不是
+`kernel/turn/` 是 turn 执行的全部机制。取消一律用 `CancelToken` 而不是
 `asyncio.CancelledError`（后者无法保证「保存已产生内容再退出」），检查点一律用
 `token.checkpoint(Checkpoint.X)`——`CHECKPOINT_OWNERS` 已经定死 engine 拿 2/3/5/6、
 orchestrator 拿 1/4。预算只有 `TurnLimits` 那**六项**，取值与 `LimitKind` 的名字相同，
@@ -88,6 +90,30 @@ per-turn 的 `BudgetLedger`（判定必须在发起工具**之前**）。`D09` �
 import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 （`ENGINE_HOOKS`），`turn_start`/`context_assemble`/`turn_end` 归 orchestrator；
 续写 = 用同一个 `ledger` 再调一次 `run_turn`。新旧语义差异见技术方案 §6.2.1。
+
+`D14` 的编排层（`orchestrator` / `orchestration` / `hooks` / `context_builder` /
+`invoker` / `transcript` / `translation`）再记七条：
+
+- **turn 事件只有一个发布点**（`orchestrator.py`），翻译表只有一份（`translation.py`）。
+  engine 不发 `RuntimeEvent`；`model.request_started` 由 `orchestration.EventTap` 在
+  `before_model_request` 分发时补上。想让 engine 直接拿一个 bus，就是在给 `EngineDeps`
+  开第五个槽。
+- **`before_model_request` 由 engine 每轮分发，编排层不得再分发一次**（有一条
+  「分发次数 == 迭代数」的测试）。
+- **准入顺序 去重 → 并发 → 分流**：`turn_id` 分配与去重在 `turn.started` **之前**，
+  `turn.started` 在拿到 session 槽位**之后**。被去重或被拒的消息只发 `turn.rejected`——
+  给它一个 `turn.started` 就会留下永远等不到终态的 turn。
+- **注册载荷的形状定死四个**：`RegisteredHook` / `RegisteredContextProvider` /
+  `RegisteredTool`（`kernel/turn/`）与 `RegisteredCommand`（`kernel/routing/`）。
+  `critical` 由注册方从 manifest 带进来，kernel 不认识 manifest。
+- **`trust=SYSTEM` 是进入系统指令位置的唯一凭据**，`kind` 不参与判定；`UNTRUSTED` 的包裹
+  由契约层的 `as_model_text()` 完成，组装器不许自己拼字符串。
+- **裁剪丢弃顺序**：priority 逆序，同优先级先丢片段再丢历史（从最旧）；裁到只剩系统段与
+  当前输入仍超预算就抛 `INPUT_TOO_LARGE`，**不要**伪装成「压缩过了」。
+- **`ToolInvoker.invoke` 必须在 `timeout_ms + grace` 内返回**且约定不抛。超时后不要
+  `task.cancel()`——请求子令牌取消、等宽限期，仍不回来就登记孤儿并写
+  `TIMEOUT_TOOL_CANCEL` + `side_effect=UNKNOWN`。`jsonschema` 只在 `invoker._compile()`
+  一处接触，惰性 import。
 
 `kernel/config/`（`D10`、`D11`）是实例布局、分层配置、实例锁与 `${VAR}` 凭据引用的唯一
 来源。写代码前记住六条：
@@ -104,8 +130,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **不要在 `schema.py` 里 module-level import `kernel.turn.limits`**：那会执行
   `kernel/turn/__init__.py`，把 engine/scheduling/folding 与 asyncio 拖上配置路径
   （`NFR-405` 冷启动预算 300 ms），`kernel.routing` 同理。`to_limits()` 用函数内 import，
-  turn 的六个默认值与 routing 的五个默认值都在两处各写一份、由对照测试钉住。
-  同理**不要把 pydantic 引进 `kernel/config/`**，有子进程测试盯着。
+  turn 的六个默认值、routing 的五个默认值与 hooks/context 的三个超时都在两处各写一份、
+  由对照测试钉住。同理**不要把 pydantic 引进 `kernel/config/`**，有子进程测试盯着。
 - **判断 PID 是否存活一律用 `process.process_is_alive()`**，绝不用 `os.kill(pid, 0)`：
   Windows 上 CPython 把非 CTRL 信号映射到 `TerminateProcess`，那个「探测」会杀掉目标进程。
   返回值是**三态**，`UNKNOWN` 不得用来回收锁。

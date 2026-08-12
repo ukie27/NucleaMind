@@ -206,9 +206,17 @@ src/nucleamind/
 │   │   └── resolution.py      # 覆盖解析 + ResolutionReport
 │   ├── turn/                  # turn 执行
 │   │   ├── engine.py          # 最小 tool-call 循环（不认识具体能力，≤400 行）
+│   │   ├── events.py          # 9 个引擎事件的封闭联合（D09）
+│   │   ├── deps.py            # EngineDeps + ToolInvoker / HookDispatcher 两个 Protocol
+│   │   ├── folding.py         # 流式折叠与工具结果成形（D09）
+│   │   ├── scheduling.py      # 工具批次划分与并发执行（D09）
 │   │   ├── orchestrator.py    # session/持久化/事件 编排（≤500 行）
+│   │   ├── orchestration.py   # 编排的装配面与产物：OrchestratorDeps / TurnReceipt（D14）
+│   │   ├── transcript.py      # 一次 turn 攒下的记录与账本（D14）
+│   │   ├── translation.py     # 引擎事件 → EventName / TurnOutcome 的唯一翻译表（D14）
 │   │   ├── context_builder.py # context 组装：优先级 / 预算 / trust / 裁剪
 │   │   ├── hooks.py           # Observer 与 Interceptor 派发
+│   │   ├── invoker.py         # 工具执行：schema/权限校验、宽限期、孤儿任务表（D14）
 │   │   ├── cancel.py          # CancelToken + 检查点
 │   │   └── limits.py          # TurnLimits 预算
 │   ├── routing/               # 输入分流与并发
@@ -669,6 +677,31 @@ engine 的不变量（写进 docstring 并由测试守护）：
 - **空工具结果的占位文案只作用于消息**，不改写 `ToolResult.content` 本身——`ToolResult`
   是能力交出来的事实，渲染是另一回事。
 
+### 6.2.2 编排层的语义差异（`D14` 落地）
+
+`D09` 移交给编排层的几条，以及 `D14` 自己引入的差异：
+
+- **「用完预算后发一次不带 tools 的收尾请求」已实现**（`orchestrator._wrap_up`）。终态仍是
+  `STOPPED_BY_LIMIT`；收尾请求失败只记一条 `plugin.failed`，并回落到
+  `LimitBreach.describe()` 作为用户可见文本——让用户面对一张空卡片同样不可接受
+  （基线 `test_budget_exhaustion_is_pushed_through_the_stream`）。
+- **长度截断续写与空回复重试仍未实现**。旧实现的 `_MAX_LENGTH_RECOVERIES = 3` /
+  `_MAX_EMPTY_RETRIES = 2` 是「模型返回异常时重试几次」的编排策略，做法已经明确
+  （用同一个 `ledger` 再调一次 `run_turn`，见 §6.2.1），但 `D14` 未落地：它需要真实
+  Provider 的 `stop_reason=LENGTH` 才有意义，留到 `D19` 之后再论证次数。
+- **assistant 的 `tool_calls` 不进会话历史**。`SessionMessage` 没有这个字段，因此工具往返
+  仍完整写进会话文件（`/session` 与诊断要看得到），但 `context_builder.replay_messages()`
+  重放时**跳过 `role=TOOL` 的记录**：一条没有对应调用声明的 tool 消息会让下一次请求在
+  Provider 侧直接被拒。旧实现靠 dict 形态的消息保住了 `tool_calls`，新层用「保真存储 +
+  受限重放」换取了持久化格式的稳定（`SES-006`）。
+- **命令类 turn 不写会话历史**。命令输出不是模型对话的一部分，写进去只会在下一轮占预算；
+  命令影响 turn 的正规路径是 `CommandResult.fragments`（`CMD-004`）。
+- **上下文压缩未实现**。§10.2 第 7 步 e 的「仍超限则触发压缩策略」在 `D14` 是
+  `INPUT_TOO_LARGE` 报错：裁到只剩系统段与当前输入仍超预算时抛错，而不是悄悄少发一半
+  历史。`SessionStore.compact` 的调用点留给后续模块。
+- **`MERGE` 下整批归一个 turn**。被合并的消息不产生自己的事件流，只在执行 turn 的
+  `turn.started` 载荷里留 `merged_from`；提交方拿到的 `TurnReceipt` 就是执行 turn 的那一份。
+
 ### 6.3 输入分流：命令与模型 turn
 
 `kernel/routing/dispatcher.py` 在进入 engine 之前决策一次（`KER-006`）：
@@ -800,6 +833,23 @@ Interceptor 异常处理按插件关键性区分（`PLG-004`、`EDG-106`、`CTX-
 
 Hook 契约写进 docstring：**handler 不应抛出异常，抛出被视为插件故障并被隔离**。这是
 Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
+
+`D14` 落地时对本节的四处细化（实现在 `kernel/turn/hooks.py::HookRouter`）：
+
+- **归并口径**：拦截器的 `REPLACE` 是**累积式**——上一个 handler 的载荷回灌进
+  `HookContext` 再交给下一个，最终结果是最后一次改写；`REJECT` / `BLOCK` 是**短路式**，
+  首个非 `CONTINUE` 的处置立即生效，其后的 handler 不再执行。
+- **顺序是 `(priority, provider, name)`** 而不是 §6.6 原文的两项。同一个插件可以注册多个
+  同优先级的 Hook，少了 `name` 这一项，行为会随字典插入顺序漂移，`CTX-002` 的确定性也就
+  断言不了。
+- **观察者忽略 `critical`**。§6.6 与 `NFR-204` 都写死了「观察者的异常与超时不影响 turn」，
+  让 `critical=True` 的观察者能打掉 turn 等于给了它拦截器才有的权力，而它连返回值都不被
+  采纳。关键性只在拦截器上有意义。
+- **用错处置或载荷 = 插件故障**，不是静默忽略。一个在 `before_model_request` 上返回
+  `REJECT` 的 handler，作者认为自己拒掉了这个 turn；忽略它会让用户看到「什么都没发生」。
+- **三项超时进配置**：`hooks.observer_timeout_ms`（2000）、`hooks.interceptor_timeout_ms`
+  （5000）、`context.provider_timeout_ms`（3000）。字段表在 `kernel/config/schema.py`，
+  与 turn / routing 一样在两处各写一份默认值，由对照测试钉住。
 
 ### 6.7 配置与 Secret
 
@@ -1254,6 +1304,19 @@ Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中
 
 任一步的 `NucleaError` 都携带 `Correlation` 与 `capability`，因此日志、事件和用户提示
 可以指向同一次执行和同一个提供方（`10.7`、`NFR-501`）。
+
+`D14` 落地时对本节步骤的三处修正（实现在 `kernel/turn/orchestrator.py`）：
+
+- **步骤 2、3 的顺序对调**：`turn_id` 分配与去重在**发布 `turn.started` 之前**，而
+  `turn.started` 在**拿到 session 槽位之后**才发。理由是 `D13` 定死的准入顺序
+  （去重 → 并发 → 分流）：一条重复投递或被队列拒绝的消息不该有 `turn.started`，
+  否则事件流里会留下一个永远等不到终态的 turn。它们各发一条 `turn.rejected`。
+- **步骤 4 的分流对整批逐条执行**：`MERGE` 策略下第二条消息也可能是命令，只看第一条会让
+  它静默变成模型输入。任一条被拒即整批终止（`CMD-003` 要的是可诊断）。
+- **步骤 13 的 `stream_state` 是 `FINAL`**，不是文中的 `COMPLETED`——`StreamState` 没有
+  这个取值。四个终态的映射见 `kernel/turn/translation.py::TERMINAL_STREAM_STATES`，
+  其中 `STOPPED_BY_LIMIT` 也映射到 `FINAL`（收尾请求给出了可呈现的答复，不完整由随附的
+  诊断说明承担，而不是把一段真实回答标成失败）。
 
 ### 10.3 中断流程
 
