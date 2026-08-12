@@ -1,18 +1,19 @@
-"""Turn 执行机制：取消、预算、事件、依赖面、折叠、调度与引擎（技术方案 §6.2、§6.4）。
+"""Turn 执行机制：取消、预算、事件、依赖面、折叠、调度、引擎与编排（技术方案 §6.2、§6.4）。
 
-职责：re-export `kernel/turn/` 六个模块的公开表面，使调用方只需要
+职责：re-export `kernel/turn/` 各模块的公开表面，使调用方只需要
 `from nucleamind.kernel.turn import ...` 一条导入路径。
-不负责：session 读写、context 组装、命令分流、事件发布——那些在 `orchestrator.py`（`D14`）；
-本包不读文件、不访问网络。
+不负责：装配一个实例（`runtime/`，`D23`）、提供具体能力（`builtins/`）；
+本包不读文件、不访问网络——IO 只经注入进来的 `SessionStore` / `ModelProvider` 等发生。
 
 包内依赖是单向的，没有环：
 
 ```text
 cancel ─┐
-        ├─> events ─> engine
-limits ─┘      ↑        ↑
-   └─> folding ─┘   scheduling
-        deps ───────────┘
+        ├─> events ─> engine ──┐
+limits ─┘      ↑        ↑      ├─> orchestrator
+   └─> folding ─┘   scheduling │
+        deps ───────────┘      │
+hooks / invoker / context_builder / transcript / translation / orchestration ─┘
 ```
 
 `cancel` 与 `limits` 之间**没有**依赖：取消是「有人要求停下」，预算是「已经用掉多少」。
@@ -31,6 +32,18 @@ from .cancel import (
     CancelToken,
     Checkpoint,
     CheckpointOwner,
+)
+from .context_builder import (
+    DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
+    HISTORY_TRIM_PRIORITY,
+    AssembledContext,
+    ContextProviderBinding,
+    DroppedFragment,
+    RegisteredContextProvider,
+    assemble,
+    context_providers_from,
+    estimate_tokens,
+    replay_messages,
 )
 from .deps import ENGINE_HOOKS, EngineDeps, HookDispatcher, ToolInvoker
 from .engine import run_turn
@@ -60,6 +73,23 @@ from .folding import (
     skipped_result,
     unknown_tool_result,
 )
+from .hooks import (
+    DEFAULT_INTERCEPTOR_TIMEOUT_MS,
+    DEFAULT_OBSERVER_TIMEOUT_MS,
+    HOOK_ACTIONS,
+    HOOK_REPLACE_SLOTS,
+    HookBinding,
+    HookRouter,
+    RegisteredHook,
+    bindings_from,
+)
+from .invoker import (
+    DEFAULT_MAX_ORPHANS,
+    OrphanTask,
+    RegisteredTool,
+    ToolExecutor,
+    tools_from,
+)
 from .limits import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
@@ -73,13 +103,30 @@ from .limits import (
     LimitKind,
     TurnLimits,
 )
+from .orchestration import EventTap, OrchestratorDeps, TurnReceipt, emit_outbound
+from .orchestrator import TurnOrchestrator
 from .scheduling import execute_batch, partition_tool_batches
+from .transcript import Transcript, TurnState
+from .translation import (
+    TERMINAL_EVENT_NAMES,
+    TERMINAL_STREAM_STATES,
+    TOOL_EVENT_NAMES,
+    as_nuclea,
+    outcome_for_error,
+    outcome_from,
+    outcome_without_engine,
+    tool_event_name,
+)
 
 __all__ = [
     "CANCEL_REASON_CODES",
     "CHECKPOINT_OWNERS",
+    "DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS",
+    "DEFAULT_INTERCEPTOR_TIMEOUT_MS",
     "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MAX_ORPHANS",
     "DEFAULT_MAX_TOOL_CALLS_PER_TURN",
+    "DEFAULT_OBSERVER_TIMEOUT_MS",
     "DEFAULT_TOOL_CANCEL_GRACE_MS",
     "DEFAULT_TOOL_RESULT_MAX_BYTES",
     "DEFAULT_TOOL_TIMEOUT_MS",
@@ -87,39 +134,73 @@ __all__ = [
     "EMPTY_TOOL_RESULT_TEXT",
     "ENGINE_HOOKS",
     "FALLBACK_CONTEXT_MAX_TOKENS",
+    "HISTORY_TRIM_PRIORITY",
+    "HOOK_ACTIONS",
+    "HOOK_REPLACE_SLOTS",
     "LIMIT_OUTCOMES",
     "TERMINAL_EVENTS",
+    "TERMINAL_EVENT_NAMES",
+    "TERMINAL_STREAM_STATES",
+    "TOOL_EVENT_NAMES",
+    "AssembledContext",
     "BudgetLedger",
     "CancelToken",
     "Checkpoint",
     "CheckpointOwner",
+    "ContextProviderBinding",
+    "DroppedFragment",
     "EngineDeps",
+    "EventTap",
+    "HookBinding",
     "HookDispatcher",
+    "HookRouter",
     "LimitBreach",
     "LimitKind",
     "ModelReasoningDelta",
     "ModelResponseCompleted",
     "ModelTextDelta",
+    "OrchestratorDeps",
+    "OrphanTask",
+    "RegisteredContextProvider",
+    "RegisteredHook",
+    "RegisteredTool",
     "StreamFolder",
     "TerminalEvent",
     "ToolCallCompleted",
     "ToolCallStarted",
     "ToolDisposition",
+    "ToolExecutor",
     "ToolInvoker",
+    "Transcript",
     "TurnCancelled",
     "TurnCompleted",
     "TurnEvent",
     "TurnFailed",
     "TurnLimits",
+    "TurnOrchestrator",
+    "TurnReceipt",
+    "TurnState",
     "TurnStoppedByLimit",
+    "as_nuclea",
+    "assemble",
     "assistant_message",
+    "bindings_from",
     "blocked_result",
+    "context_providers_from",
+    "emit_outbound",
     "escaped_result",
+    "estimate_tokens",
     "execute_batch",
     "fold_tool_result",
+    "outcome_for_error",
+    "outcome_from",
+    "outcome_without_engine",
     "partition_tool_batches",
+    "replay_messages",
     "run_turn",
     "skipped_result",
     "terminal_from_error",
+    "tool_event_name",
+    "tools_from",
     "unknown_tool_result",
 ]

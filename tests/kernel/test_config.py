@@ -385,6 +385,22 @@ class TestSchema:
             session_lock.ConcurrencyPolicy.QUEUE
         )
 
+    def test_orchestration_defaults_match_the_turn_package(self) -> None:
+        """Hook 与 Context Provider 的三项超时同样在两处各写了一份（`D14`）。
+
+        与上面两条同理：`schema.py` 不能 import `kernel.turn`（会把 engine 与 asyncio 拖上
+        配置路径），代价就是这张对照表。
+        """
+        from nucleamind.kernel.turn import context_builder, hooks
+
+        config = validate_config({})
+        assert config.hooks.observer_timeout_ms == hooks.DEFAULT_OBSERVER_TIMEOUT_MS
+        assert config.hooks.interceptor_timeout_ms == hooks.DEFAULT_INTERCEPTOR_TIMEOUT_MS
+        assert (
+            config.context.provider_timeout_ms
+            == context_builder.DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+        )
+
     def test_unknown_session_concurrency_is_rejected_with_the_allowed_values(self) -> None:
         """取值受限的字段必须在校验时就带着指针报错，而不是等到构造调度器那一刻。"""
         with pytest.raises(NucleaError) as caught:

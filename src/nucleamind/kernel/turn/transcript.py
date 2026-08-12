@@ -1,0 +1,161 @@
+"""会话记录与 turn 账本：一次 turn 产生了什么、其中哪些进历史（技术方案 §10.2 第 11 步）。
+
+职责：`Transcript` 把一次 turn 的用户输入、assistant 正文与工具结果折成 `SessionMessage`
+序列，并在持久化边界执行 `D07` 基线记下的三条编排决定；`TurnState` 是编排期的可变账本
+（已产出的文本、待发的出站消息、命令注入的片段）。
+不负责：真的写盘（`SessionStore.append`）、决定终态、发事件——那些在 `orchestrator.py`。
+
+**三条决定逐条对应 `tests/baseline/test_loop_behavior.py`**：
+
+1. **空 assistant 消息不入历史**。没有正文的 assistant 记录（纯工具调用轮）在重放时
+   只会变成一条无意义的空消息，`ModelMessage` 甚至构造不出来。
+2. **孤儿 tool 结果丢弃**：`call_id` 不在本轮声明的调用集合里的工具结果不写入。
+   一条没有来处的 tool 记录会让后续请求在 Provider 侧被拒。
+3. **工具结果在持久化边界再截断一次**。in-flight 的截断按
+   `tool_result_max_bytes`（engine 的 `folding.py`），但历史是长期资产：一次配置调小
+   之后，旧记录仍然按旧上限躺在文件里，重放时会把预算撑爆。
+
+与旧实现的一处差异：assistant 的 `tool_calls` **不进 `SessionMessage`**（契约层没有这个
+字段）。工具往返仍然完整写进历史供 `/session` 与诊断查看，但
+`context_builder.replay_messages()` 重放时跳过 `role=TOOL` 的记录——见那里的说明。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from nucleamind.contracts import (
+    ContextFragment,
+    Correlation,
+    InboundMessage,
+    OutboundMessage,
+    Role,
+    SessionMessage,
+    ToolCall,
+    ToolResult,
+    TurnId,
+)
+
+from .limits import BudgetLedger, TurnLimits
+
+__all__ = ["Transcript", "TurnState"]
+
+
+@dataclass(slots=True)
+class Transcript:
+    """一次 turn 的可持久化产物。边跑边攒，终态时一次性交给 `SessionStore.append`。"""
+
+    turn_id: TurnId
+    created_at: datetime
+    limits: TurnLimits
+    _user: list[SessionMessage] = field(default_factory=list)
+    _body: list[SessionMessage] = field(default_factory=list)
+    _declared: set[str] = field(default_factory=set)
+    _assistants: int = 0
+
+    def add_inputs(self, messages: Iterable[InboundMessage]) -> None:
+        """记下本批用户输入。用消息自己的 `message_id`，去重与历史因此可以对上。"""
+        for message in messages:
+            self._user.append(
+                SessionMessage(
+                    message_id=message.message_id,
+                    role=Role.USER,
+                    content=message.content,
+                    created_at=self.created_at,
+                    turn_id=self.turn_id,
+                )
+            )
+
+    def declare(self, calls: Sequence[ToolCall]) -> None:
+        """登记本轮 assistant 声明的调用，供孤儿判定使用。"""
+        self._declared.update(call.call_id for call in calls)
+
+    def add_assistant(self, content: str, *, interrupted: bool = False) -> None:
+        """记一条 assistant 正文。空正文直接丢弃（决定 1）。"""
+        if not content:
+            return
+        self._assistants += 1
+        self._body.append(
+            SessionMessage(
+                message_id=f"{self.turn_id}-a{self._assistants}",
+                role=Role.ASSISTANT,
+                content=content,
+                created_at=self.created_at,
+                turn_id=self.turn_id,
+                interrupted=interrupted,
+            )
+        )
+
+    def add_tool_result(self, result: ToolResult) -> None:
+        """记一条工具结果。孤儿丢弃（决定 2），内容再截断一次（决定 3）。"""
+        if result.call_id not in self._declared:
+            return
+        content, _ = self.limits.truncate_tool_result(result.content)
+        self._body.append(
+            SessionMessage(
+                message_id=f"{self.turn_id}-t-{result.call_id}",
+                role=Role.TOOL,
+                content=content,
+                created_at=self.created_at,
+                turn_id=self.turn_id,
+                tool_call_id=result.call_id,
+            )
+        )
+
+    def mark_interrupted(self) -> None:
+        """把最后一条 assistant 记录标成中断（`EDG-304`：不得当作完整回答）。"""
+        for index in range(len(self._body) - 1, -1, -1):
+            record = self._body[index]
+            if record.role is Role.ASSISTANT:
+                self._body[index] = SessionMessage(
+                    message_id=record.message_id,
+                    role=record.role,
+                    content=record.content,
+                    created_at=record.created_at,
+                    turn_id=record.turn_id,
+                    interrupted=True,
+                )
+                return
+
+    def records(self) -> tuple[SessionMessage, ...]:
+        """按「用户输入在前」的顺序交出全部记录。"""
+        return (*self._user, *self._body)
+
+
+@dataclass(slots=True)
+class TurnState:
+    """一次 turn 在编排期攒下的东西。
+
+    与 `Transcript` 分开：后者只回答「哪些进历史」，这里还装着只在本次执行中有意义的
+    东西（出站消息、命令注入的片段、本轮的账本）。两者塞进一个类，就分不清「这个字段
+    会不会落盘」了。
+    """
+
+    correlation: Correlation
+    started_at: datetime
+    transcript: Transcript
+    #: 已产出的正文分片，用于在没有最终答复时兜底呈现（取消、失败）。
+    text: list[str] = field(default_factory=list)
+    #: **尚未写进 transcript** 的正文分片。每轮响应完整时清空——那一轮的内容已经由
+    #: `ModelResponseCompleted.response` 权威地记过一次，再按分片记一遍就是重复写入。
+    #: 剩下的就是「最后一次完整响应之后产生的内容」，也就是被打断的那半句。
+    pending: list[str] = field(default_factory=list)
+    #: 分流之后真正要送进模型的输入（可能来自多条被合并的消息）。
+    model_inputs: list[str] = field(default_factory=list)
+    #: 命令注入的上下文片段（`CMD-004`）。
+    fragments: list[ContextFragment] = field(default_factory=list)
+    #: 已发出的中间帧，终帧不在其中——终帧由 `_finish` 单独产出。
+    emitted: list[OutboundMessage] = field(default_factory=list)
+    #: 模型给出的最终答复（没有 tool_calls 的那一轮）。
+    final: str = ""
+    ledger: BudgetLedger | None = None
+
+    @property
+    def iterations(self) -> int:
+        return self.ledger.iterations if self.ledger is not None else 0
+
+    @property
+    def tool_calls(self) -> int:
+        return self.ledger.tool_calls if self.ledger is not None else 0
