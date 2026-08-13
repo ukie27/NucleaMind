@@ -25,7 +25,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   套件（`kernel/plugins/` 四个模块 + `builtins/registry.py` + `runtime/wiring.py`），
   `D17` 已落地内建 Session（`builtins/session_jsonl/`），`D18` 已落地内建 Context
   （`builtins/context_basic/`），`D19` 已落地内建 Model（`builtins/model_openai/`），
-  `D20` 已落地内建文件工具（`builtins/tools_fs/`），**阶段 5 进行中**，下一步 `D21`–`D22`。
+  `D20` 已落地内建文件工具（`builtins/tools_fs/`），`D21` 已落地内建 shell 工具
+  （`builtins/tools_shell/`，§8.2 冻结清单六件套至此交齐），**阶段 5 进行中**，下一步 `D22`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
   `config/`、`observability/`、`routing/` 与 `plugins/`。
@@ -59,7 +60,8 @@ webui/                     # 前端源码（TypeScript）
 ```
 
 `contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面，
-`kernel/registry/` 已落地；`builtins/` 有 `registry.py` 与 `session_jsonl/`，
+`kernel/registry/` 已落地；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
+`model_openai/`、`tools_fs/` 与 `tools_shell/`，
 `runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，按开发方案逐个填充。
 **新代码直接写在最终位置**，不要放临时目录。
 
@@ -244,8 +246,32 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   越界错误的 `detail` 只放原始串——宿主机绝对路径进模型可见的错误就是泄漏。
 - **失败发生在落盘之前才敢标 `SideEffect.NONE`**：`tools_fs` 的写走「临时文件 → `fsync`
   → `os.replace`」，替换成功后没有可失败的步骤，因此它一次 `UNKNOWN` 都不产出，
-  `base.FsTool` 把折出来的失败一律标 `NONE`。`D21` 的 `shell.exec` **不能照抄这一句**——
-  取消宽限期用尽正是 `UNKNOWN` 的正主（`EDG-407`）。
+  `base.FsTool` 把折出来的失败一律标 `NONE`。**`D21` 的 `shell.exec` 没有照抄这一句**：
+  三档判定在 `tools_shell/executor.py::_fold` 一处——执行**之前**失败（参数 / cwd / 入口
+  取消）→ `NONE`；进程自己退出或宽限期内被终止 → `OCCURRED`；**宽限期用尽被强杀 →
+  `UNKNOWN`**（`EDG-407`，全项目唯一的产出点）。判据是「失败发生在副作用可能已经发生
+  **之后**，且无法确认做完没有」。
+- **`tools_shell` 的取消是三步，不是一步**（`process.py::_supervise`）：终止信号 → 等宽限期
+  → 强杀 + 收尸。直接 `kill()` 会让一条 `rm -rf` 写了一半就停，那不叫取消成功。
+  `CancelSignal` 只有 `requested` 可轮询（`CancelToken.wait()` 属 kernel 扩展面，`R4` 够
+  不着），因此每 50 ms 看一次——等到 `timeout_ms` 才响应取消等于不支持取消。
+  `DEFAULT_GRACE_MS` 与 kernel 那份各写一份，有对照测试。
+- **Windows 起子进程必须走 `create_subprocess_shell`**（`tools_shell/command.py` 的模块
+  docstring 是唯一出处）：`cmd.exe` 接在 `/c` 后的是原始命令行尾巴，而 `subprocess` 用
+  `list2cmdline()` 把 argv 拼回字符串时会把内层引号转义成 `\"`，`cmd` 不认识——任何带引号
+  的命令当场残掉。代价是 Windows 拿不到 `/d`、`shell` 配置项不生效，两条都写在那里了。
+  平台分派只在 `process._spawn` 一处，有测试数 `os.name` 的出现次数。
+- **`tools_shell` 的子进程环境是白名单**（`environ.py`，`NFR-307`）：父进程的环境默认一个
+  字节都不进子进程，只有平台基线与运维在 `pass_env` 里点名的才转发。别改成「过滤掉像密钥的
+  变量名」的黑名单——那要求名单穷举所有会泄漏的变量，漏一个就把凭据交给模型写的命令。
+  哨兵用例走真实子进程打印自己的环境，因为「函数是对的」不等于「调用它的路径是对的」。
+- **cwd 守卫是 `tools_fs.WorkspaceGuard` 的第二份实现**（`tools_shell/paths.py::CwdGuard`），
+  刻意不 import 它：两者是独立 manifest、可各自被禁用或被第三方覆盖的提供方。判定逐条相同，
+  由 `test_cwd_guard_matches_the_fs_workspace_guard` 钉住，改一边要改两边。另外**守住 cwd
+  不等于守住命令能碰到的文件**（`cat /etc/shadow` 与 cwd 无关），那句如实写在 docstring 里。
+- **非零退出码不是工具失败**（`shell.exec` 返回 `ok=True`）：`grep` 没匹配返回 1 是正常产出，
+  模型要靠退出码和 stderr 继续工作。`ok=False` 只留给「这次调用没能给出结论」（起不来 /
+  超时 / 被强杀）。进程起不来折成 `exit_code=-1`（不在 0–255 内），诊断因此分得开。
 - **自报的 `estimated_tokens` 要和组装器同一把尺**：`R4` 逼得公式在
   `builtins/context_basic/instructions.py` 与 `kernel/turn/context_builder.py` 各写一份
   （都是 `ceil(len/3)`），由一条逐字符对照测试钉住。自报偏小会让请求真的超出模型窗口，

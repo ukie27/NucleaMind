@@ -24,7 +24,14 @@ from typing import Final
 from nucleamind.contracts import CapabilityKind, PermissionKind
 from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
 
-__all__ = ["BUILTIN_MANIFESTS", "CONTEXT_BASIC", "MODEL_OPENAI", "SESSION_JSONL", "TOOLS_FS"]
+__all__ = [
+    "BUILTIN_MANIFESTS",
+    "CONTEXT_BASIC",
+    "MODEL_OPENAI",
+    "SESSION_JSONL",
+    "TOOLS_FS",
+    "TOOLS_SHELL",
+]
 
 #: `D17` 内建 Session（技术方案 §8.1）。
 #:
@@ -301,10 +308,80 @@ TOOLS_FS: Final = PluginManifest(
     critical=False,
 )
 
-#: 全部内建能力的 manifest。`D21`–`D22` 逐个追加（tools_shell / commands_core / cli_entry）。
+#: `D21` 内建 shell 工具（技术方案 §8.2 冻结清单的第 6 项，至此六件套齐）。
+#:
+#: `critical=False`：没有 shell 工具的 Agent 仍然能对话，与 `tools_fs` 同一条理由。
+#:
+#: **只声明一条 `shell` 权限**。它是全部五种权限里最强的一个——一条命令能读能写能出网，
+#: `fs:read` / `fs:write` / `net` 在它面前都是子集，再声明一遍只会让「这个插件到底要什么」
+#: 变模糊。`NFR-307` 的「默认保守」由两件事兑现：整条权限可以不授予（那时本内建不注册），
+#: 以及子进程的环境变量默认一个都不继承（`environ.py` 是白名单，不是黑名单）。
+TOOLS_SHELL: Final = PluginManifest(
+    id="tools-shell",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind.builtins.tools_shell:setup",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="shell.exec"),),
+    permissions=(
+        PermissionDecl(
+            kind=PermissionKind.SHELL,
+            reason="在 workspace 内执行运维与开发命令；cwd 限定在 workspace 根内，"
+            "子进程默认不继承父进程的任何环境变量。",
+        ),
+    ),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "workspace": {
+                "type": "string",
+                "description": "命令的默认 cwd，也是 cwd 参数必须落在其内的根。"
+                "缺省时使用本插件的私有状态目录；装配根会把配置里的 workspace.root 填在这里。",
+            },
+            "disable": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "要关掉的工具名（TOL-006）。被关掉的工具不会注册，"
+                "因此也不出现在模型可见的工具列表里。表外的名字会被拒绝。",
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 120000,
+                "description": "单次命令的执行超时。实际生效值是它与 "
+                "ToolInvocation.timeout_ms 的较小者。",
+            },
+            "max_output_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 32768,
+                "description": "单个工具结果的字符上限，不得超过契约的 65536。",
+            },
+            "pass_env": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "额外从父进程转发给子进程的环境变量名。"
+                "默认一个都不转发（NFR-307）；父进程里没有的名字会被静默跳过。",
+            },
+            "env": {
+                "type": "object",
+                "additionalProperties": {"type": "string"},
+                "description": "显式写死的环境变量，覆盖平台基线与 pass_env。",
+            },
+            "shell": {
+                "type": "string",
+                "description": "shell 程序路径。缺省时 POSIX 用 /bin/sh、Windows 用 %ComSpec%。",
+            },
+        },
+        "additionalProperties": False,
+    },
+    critical=False,
+)
+
+#: 全部内建能力的 manifest。`D22` 逐个追加（commands_core / cli_entry）。
 BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (
     SESSION_JSONL,
     CONTEXT_BASIC,
     MODEL_OPENAI,
     TOOLS_FS,
+    TOOLS_SHELL,
 )

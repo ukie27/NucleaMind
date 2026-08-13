@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D20` 均已完成，下一步 `D21`–`D22`）
+- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D21` 均已完成，下一步 `D22`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -993,6 +993,82 @@
     1591）。`ruff check`（src + plugins + tests）、`basedpyright`（新层 0 报错，legacy 仍是
     既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK；新层 `Any` 数仍为 0。
 
+- **`D21` 内建工具：`tools_shell`**（`builtins/tools_shell/` 七个模块约 1100 行 +
+  `builtins/registry.py` 的第五条 manifest + `tests/builtins/test_tools_shell.py` 74 个用例）：
+  - **`SideEffect.UNKNOWN` 在这里第一次真的出现**，这是本模块与 `tools_fs` 唯一的语义差异，
+    也是 `D20` 点名交代过的那条。三档判定只在 `executor._fold` 一处：执行**之前**失败
+    （参数非法 / cwd 越界 / 入口取消）→ `NONE`（进程没起来，外部世界没变）；进程自己退出
+    或宽限期内被终止 → `OCCURRED`；**宽限期用尽被强杀 → `UNKNOWN`**（`EDG-407`）。
+    别照抄 `base.FsTool` 那句「折出来的失败一律 `NONE`」——文件工具的失败全部发生在落盘
+    之前，而这里第三档正是 `UNKNOWN` 存在的理由，谎报 `NONE` 会让用户据此重试。
+  - **取消是「终止信号 → 宽限期 → 强杀 + 收尸」三步，不是一步**（`process._supervise`）。
+    直接 `kill()` 会让一条 `rm -rf` 写了一半就停——那不叫取消成功，叫留下半个被删掉的
+    目录树。宽限期正是留给进程自己收尾的。**不 `task.cancel()`** 与 `kernel/turn/invoker.py`
+    同一条理由。宽限期常量 `DEFAULT_GRACE_MS = 2000` 与 kernel 那份各写一份（`R4`），
+    由一条对照测试钉住。
+  - **取消要轮询而不是等超时**：`CancelSignal` 只有 `requested` 与 `raise_if_requested()`
+    两个成员（`CancelToken.wait()` 属 kernel 扩展面，`R4` 够不着），因此 `_wait_or_cancel`
+    每 `CANCEL_POLL_MS`（50 ms）看一次。一条 `timeout_ms=120000` 的命令在用户按下 Ctrl-C
+    之后还要跑两分钟，不叫支持取消。
+  - **两个管道从一开始就并发抽干**。`process.wait()` 在管道写满时会与子进程死锁，而
+    `communicate()` 会等进程退出——宽限期用尽时进程可能还要跑一年。自己开两个抽干任务，
+    任何时刻都拿得到「到目前为止的输出」，包括被强杀的那一刻。
+  - **Windows 走 `create_subprocess_shell`，POSIX 走 `exec`**（`command.py` 的模块 docstring
+    是这条的唯一出处，本轮踩到的最实的一个坑）：`cmd.exe` 接在 `/c` 之后的是**原始命令行
+    尾巴**，而 `subprocess` 在 Windows 上用 `list2cmdline()` 把 argv 拼回字符串时会按 MSVC
+    规则把内层引号转义成 `\"`——`cmd.exe` 不认识反斜杠转义，于是任何带引号的命令当场以
+    exit 1 残掉（第一版就是这么写的，测试立刻报出来）。CPython 的 `shell=True` 分支拼的是
+    `%ComSpec% /c "<原样命令>"`，外层那对引号正好抵消 `cmd` 的首尾引号剥离规则。
+    代价是 Windows 上拿不到 `/d`（跳过 AutoRun 注册表项）、`shell` 配置项不生效，两条都
+    如实写在 docstring 里。平台分派**只在 `process._spawn` 一处**，有一条 `os.name` 出现
+    次数的测试盯着——挪到别处就会有人「顺手统一」成 exec。
+  - **环境变量是白名单，不是黑名单**（`NFR-307`）。做成「过滤掉看起来像密钥的变量名」
+    在结构上就是错的：它要求那张名单穷举出所有会泄漏的变量，而漏掉一个的代价是把父进程的
+    凭据交给一条模型写的命令。这里反过来——父进程的环境**默认一个字节都不进子进程**，
+    只有平台基线（让 shell 起得来的那几项，两个平台各一份且都不含凭据类变量）与运维在
+    `pass_env` 里逐个点名的才转发。「哨兵不进子进程」因此不是一条要维护的过滤规则，
+    而是**没有路径**。哨兵用例走**真实子进程**打印自己的整个环境再搜——`build_environment()`
+    是对的不等于调用它的那条路径是对的（漏传 `env=` 单测看不见）。
+  - **非零退出码是正常产出而不是工具失败**（`ok=True`）。`grep` 没匹配返回 1、`test` 判假
+    返回 1、编译器发现错误返回 2——模型需要拿到退出码和 stderr 才能继续工作。折成
+    `ok=False` 会让 Kernel 认为工具坏了，而真正坏掉的三条路（起不来 / 超时 / 被强杀）
+    各有各的错误码。进程**起不来**折成 `exit_code=-1`（不是任何程序的真实退出码，
+    有效范围 0–255），诊断因此能区分「启动失败」与「程序返回 1」。
+  - **cwd 守卫是 `tools_fs.WorkspaceGuard` 的第二份实现，不是 import 它**。`R4` 确实允许
+    `builtins/` 之间互相 import（`_ALLOWED_TARGETS["builtins"]` 含自身），但 `tools-fs` 与
+    `tools-shell` 是两份独立 manifest、两个可以各自被禁用或被第三方覆盖的提供方——让一个
+    import 另一个的内部模块，等于在能力边界之外偷偷建立依赖：`tools-fs` 被换成第三方实现
+    时，`tools-shell` 仍绑在内建那份代码上。双重校验（`normpath` + `resolve()`，两次都过
+    `normcase`）逐条相同，由 `test_cwd_guard_matches_the_fs_workspace_guard` 五条对照钉住，
+    与 `estimate_tokens` 各写一份是同一种做法。**Windows 的重解析点用目录联接
+    （`mklink /J`，不需要提权）真的验到了**，那是 realpath 校验在本机唯一跑得到的途径。
+  - **守住 cwd 不等于守住命令能碰到的文件**：一条 `cat /etc/shadow` 用绝对路径，与 cwd 无关。
+    cwd 边界限制的是「命令默认在哪里落地」，真正的隔离是不授予 `shell` 权限或 P2 的子进程
+    宿主。这句如实写在 `paths.py` 里，不假装挡得住。同理**不移植 legacy 的
+    `_guard_command` 命令黑名单**：模型能写出的绕过形式无穷（换行、变量展开、base64 管道），
+    一张挡不住的黑名单只会让人以为挡住了。
+  - **只声明一条 `shell` 权限**：它是五种权限里最强的一个，`fs:read` / `fs:write` / `net`
+    在它面前都是子集，再声明一遍只会让「这个插件到底要什么」变模糊。未授予时由 kernel 的
+    `ToolExecutor` 在**执行之前**折成 `PERMISSION_DENIED` + `side_effect=NONE`，工具自己
+    不抄一遍这个判定（有一条走真实 `ToolExecutor` 的用例）。
+  - **`critical=False`**，单工具禁用直接复用 `D20` 的 `keep` 那条路（`enabled_tool_names`
+    + `runtime/wiring.py`），没有发明第二套机制。**未新增 `ErrorCode`**（`TIMEOUT_TOOL_CANCEL`
+    / `TIMEOUT_TOOL_CALL` / `CANCELLED_BY_USER` / `PERMISSION_PATH_OUTSIDE_WORKSPACE` 够用），
+    **未碰 `kernel/`**，`tools_shell` 按 `D18` 定的规矩**不进**
+    `test_builtin_no_privilege.py::_READ_ONLY_BUILTIN_PACKAGES`。
+  - **`process._release()` 显式关传输**：被强杀后我们 `cancel()` 掉 waiter 与两个抽干任务，
+    传输对象会活到下一次 GC，届时事件循环多半已关，`__del__` 里那句 `call_soon` 抛
+    `Event loop is closed`——表现是一串挂在**无辜用例**上的 `ResourceWarning`（本轮就是这么
+    发现的），而在一个跑几个月的实例里那是真实的 fd 泄漏。`_transport` 是私有属性，用
+    `getattr` 取：CPython 换内部名字时应当安静地少做一件清理，而不是让每次调用都炸。
+  - 验收：`tests/builtins`(416) 全绿；新层八个测试目录共 **1767 个用例全绿**（`D20` 收口时
+    1693）。`builtins/tools_shell/` 语句覆盖率 **96%**（未覆盖的全是 POSIX 分支与防御性
+    路径：`default_shell` 的 POSIX 探测、`_spawn` 的 exec 分支、`BaseException` 兜底、
+    `relative()` 的不变量违规、两个 property）。`ruff check`（src + plugins + tests）、
+    `basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`legacy_debt --check` 未变、
+    `check_startup_cost --check` OK（`import nucleamind` 仍 0.71 ms、只拉入 1 个模块）；
+    新层 `Any` 数仍为 0。**技术方案 §8.2 的冻结清单六件套至此交齐。**
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -1073,17 +1149,48 @@
 
 ## 下一步工作
 
-1. 继续阶段 5 的其余内建能力：`D21` tools_shell、`D22` commands_core
-   （`D19` model_openai 与 `D20` tools_fs 已完成）。它们之间无相互依赖，可并行开发。
+1. 继续阶段 5 的其余内建能力：`D22` commands_core（`D19`–`D21` 已完成，
+   技术方案 §8.2 的内建工具六件套已交齐）。
    **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
    `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
    注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
    自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
    `D17` 的 `builtins/session_jsonl/`（要写盘的那种）、`D18` 的 `builtins/context_basic/`
-   （纯内存、零权限的那种）、`D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）
-   与 `D20` 的 `builtins/tools_fs/`（一份 manifest 里多条能力声明、且能按配置少注册几条的
-   那种）是这个形态的四个样例，照着写即可。
+   （纯内存、零权限的那种）、`D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）、
+   `D20` 的 `builtins/tools_fs/`（一份 manifest 里多条能力声明、且能按配置少注册几条的
+   那种）与 `D21` 的 `builtins/tools_shell/`（起子进程、要管取消与副作用未知的那种）
+   是这个形态的五个样例，照着写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
+
+`D21` 留下的、`D22`/`D23`/`D26` 必须用到的事实：
+
+- **`D23` 必须给 `tools_shell` 传两样东西**，与 `tools_fs` 完全同构：① 配置块里的
+  `workspace` 键（没配就退回插件私有状态目录 `<instance>/plugins/tools-shell/`，命令会在
+  一个没人预期的目录里执行）；② `wire_capabilities()` 的 `keep` 参数
+  （`lambda manifest, decl: decl.name in enabled_tool_names(config_of(manifest))`）。
+  不传 `keep` 且用户禁用了 `shell.exec` 时，`tools-shell` 会以 `PLUGIN_LOAD_FAILED` 加载
+  失败——那是 `CapabilityHost.finish()` 在如实报告「声明与注册对不上」。`critical=False`，
+  因此失败只记进 `Wiring.outcomes`，实例仍会起来但没有 shell 工具。
+- **`SideEffect.UNKNOWN` 现在有了唯一的产出点**：`tools_shell` 的取消宽限期用尽
+  （`executor._fold` 的第三档）。`D22` 之后如果还有别的工具要产出 `UNKNOWN`，判据是同一条
+  ——「失败发生在副作用可能已经发生**之后**，且无法确认做完没有」。`tools_fs` 一次都不产出，
+  别把两者的规矩搞混。
+- **`shell` 权限未授予时，工具仍然会被注册**，只是每次调用被 kernel 的 `ToolExecutor` 折成
+  `PERMISSION_DENIED` + `side_effect=NONE`。开发方案 `D21` 那句「未授予 shell 权限时工具
+  不注册」在当前架构下**没有落地点**：`granted` 是 `ToolExecutor` 的实例级参数（`D14`），
+  而注册发生在装配期、那时还没有权限集合。**要真正做到「不注册」得等 `D26`**——届时可以在
+  `wire_capabilities` 的 `keep` 里再加一条「manifest 声明的权限 ⊆ 实例已授予的权限」，
+  机制已经在那里了。当前行为由 `TestPermissionGate` 如实钉住，不是遗漏而是已知边界。
+- **cwd 守卫有第二份实现**（`builtins/tools_shell/paths.py::CwdGuard`），与
+  `tools_fs.WorkspaceGuard` 由 `test_cwd_guard_matches_the_fs_workspace_guard` 五条对照钉住。
+  改任何一边的判定都要同时改另一边并更新那条测试——这是刻意的重复（两个独立提供方，
+  见该模块 docstring），不是待清理的债务。
+- **Windows 上 `shell` 配置项不生效**，命令恒由 `%ComSpec%`（`cmd.exe`）执行。改这件事之前
+  先读 `command.py` 的模块 docstring：那不是偷懒，是 `list2cmdline()` 与 `cmd /c` 的原始
+  命令行语义不兼容。`D23` 写文档时要如实说明这条平台差异。
+- **`DEFAULT_GRACE_MS` 与 `kernel/turn/cancel.py::DEFAULT_TOOL_CANCEL_GRACE_MS` 各写一份**
+  （`R4` 逼的，与 `estimate_tokens` 同一种做法），由一条对照测试钉住。要把宽限期做成配置项
+  之前先想清楚：它在 kernel 那侧是取消参数而不是六项预算之一（`D14` 的结论）。
 
 `D20` 留下的、`D21`/`D23` 必须用到的事实：
 
@@ -1481,7 +1588,8 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅   D21– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
+D22– ⬜（尚未开始）
 
 ## 本目录文档分类
 
