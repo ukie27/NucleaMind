@@ -1,8 +1,13 @@
 """`nm run`：装配实例、安装信号处理、把进程交给 CLI 入口能力（§10.1、§10.3）。
 
-职责：把 `bootstrap()` → `start()` → `cli_entry.run()` → `stop()` 串成一条命令，
-并实现两次 `Ctrl-C` 的语义。
-不负责：解析交互参数（那是 CLI 入口能力自己的事，`-p` 由它认）、渲染输出。
+职责：把「首次运行生成配置」→ `bootstrap()` → `start()` → `cli_entry.run()` → `stop()`
+串成一条命令，并实现两次 `Ctrl-C` 的语义。
+不负责：解析交互参数（那是 CLI 入口能力自己的事，`-p` 由它认）、渲染输出、
+生成配置的具体内容（`runtime/first_run.py`）。
+
+**首次运行生成配置后就退出**（§10.1 步骤 2、`EDG-506`）：紧接着进会话看起来更顺手，
+却会让同一条命令有两种结局——取决于用户有没有提前 export 那个环境变量。首次运行恰恰是
+最需要确定性的时刻，因此这里只生成、只指路。第二次 `nm run` 才真的跑。
 
 **两次 `Ctrl-C` 的语义**（`contracts.CliEntry.run` 的取消语义、§10.3）：
 第一次在有 turn 在跑时**取消那些 turn**，会话继续；没有 turn 在跑时它是「退出」。
@@ -18,9 +23,11 @@ import os
 import sys
 
 from nucleamind.contracts import CancelReason
+from nucleamind.kernel.config import InstanceLayout
 from nucleamind.kernel.turn import CancelToken
 
 from ...bootstrap import bootstrap
+from ...first_run import ensure_initial_config, guidance_lines
 from ...instance import AgentInstance
 from ..main import Options, install_cancel_handler
 
@@ -32,7 +39,27 @@ _STOP_GRACE_S = 3.0
 
 def run_command(options: Options) -> int:
     """同步入口。`asyncio.run` 只在这里出现一次——`nm` 的其余命令都不需要事件循环。"""
+    first_run = _generate_config_if_absent(options)
+    if first_run is not None:
+        return first_run
     return asyncio.run(_run(options))
+
+
+def _generate_config_if_absent(options: Options) -> int | None:
+    """§10.1 步骤 2 的「无配置文件」分支。已有配置时返回 `None`，本次运行照常继续。
+
+    配置**存在**时一个字节都不写：那条路上连 `ensure_initial_config()` 都不调，
+    免得每次 `nm run` 都去比对一次 schema 文件。
+    """
+    layout = InstanceLayout.resolve(
+        instance_dir=options.instance_dir, instance=options.instance
+    )
+    if layout.config_path.exists():
+        return None
+    result = ensure_initial_config(layout)
+    for line in guidance_lines(result):
+        sys.stdout.write(line + "\n")
+    return 0
 
 
 async def _run(options: Options) -> int:

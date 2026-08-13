@@ -181,21 +181,31 @@ def _lookup(
     return (resolved, missing)
 
 
-def _missing_error(entries: Sequence[tuple[str, str, str]]) -> NucleaError:
-    """构造缺失变量的错误。**只有变量名、位置与原因，没有任何值**（`EDG-502`）。"""
+def _missing_error(
+    entries: Sequence[tuple[str, str, str]], *, source: str = ""
+) -> NucleaError:
+    """构造缺失变量的错误。**只有变量名、位置与原因，没有任何值**（`EDG-502`）。
+
+    `source` 是那份配置在磁盘上的位置。它由调用方传进来而不是本模块推导——`kernel/config/`
+    的解析路径接的是一棵已经在内存里的树，它并不知道那棵树是从哪个文件读来的。
+    带上它是 `BAS-006` 的一半：「指出配置位置**和**字段名」，指针给的是后一半。
+    """
     names = sorted({name for name, _, _ in entries})
     detail: list[JsonValue] = [
         {"name": name, "pointer": pointer, "reason": reason} for name, pointer, reason in entries
     ]
+    payload: dict[str, JsonValue] = {
+        "missing": detail,
+        "suggestion": (
+            "在启动 nm 的环境里导出这些变量；配置文件里保留 ${VAR} 引用，不要填明文。"
+        ),
+    }
+    if source:
+        payload["file"] = source
     return NucleaError(
         ErrorCode.CONFIG_SECRET_MISSING,
         f"配置引用的环境变量不可用：{'、'.join(names)}。",
-        detail={
-            "missing": detail,
-            "suggestion": (
-                "在启动 nm 的环境里导出这些变量；配置文件里保留 ${VAR} 引用，不要填明文。"
-            ),
-        },
+        detail=payload,
     )
 
 
@@ -204,6 +214,7 @@ def resolve_text(
     *,
     env: Mapping[str, str] | None = None,
     pointer: str = "",
+    source: str = "",
 ) -> SecretStr | str:
     """解析单个字符串。**含引用则返回 `SecretStr`，不含则原样返回 `str`**。
 
@@ -212,14 +223,16 @@ def resolve_text(
     这条信息消失，而那正是决定要不要提醒用户「别把密钥写进文件」的依据。
 
     **异常约定**：引用到的变量未设置或为空时抛 `NucleaError(CONFIG_SECRET_MISSING)`，
-    消息与 `detail` 只含变量名。
+    消息与 `detail` 只含变量名、指针与（给了的话）配置文件路径。
     """
     names = secret_ref_names(text)
     if not names:
         return text
     resolved, missing = _lookup(names, os.environ if env is None else env)
     if missing:
-        raise _missing_error([(name, pointer, reason) for name, reason in missing])
+        raise _missing_error(
+            [(name, pointer, reason) for name, reason in missing], source=source
+        )
     return SecretStr(SECRET_REF_PATTERN.sub(lambda m: resolved[m.group(1)], text))
 
 
@@ -227,6 +240,7 @@ def resolve_secrets(
     data: Mapping[str, JsonValue],
     *,
     env: Mapping[str, str] | None = None,
+    source: str = "",
 ) -> SecretMap:
     """解析整份文档里的全部引用。**不返回替换过的文档**，见模块 docstring。
 
@@ -249,7 +263,7 @@ def resolve_secrets(
             variables[name] = SecretStr(value)
 
     if missing:
-        raise _missing_error(missing)
+        raise _missing_error(missing, source=source)
 
     values = {
         ref.pointer: SecretStr(SECRET_REF_PATTERN.sub(lambda m: plain[m.group(1)], ref.literal))

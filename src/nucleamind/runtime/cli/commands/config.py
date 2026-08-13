@@ -1,7 +1,7 @@
 """`nm config show`：打印生效配置与每个值的来源（`CFG-005`）。
 
 职责：加载配置并把它连同来源索引打印出来。
-不负责：生成初始配置（`D24` 的 `nm config init`）、写回任何文件——本命令**只读**。
+不负责：生成初始配置（`nm init`，见 `runtime/first_run.py`）、写回任何文件——本命令**只读**。
 
 **不取实例锁**：`load_config()` 是纯读操作，而取锁会让「看一眼配置」与「正在跑的实例」
 互斥（`kernel/config/loader.py` 的模块 docstring 写死了这条分工）。

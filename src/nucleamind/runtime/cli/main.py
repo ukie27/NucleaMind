@@ -28,6 +28,7 @@ from nucleamind.contracts import NucleaError
 _USAGE: Final = """用法：nm <命令> [参数...]
 
 命令：
+  init               生成最小可用配置（首次运行；不覆盖已有 config.json）
   run [-p 提示词]    启动实例并进入交互式会话（或跑单次执行）
   config show        打印生效配置与每个值的来源
   session list       列出本实例的会话
@@ -122,6 +123,10 @@ def app(argv: list[str] | None = None) -> int:
         from .commands.run import run_command
 
         return _guard(lambda: run_command(options))
+    if command == "init":
+        from .commands.init import init_command
+
+        return _guard(lambda: init_command(options))
     if command == "config":
         from .commands.config import config_command
 

@@ -41,7 +41,12 @@ from nucleamind.kernel.config import InstanceLayout, InstanceLock, LoadedConfig
 from nucleamind.kernel.observability import Diagnostics, EventBus
 from nucleamind.kernel.plugins import LoadOutcome
 from nucleamind.kernel.registry import CapabilityRegistry, ResolutionReport
-from nucleamind.kernel.turn import OrchestratorDeps, TurnOrchestrator, TurnReceipt
+from nucleamind.kernel.turn import (
+    OrchestratorDeps,
+    ToolExecutor,
+    TurnOrchestrator,
+    TurnReceipt,
+)
 
 from .plugin_context import PluginRuntime, RuntimePluginContext
 
@@ -120,6 +125,7 @@ class AgentInstance:
             return
         self._stopped = True
         self.bus.publish(EventName.INSTANCE_STOPPING)
+        self._report_orphans()
         await self._safe(self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_SHUTDOWN)))
 
         for _, channel in self.channels:
@@ -147,6 +153,45 @@ class AgentInstance:
             self.lock.release()
 
     # ------------------------------------------------------------------ 内部
+
+    def _report_orphans(self) -> None:
+        """停止时报告孤儿工具任务（`EDG-104`，`D14` 留下的那条）。
+
+        孤儿是「超时后连宽限期都没等回来」的工具调用，它的副作用是 `UNKNOWN`。实例正在
+        关闭，这是最后一个能说出「有几次调用可能还在改外部世界」的时刻——不说，那条信息
+        就随进程一起没了。**没有孤儿时不发事件**：一条恒定出现的 `0` 只会让真正有孤儿的
+        那次淹在噪声里。
+
+        `dropped` 一并报出：「表里没有」与「被挤掉了」是两个不同的结论（`invoker.py`）。
+
+        **`isinstance` 是必要的**：`OrchestratorDeps.tools` 的类型是 `ToolInvoker`，而孤儿表
+        不在那个协议里——第三方执行器可以完全没有这个概念。给协议加一个成员会逼每个实现
+        都编一张空表出来，那比这里少报一次更糟。
+        """
+        executor = self.deps.tools
+        if not isinstance(executor, ToolExecutor):
+            return
+        orphans = executor.orphans
+        dropped = executor.orphans_dropped
+        if not orphans and not dropped:
+            return
+        self.bus.publish(
+            EventName.PLUGIN_FAILED,
+            payload={
+                "reason": "tool_orphans",
+                "count": len(orphans),
+                "dropped": dropped,
+                "orphans": [
+                    {
+                        "tool": task.tool,
+                        "call_id": task.call_id,
+                        "turn_id": task.turn_id,
+                        "grace_ms": task.grace_ms,
+                    }
+                    for task in orphans
+                ],
+            },
+        )
 
     async def _pump(self, channel: Channel) -> None:
         """一条 Channel 的入站泵。`receive()` 结束即泵结束。"""

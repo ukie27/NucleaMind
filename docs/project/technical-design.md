@@ -243,7 +243,8 @@ src/nucleamind/
 │   │   ├── sources.py         # 三个来源与优先级（文件 < 环境变量 < CLI）
 │   │   ├── loader.py          # 加载编排：LoadedConfig
 │   │   ├── secrets.py         # Secret 引用解析（D11）
-│   │   └── scaffold.py        # 首次运行生成最小配置（D24，另名 bootstrap.py）
+│   │   ├── scaffold.py        # 首次运行的最小配置模板（D24，纯渲染、不写盘）
+│   │   └── json_schema.py     # 由 SECTION_SPECS 派生的 JSON Schema（D24）
 │   └── observability/
 │       ├── redaction.py       # 脱敏（在事件构造时生效）+ 事件/错误的 JSON 序列化
 │       ├── bus.py             # 事件总线（只扇出，同步、不 await 订阅者）
@@ -276,10 +277,11 @@ src/nucleamind/
 │   ├── introspection.py       # InstanceView / TurnControl 的生产实现（D22）
 │   ├── plugin_context.py      # 生产级 PluginContext（D23；权限判定的生产实现在 D26）
 │   ├── bootstrap.py           # 启动序列（§10.1 的 10 步）
+│   ├── first_run.py           # 首次运行落盘 config.json + config.schema.json（D24）
 │   ├── instance.py            # AgentInstance：就绪 / 运行 / 停止
 │   └── cli/                   # nm 可执行程序
 │       ├── main.py            # argv 解析与进程入口
-│       └── commands/          # nm run / config / session（plugins / capabilities 见 D29）
+│       └── commands/          # nm init / run / config / session（plugins / capabilities 见 D29）
 │
 ├── embed/                     # 第 5 层：嵌入式 Python SDK，runtime 的薄门面
 │   └── __init__.py            # open_instance() / run() / EmbeddedAgent（D23 落地）
@@ -1439,6 +1441,19 @@ lifecycle: start / stop / health
 启动开销目标（`NFR-405`）：无插件默认安装的**冷启动到可接受输入 ≤ 300 ms**（不含
 Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中作为回归指标记录，
 超出阈值 20% 触发告警而非直接失败（避免 CI 机器抖动造成噪声）。
+`D24` 把它落成 `scripts/check_startup_cost.py` 的 `startup_ms`（import 与 bootstrap 两段
+分别可归因），并如实记录：**当前它超出目标**，主要来自 `model-openai` 在 `setup()` 时
+构造 provider 所连带的 `import httpx`（开发机上单独一项约 280 ms）。
+
+`D24` 对本节步骤 2 的两处细化（实现在 `runtime/first_run.py` 与 `runtime/cli/commands/`）：
+
+- **「无配置文件 → 生成最小配置 + 指引后退出」在 `nm run` 里落地，也可用 `nm init` 显式
+  触发，两者走同一个 `ensure_initial_config()`**。生成后**不继续进会话**：紧接着跑起来
+  取决于用户有没有提前 export 那个环境变量，同一条命令因此会有两种结局，而首次运行是最
+  需要确定性的时刻。
+- **`config.json` 的写入用 `O_CREAT|O_EXCL`，没有 `--force`**（`EDG-501`）。同时生成一份
+  由 `SECTION_SPECS` 派生的 `config.schema.json` 并用 `$schema` 引用它；顶层 `$schema`
+  因此成为 `validate_config()` 唯一放行的非小节键（具名一条，不是「`$` 开头就放行」）。
 
 ### 10.2 一次完整 turn
 

@@ -35,10 +35,12 @@ if TYPE_CHECKING:
     from ...contracts import JsonValue
 
 __all__ = [
+    "CONFIG_KEY",
     "ENTRY_KEYS",
     "NO_PLUGIN_ENTRIES",
     "PLUGINS_SECTION",
     "RESERVED_PLUGIN_KEYS",
+    "SECRETS_KEY",
     "PluginEntry",
     "entries_to_json",
     "validate_plugin_entries",
@@ -50,9 +52,14 @@ PLUGINS_SECTION: Final = "plugins"
 #: `plugins` 小节里**不是**插件 id 的键。它们在 `SECTION_SPECS["plugins"]` 里有字段声明。
 RESERVED_PLUGIN_KEYS: Final = ("disable", "search_paths")
 
+#: 一个插件条目里的两个键。写成常量是因为 `D24` 的 `json_schema.py` 要按名字给它们各
+#: 派生一段 schema——两处各写一个字面量就会在改名时安静地对不上。
+CONFIG_KEY: Final = "config"
+SECRETS_KEY: Final = "secrets"
+
 #: 一个插件条目允许的键。`on_disable` / `on_override_failure`（§10.4）留给 `D25`/`D27`
 #: ——现在放行它们等于让一个没人读的键看起来生效了。
-ENTRY_KEYS: Final = ("config", "secrets")
+ENTRY_KEYS: Final = (CONFIG_KEY, SECRETS_KEY)
 
 
 #: 空块的共享实例。`field(default_factory=dict)` 会让类型退化成 `dict[Unknown, Unknown]`，

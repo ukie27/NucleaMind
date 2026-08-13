@@ -58,6 +58,67 @@ def test_a_dangling_option_value_is_reported(capsys: pytest.CaptureFixture[str])
     assert "nm:" in capsys.readouterr().err
 
 
+# ------------------------------------------------------------------------- nm init
+
+
+def test_init_generates_a_config_and_returns_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "fresh"
+    assert app(["init", "--instance-dir", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert (root / "config.json").exists()
+    assert (root / "config.schema.json").exists()
+    assert str(root / "config.json") in out
+    assert "OPENAI_API_KEY" in out
+
+
+def test_init_refuses_to_overwrite_and_returns_three(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`EDG-501`：已存在的配置一个字节都不动，退出码说明「不需要初始化」。"""
+    write_config(tmp_path)
+    original = (tmp_path / "config.json").read_text(encoding="utf-8")
+
+    assert app(["init", "--instance-dir", str(tmp_path)]) == 3
+
+    assert (tmp_path / "config.json").read_text(encoding="utf-8") == original
+    assert "已存在" in capsys.readouterr().out
+
+
+def test_init_takes_no_arguments(capsys: pytest.CaptureFixture[str]) -> None:
+    assert app(["init", "show"]) == 2
+    assert "nm:" in capsys.readouterr().err
+
+
+def test_init_help_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    assert app(["init", "--help"]) == 0
+    assert "nm init" in capsys.readouterr().out
+
+
+def test_run_on_a_fresh_instance_generates_a_config_and_stops(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """§10.1 步骤 2 的「无配置文件」分支：只生成、只指路，**不装配实例**。
+
+    「不装配」的可断言形态是没有取过实例锁——真跑起来会取。
+    """
+    root = tmp_path / "fresh"
+    assert app(["run", "--instance-dir", str(root)]) == 0
+    assert (root / "config.json").exists()
+    assert not (root / "instance.lock").exists()
+    assert "OPENAI_API_KEY" in capsys.readouterr().out
+
+
+def test_run_does_not_touch_an_existing_config(tmp_path: Path) -> None:
+    """有配置时首次运行分支一个字节都不写，连派生 schema 都不比对。"""
+    write_config(tmp_path)
+    original = (tmp_path / "config.json").read_text(encoding="utf-8")
+    asyncio.run(_write_a_session(tmp_path))
+    assert (tmp_path / "config.json").read_text(encoding="utf-8") == original
+    assert not (tmp_path / "config.schema.json").exists()
+
+
 # ------------------------------------------------------------------ nm config show
 
 

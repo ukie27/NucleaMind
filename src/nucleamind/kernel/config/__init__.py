@@ -1,9 +1,12 @@
 """实例布局、配置加载与实例锁（技术方案 §6.7、§10.1 步骤 1–2、§11）。
 
-职责：re-export 本包九个模块的公开表面，使调用方只需 `from nucleamind.kernel.config
+职责：re-export 本包各模块的公开表面，使调用方只需 `from nucleamind.kernel.config
 import ...` 一条导入路径；`load_config()` 是这里的主入口。
 不负责：获取实例锁（`InstanceLock` 由 `runtime/bootstrap.py` 在生命周期里持有）、
 读写实例目录里除 `config.json` 之外的任何文件、加载插件（`D25`）。
+
+**本包一个字节都不写**（`EDG-501`）。`D24` 的 `scaffold.py` / `json_schema.py` 也不例外：
+它们只**渲染**首次运行的配置与那份派生 JSON Schema，落盘在 `runtime/first_run.py`。
 
 模块间依赖是单向的：`layout` / `process` / `merge` 互不相识，`lock` 只用 `process`，
 `fields` 谁都不认识，`schema` 用 `fields` 与 `merge` 的 pointer 工具、`secrets` 只用后者，`sources` 只产出 `merge` 的层，
@@ -17,6 +20,7 @@ import ...` 一条导入路径；`load_config()` 是这里的主入口。
 from __future__ import annotations
 
 from .fields import FieldKind, FieldSpec
+from .json_schema import JSON_SCHEMA_DIALECT, JSON_SCHEMA_FILENAME, config_json_schema
 from .layout import (
     CONFIG_FILENAME,
     DEFAULT_INSTANCE_NAME,
@@ -34,7 +38,10 @@ from .loader import LoadedConfig, load_config
 from .lock import InstanceLock, LockInfo, StaleLockReclaimed
 from .merge import ConfigLayer, MergeResult, escape_pointer_token, merge_layers, pointer_of
 from .process import Liveness, process_is_alive, process_started_at
+from .scaffold import InitialConfig, build_initial_config, render_json
 from .schema import (
+    IGNORED_TOP_LEVEL_KEYS,
+    SCHEMA_KEY,
     SECTION_SPECS,
     SESSION_CONCURRENCY_CHOICES,
     ContextSection,
@@ -83,12 +90,16 @@ __all__ = [
     "ENV_ORIGIN",
     "ENV_PREFIX",
     "FILE_ORIGIN",
+    "IGNORED_TOP_LEVEL_KEYS",
     "INSTANCE_DIR_ENV",
     "INSTANCE_NAME_ENV",
+    "JSON_SCHEMA_DIALECT",
+    "JSON_SCHEMA_FILENAME",
     "LOCK_FILENAME",
     "LOGS_DIRNAME",
     "PERMISSIONS_FILENAME",
     "PLUGINS_DIRNAME",
+    "SCHEMA_KEY",
     "SECRET_REF_PATTERN",
     "SECTION_SPECS",
     "SESSIONS_DIRNAME",
@@ -99,6 +110,7 @@ __all__ = [
     "FieldKind",
     "FieldSpec",
     "HooksSection",
+    "InitialConfig",
     "InstanceLayout",
     "InstanceLock",
     "Liveness",
@@ -116,7 +128,9 @@ __all__ = [
     "StaleLockReclaimed",
     "TurnSection",
     "WorkspaceSection",
+    "build_initial_config",
     "collect_layers",
+    "config_json_schema",
     "contains_secret_ref",
     "defaults",
     "env_layer",
@@ -131,6 +145,7 @@ __all__ = [
     "process_is_alive",
     "process_started_at",
     "read_config_file",
+    "render_json",
     "resolve_secrets",
     "resolve_text",
     "scan_secret_refs",

@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 5 内建能力**已收口**（`D00`–`D23` 均已完成，下一步 `D24`）
+- 当前阶段：阶段 6 开箱可用**已收口**（`D00`–`D24` 均已完成，需求 §16.1 达成，下一步 `D25`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1220,6 +1220,79 @@
     0.65 ms、只拉入 1 个模块——子命令一律延迟导入）；新层 `Any` 数仍为 0。
     真实 `nm --version` / `nm config show` / `nm session list` 在开发机上跑通。
 
+- **`D24` 首次运行体验与开箱可用验收 ★**（`kernel/config/{scaffold,json_schema}.py` 约 250 行
+  + `runtime/first_run.py` 约 200 行 + `runtime/cli/commands/init.py` +
+  `scripts/check_startup_cost.py` 扩一项 + `tests/e2e/` 与
+  `tests/{kernel,runtime}/` 共 50 个新用例）：
+  - **本轮拍板的三件事**，逐条记在下面。
+  - **① `$schema` 落成一份由 `SECTION_SPECS` 派生的真 JSON Schema**。开发方案写的是
+    「生成含 `$schema` 与占位字段的最小配置」，但 `schema.py` 是 `extra="forbid"`——顶层多
+    一个 `$schema` 会让**刚生成的文件在下一次启动时以 `CONFIG_UNKNOWN_FIELD` 失败**，
+    那是最糟的首次体验；而项目里又没有任何 JSON Schema 文档可指向，写一个指向 docs 的 URL
+    只是形式主义。于是 `nm init` 同时写 `config.json` 与实例目录下的 `config.schema.json`
+    （由 `SECTION_SPECS` + `FieldKind` 派生，**字段的唯一真相来源不变**），`config.json` 用
+    相对路径引用它；`schema.py` 增加一条**具名**例外 `IGNORED_TOP_LEVEL_KEYS`。
+    它是全项目第二处对未知键让路的地方（第一处是 `plugins` 小节的插件 id），因此刻意不写成
+    「以 `$` 开头就放行」——后者会让拼错成 `$turn` 的小节静默消失，有一条反向用例钉住。
+  - **② 首次运行「生成 + 指引 + 退出」**（照技术方案 §10.1 步骤 2 的字面表述）。
+    「凭据已就绪就直接进会话」看起来更顺手，却让同一条命令有两种结局——取决于用户有没有
+    提前 export 那个变量，而首次运行恰恰是最需要确定性的时刻。里程碑 1 仍然成立，
+    只是分两次调用。
+  - **③ 交付 `nm init`**（`kernel/config/sources.py` 的 docstring 早就写着它）。它与
+    `nm run` 的首次运行分支走**同一个** `ensure_initial_config()`，不是第二条生成路径。
+    **没有 `--force`**：`EDG-501` 要的是「不得静默回退后覆盖原文件」，一个能覆盖用户配置的
+    开关是这条需求的反面；已存在时以退出码 3 退让并印出路径。
+  - **`kernel/config/` 仍然一个字节都不写**。`scaffold.py` / `json_schema.py` 只**渲染**，
+    落盘在 `runtime/first_run.py`——那是全项目 `config.json` 唯一的写入点，用
+    `O_CREAT|O_EXCL` 而不是「先判断存不存在再写」：后者在两个 `nm init` 同时跑时会互相覆盖，
+    而 `O_EXCL` 让「没有就建、有就退让」是一次原子操作。派生的 `config.schema.json` 反过来
+    **会**被刷新（内容不同时），它是我们生成的产物而不是用户的资产；内容相同则一个字节都不写。
+  - **`scaffold.py` 不认识任何具体内建**。模板需要「默认模型叫什么、凭据叫什么、从哪个环境
+    变量取」，而 `R2` 禁止 `kernel/` 够到 `builtins/`——那四个事实由 `runtime/first_run.py`
+    **各写一份**并由 `test_defaults_match_the_builtin_model_provider` 对照（与
+    `estimate_tokens` / `DEFAULT_GRACE_MS` 同一种做法）。理由不只是分层：`nm init` 不该为了
+    读四个字符串把 httpx 拉进进程。
+  - **模板只放用户真的要改的键**（`$schema` / `model` / `plugins.model-openai.secrets`）。
+    把 `defaults()` 整份倒进去看起来更完整，实际是把四十多个字段变成不敢动的噪声，
+    而且每一个都会被 `nm config show --origins` 记成「来自 config.json」——「我改过什么」
+    这个问题从此答不上来。
+  - **缺凭据的错误现在带 `file`**（`BAS-006` 的另一半）。`resolve_text()` / `resolve_secrets()`
+    多一个可选的 `source=`，装配根经 `build_plugin_context(config_path=...)` 交下来。
+    这条只能由调用方传：`kernel/config/` 的解析路径接的是一棵已经在内存里的树，
+    它并不知道那棵树是从哪个文件读来的。指针给的是字段名，`file` 给的是位置，两半齐了才叫
+    「可操作」。**值一如既往地不出现**（`EDG-502`）。
+  - **`ToolExecutor.orphans` 接上了**（`D14` 留的那条）：`AgentInstance.stop()` 在
+    `instance.stopping` 之后报告一次，**没有孤儿时不发事件**——一条恒定出现的 `0` 只会让真正
+    有孤儿的那次淹在噪声里。它靠 `isinstance(ToolExecutor)` 窄化：孤儿表不在 `ToolInvoker`
+    协议里，给协议加一个成员会逼每个第三方实现编一张空表出来。
+  - **`schema.py` 又超了 500 行，于是六个 `*_at()` 收窄器搬进 `fields.py`**。分界线仍是
+    那一条：它们一个字段名都不认识，只回答「把一个已校验的 `JsonValue` 收窄成 `int` /
+    `str` / `bool` / `tuple[str, ...]`」。这是继 `fields.py`（`D13`）、`plugin_blocks.py`
+    （`D23`）之后同一条规则的第三次应用。
+  - **`NFR-405` 的 300 ms 没达到，如实记录**：`check_startup_cost.py` 新增的 `startup_ms`
+    在开发机上约 **480 ms**（import 约 340 ms + bootstrap 约 147 ms），**大头是
+    `import httpx` 单独一项约 280 ms**，由 `model-openai` 在 `setup()` 时构造 provider 连带
+    拉进来。按 `NFR-405` 的原文这一项**只告警不失败**（贴着线的门禁会天天误报，而误报的
+    门禁最后一定会被关掉），并把两段拆开报出来让「该优化哪一段」查得到。真要压下去，方向是
+    让 provider 的 httpx 延迟到第一次请求——那要动 `except httpx.HTTPError` 这类语句，
+    不是顺手能做的事，因此没有在本轮做。
+  - **`tests/e2e/` 里唯一的替身是传输层**：`httpx.AsyncClient` 被换成挂着 `MockTransport` 的
+    子类，模型供应商、会话存储、上下文组装、文件工具、命令、CLI 入口与装配根**全是生产
+    实现**。这条分界线与 `tests/integration/`（Fake 在能力边界）互补——把某个内建换成 Fake，
+    这套用例就退化成那边的重复。录制脚本**超出即失败**而不是回一个默认响应：多出来的那次
+    请求正是最值得看见的东西。9 个用例 0.76 s。
+  - **写这批用例时踩到并修掉的两个真问题**：① `config_json_schema()` 里 `STR_LIST` 的默认值
+    是元组，`jsonschema` 不认（JSON 没有元组）——这份文档同时是**被直接传给
+    `validate()` 的那个对象**，不只是被序列化，因此在生成时就转成列表；② 中断用例第一版用
+    一条「永不结束」的 SSE 制造等待点，取消之后那个响应挂着不收尾，**下一个 turn 卡满 60 s
+    的流空闲看门狗**才失败。改成「取消登记之后放行下一片」既让取消赢得确定，又让那条流正常
+    收尾。
+  - 验收：新层十个测试目录共 **1974 个用例全绿**（`D23` 收口时 1924）。`ruff check`
+    （src + tests + scripts）、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `legacy_debt --check` 未变、`check_startup_cost --check` 通过（`startup_ms` 告警如上）。
+    真实 `nm init`（0）/ 重复 `nm init`（3）在开发机上跑通。
+    **需求 §16.1 的五条至此逐条有对应用例，这是对外可宣称「可用」的第一个节点。**
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -1260,11 +1333,15 @@
   两条能力）、装配根 `runtime/{bootstrap,instance,plugin_context}.py`、`nm` 的三个真子命令
   与嵌入式门面 `embed/` 一并落地，`plugins.<id>.{config,secrets}` 补上了配置层最后一个
   缺口，**阶段 5 收口**。
+  `D24` 已完成，首次运行体验落地（`kernel/config/{scaffold,json_schema}.py` 纯渲染、
+  `runtime/first_run.py` 唯一写入点、`nm init`），缺凭据的错误补上了「哪个文件」这一半，
+  `ToolExecutor.orphans` 接上报告，`check_startup_cost.py` 增加冷启动到可接受输入指标，
+  `tests/e2e/` 逐条对应需求 §16.1 的五个里程碑，**阶段 6 收口、开箱可用达成**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
   `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
-  `bootstrap.py`、`instance.py` 与 `cli/`；`embed/` 已落地薄门面。
+  `bootstrap.py`、`first_run.py`、`instance.py` 与 `cli/`；`embed/` 已落地薄门面。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1312,18 +1389,43 @@
 
 ## 下一步工作
 
-1. **`D24` 首次运行体验与开箱可用验收 ★**（阶段 6 的里程碑）：`kernel/config/bootstrap.py`
-   生成最小 `config.json`（`EDG-506`、`BAS-006`）、`tests/e2e/test_out_of_box.py`、
-   `check_startup_cost.py` 接入 CI。**缝已经留好**：`schema.SECTION_SPECS` 与
-   `schema.defaults()` 是字段的唯一真相来源，生成模板要从它派生；要落盘一份配置先过
-   `prepare_for_write()`（`kernel/config/` 自身仍一个字节都不写）。
-   模板里至少要有 `model.name` 与 `plugins.model-openai.secrets.api_key = "${OPENAI_API_KEY}"`
-   ——`D23` 之后缺这两样的启动错误已经能指到具体字段（`/model/name` 与
-   `/plugins/model-openai/secrets/api_key`），`D24` 要做的是让用户一次都不必看到它们。
-2. 命名待对齐：技术方案 §4.2 叫 `scaffold.py`，开发方案 `D24` 那行叫 `bootstrap.py`；
-   注意 `runtime/bootstrap.py` 已经被 `D23` 占了，两者不是一回事。
+1. **`D25` Manifest 与插件发现**（阶段 7 开工）：`kernel/plugins/manifest.py`、
+   `kernel/plugins/discovery.py`。**缝已经留好**：`plugins.<id>.config` 的逐字段校验
+   （manifest 的 `config_schema`）是阶段 A 的活，形状校验已经在
+   `kernel/config/plugin_blocks.py`；外部 loader 是 `builtin_loader.py` 的**同级调用方**
+   而不是第二份实现（`SDK-007`）。
+2. `Diagnostics.plugins_source` 仍是默认的空元组，`nm plugins` / `nm capabilities`
+   （`D29`）也还没有——两件事都要等真的有外部插件才有内容可列。
 
-`D23` 留下的、`D24`–`D27` 必须用到的事实：
+`D24` 留下的、`D25`–`D29` 必须用到的事实：
+
+- **`kernel/config/` 依然一个字节都不写**。`scaffold.py` / `json_schema.py` 只渲染，
+  唯一的写入点是 `runtime/first_run.py`，用 `O_CREAT|O_EXCL`、**没有 `--force`**。
+  要再加一份「生成到实例目录里的文件」，落点是那里，不是 `kernel/`。
+- **顶层 `$schema` 是 `validate_config()` 唯一放行的非小节键**
+  （`schema.IGNORED_TOP_LEVEL_KEYS`，具名一条而不是前缀规则）。往那张表里加第二个键之前
+  先想清楚：它会让一个拼错的小节静默消失。
+- **`config.schema.json` 是 `SECTION_SPECS` 的派生物**，`nm init` 每次都会把过期的那份刷新
+  （内容相同则不写）。加配置字段不需要动它，但**加一种 `FieldKind` 必须在
+  `json_schema._KIND_SCHEMAS` 里补一条**——缺项是 KeyError 而不是静默退化成「任意值」，
+  有测试盯着这条。
+- **首次运行只生成、不进会话**（§10.1 步骤 2）。要改成「凭据就绪就直接跑」之前先读
+  `runtime/cli/commands/run.py` 的模块 docstring：那会让同一条命令有两种结局。
+- **缺凭据的错误现在带 `file`**（`config.json` 的绝对路径），由装配根经
+  `build_plugin_context(config_path=...)` 交下来，`resolve_text(source=...)` 放进 `detail`。
+  `kernel/config/` 自己不知道那棵配置树是从哪个文件读来的，因此这条只能由调用方传。
+- **`NFR-405` 的 300 ms 目前没达到**：`scripts/check_startup_cost.py` 的 `startup_ms` 在
+  开发机上约 480 ms，其中 import 约 340 ms。**大头是 `import httpx`**（单独一项约 280 ms），
+  它由 `model-openai` 在 `setup()` 时构造 provider 连带拉进来。按 `NFR-405` 的原文这一项
+  **只告警不失败**；真要压下去，方向是让 `builtins/model_openai/provider.py` 的 httpx 延迟到
+  第一次请求——那会动 `D19` 的 `except httpx.HTTPError` 这类语句，不是顺手能做的事。
+- **`tests/e2e/` 里唯一的替身是传输层**（`conftest.recorder` 换掉 `httpx.AsyncClient`）。
+  往里加用例时守住这条：把某个内建换成 Fake，它就退化成 `tests/integration/` 的重复。
+- **`ToolExecutor.orphans` 已经接上了**（`AgentInstance.stop()` 里的 `_report_orphans`，
+  `D14` 留的那条）。它靠 `isinstance(ToolExecutor)` 窄化——`ToolInvoker` 协议里没有孤儿表，
+  第三方执行器可以完全没有这个概念，给协议加成员会逼每个实现编一张空表。
+
+`D23` 留下的、`D25`–`D27` 必须用到的事实：
 
 - **`plugins.<id>` 是插件配置的落点**，值形如 `{"config": {...}, "secrets": {...}}`。
   `disable` / `search_paths` 是保留键。**`plugins` 小节是全项目唯一对未知键让路的小节**
@@ -1621,9 +1723,10 @@
   `config.json` 缺失不是错误（`file_present` 语义由默认值层承担）；`kernel/config/`
   **从不写文件**，因此 `CFG-003` 的写回天然不会被加载路径破坏。
   `LoadedConfig.merge.origins` 保留了逐指针来源，写回时可据此判断哪些值是用户显式写的。
-- **`D24` 的缝已留好**：`schema.SECTION_SPECS` 与 `schema.defaults()` 是**唯一**的字段
-  真相来源，`bootstrap.py` 生成最小 `config.json` 时应当从它派生，不要再手写一份模板。
-  命名待对齐：技术方案 §4.2 叫 `scaffold.py`，开发方案 `D24` 那行叫 `bootstrap.py`。
+- ~~**`D24` 的缝已留好**~~ **`D24` 已用上它**：`schema.SECTION_SPECS` 与 `schema.defaults()`
+  是**唯一**的字段真相来源，`json_schema.py` 从它派生编辑器用的 schema，`scaffold.py` 只放
+  「用户必须动的那几个键」。命名按技术方案 §4.2 定为 `scaffold.py`（开发方案那行写的
+  `bootstrap.py` 已作废——`runtime/bootstrap.py` 是 `D23` 的装配根，两者不是一回事）。
 - **配置的四层优先级只在 `sources.collect_layers()` 的返回顺序里定义一次**
   （`default < config.json < env < cli`）。新增来源要改那一处，不要在 loader 里另排一遍。
 - **环境变量是 `NUCLEAMIND_CFG_<SECTION>__<KEY>`**（双下划线分隔层级，因为字段名本身

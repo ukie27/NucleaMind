@@ -301,6 +301,7 @@ async def _wire(
             bus=bus,
             runtime=runtime,
             env=env,
+            config_path=layout.config_path,
         )
         # `build_plugin_context()` 的返回类型是 `PluginContext`（那是它存在的理由：
         # 静态证明一致性）。装配根还要按 `EDG-104` 收走 ctx 派生的任务，因此在这里窄化

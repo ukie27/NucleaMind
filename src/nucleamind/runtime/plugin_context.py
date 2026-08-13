@@ -144,6 +144,9 @@ class RuntimePluginContext:
     bridge: PluginEventBridge
     runtime: PluginRuntime
     env: Mapping[str, str] | None = None
+    #: `config.json` 的路径。只用来让缺凭据的错误指得出「去改哪个文件」（`BAS-006`）；
+    #: 本类**从不打开它**——配置的读取只在 `kernel/config/sources.py` 一处。
+    config_path: Path | None = None
     #: 经 `spawn_task()` 派生的任务。实例停止时由装配根取消（`EDG-104`、`EDG-105`）。
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
@@ -239,21 +242,26 @@ class RuntimePluginContext:
                 detail={"plugin": self.plugin_id_, "secret": name},
             )
         literal = self.secret_refs.get(name)
+        pointer = f"/plugins/{self.plugin_id_}/secrets/{name}"
         if literal is None:
+            detail: dict[str, JsonValue] = {
+                "plugin": self.plugin_id_,
+                "secret": name,
+                "pointer": pointer,
+                "suggestion": f'在 config.json 里写 {{"secrets": {{"{name}": "${{VAR}}"}}}}。',
+            }
+            if self.config_path is not None:
+                detail["file"] = str(self.config_path)
             raise NucleaError(
                 ErrorCode.CONFIG_SECRET_MISSING,
                 "配置里没有这个凭据引用。",
-                detail={
-                    "plugin": self.plugin_id_,
-                    "secret": name,
-                    "pointer": f"/plugins/{self.plugin_id_}/secrets/{name}",
-                    "suggestion": f'在 config.json 里写 {{"secrets": {{"{name}": "${{VAR}}"}}}}。',
-                },
+                detail=detail,
             )
         resolved = resolve_text(
             literal,
             env=self.env,
-            pointer=f"/plugins/{self.plugin_id_}/secrets/{name}",
+            pointer=pointer,
+            source="" if self.config_path is None else str(self.config_path),
         )
         # 不含 `${VAR}` 的字面量原样返回 `str`，但它按位置就是一个凭据——包起来，
         # 免得一个直接写死的密钥因为「没有引用」而以明文出现在日志里。
@@ -296,6 +304,7 @@ def build_plugin_context(
     bus: EventBus,
     runtime: PluginRuntime,
     env: Mapping[str, str] | None = None,
+    config_path: Path | None = None,
 ) -> PluginContext:
     """装一个受限运行时。返回类型即「它满足契约」的静态证明（见模块 docstring）。"""
     ctx: PluginContext = RuntimePluginContext(
@@ -307,5 +316,6 @@ def build_plugin_context(
         bridge=PluginEventBridge(bus, plugin_id),
         runtime=runtime,
         env=env,
+        config_path=config_path,
     )
     return ctx

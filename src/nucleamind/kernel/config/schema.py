@@ -28,11 +28,23 @@ JSON，并把每处问题连同 JSON Pointer 位置一起报出来；`TurnSectio
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Mapping, Sequence
+from typing import TYPE_CHECKING, Final, Mapping
 
 from ...contracts import ErrorCode, NucleaError
 from . import plugin_blocks as blocks
-from .fields import FieldKind, FieldSpec, coerce_value, issue, suggest
+from .fields import (
+    FieldKind,
+    FieldSpec,
+    bool_at,
+    coerce_value,
+    int_at,
+    issue,
+    opt_int_at,
+    opt_str_at,
+    str_at,
+    str_tuple_at,
+    suggest,
+)
 from .merge import pointer_of
 from .plugin_blocks import PluginEntry
 
@@ -41,6 +53,8 @@ if TYPE_CHECKING:
     from ..turn.limits import TurnLimits
 
 __all__ = [
+    "IGNORED_TOP_LEVEL_KEYS",
+    "SCHEMA_KEY",
     "SECTION_SPECS",
     "SESSION_CONCURRENCY_CHOICES",
     "ContextSection",
@@ -56,6 +70,15 @@ __all__ = [
     "defaults",
     "validate_config",
 ]
+
+#: 生成的 `config.json` 里那句 schema 引用（`D24`）。它**不是**配置字段：编辑器读它，
+#: 运行期忽略它。
+SCHEMA_KEY: Final = "$schema"
+
+#: 顶层放行、但不参与校验的键。目前只有一个，而且它必须是**具名的一条**而不是
+#: 「以 `$` 开头就放行」那种规则——后者会让任何拼错成 `$turn` 的小节静默消失。
+#: 这是全项目第二处对未知键让路的地方，第一处是 `plugins` 小节里的插件 id。
+IGNORED_TOP_LEVEL_KEYS: Final[tuple[str, ...]] = (SCHEMA_KEY,)
 
 #: turn 六项预算的默认值。**与 `kernel/turn/limits.py` 的 `DEFAULT_*` 必须逐一相等**，
 #: 由 `test_turn_defaults_match_the_limits_module` 盯着。
@@ -361,39 +384,6 @@ def _validate_section(
     return values
 
 
-def _int_at(values: Mapping[str, JsonValue], key: str, fallback: int) -> int:
-    """取一个已校验的整数。`coerce_value` 已保证形状，这里只是把类型收窄回 `int`。"""
-    value = values.get(key, fallback)
-    return value if isinstance(value, int) and not isinstance(value, bool) else fallback
-
-
-def _opt_int_at(values: Mapping[str, JsonValue], key: str) -> int | None:
-    value = values.get(key)
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _str_at(values: Mapping[str, JsonValue], key: str, fallback: str) -> str:
-    value = values.get(key, fallback)
-    return value if isinstance(value, str) else fallback
-
-
-def _opt_str_at(values: Mapping[str, JsonValue], key: str) -> str | None:
-    value = values.get(key)
-    return value if isinstance(value, str) else None
-
-
-def _bool_at(values: Mapping[str, JsonValue], key: str, fallback: bool) -> bool:
-    value = values.get(key, fallback)
-    return value if isinstance(value, bool) else fallback
-
-
-def _str_tuple_at(values: Mapping[str, JsonValue], key: str) -> tuple[str, ...]:
-    value = values.get(key, ())
-    if isinstance(value, str) or not isinstance(value, Sequence):
-        return ()
-    return tuple(item for item in value if isinstance(item, str))
-
-
 def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     """校验合并后的配置。失败时抛错，**一次报出全部问题**。
 
@@ -407,6 +397,11 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     issues: list[NucleaError] = []
 
     for key in data:
+        if key in IGNORED_TOP_LEVEL_KEYS:
+            # `$schema` 是给编辑器的，不是配置字段。放行它是 `D24` 的显式决定：
+            # 生成的初始配置引用一份派生 schema，若这里报未知字段，刚生成的文件下一次
+            # 启动就会失败——那是最糟的首次体验。
+            continue
         if key not in SECTION_SPECS:
             issues.append(
                 issue(
@@ -447,51 +442,51 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     logging_values = sections["logging"]
     return NucleaConfig(
         turn=TurnSection(
-            max_iterations=_int_at(turn, "max_iterations", DEFAULT_MAX_ITERATIONS),
-            max_tool_calls_per_turn=_int_at(
+            max_iterations=int_at(turn, "max_iterations", DEFAULT_MAX_ITERATIONS),
+            max_tool_calls_per_turn=int_at(
                 turn, "max_tool_calls_per_turn", DEFAULT_MAX_TOOL_CALLS_PER_TURN
             ),
-            tool_timeout_ms=_int_at(turn, "tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS),
-            tool_result_max_bytes=_int_at(
+            tool_timeout_ms=int_at(turn, "tool_timeout_ms", DEFAULT_TOOL_TIMEOUT_MS),
+            tool_result_max_bytes=int_at(
                 turn, "tool_result_max_bytes", DEFAULT_TOOL_RESULT_MAX_BYTES
             ),
-            turn_timeout_ms=_int_at(turn, "turn_timeout_ms", DEFAULT_TURN_TIMEOUT_MS),
-            context_max_tokens=_opt_int_at(turn, "context_max_tokens"),
+            turn_timeout_ms=int_at(turn, "turn_timeout_ms", DEFAULT_TURN_TIMEOUT_MS),
+            context_max_tokens=opt_int_at(turn, "context_max_tokens"),
         ),
-        workspace=WorkspaceSection(root=_opt_str_at(sections["workspace"], "root")),
+        workspace=WorkspaceSection(root=opt_str_at(sections["workspace"], "root")),
         routing=RoutingSection(
-            command_prefix=_str_at(routing, "command_prefix", DEFAULT_COMMAND_PREFIX),
-            session_concurrency=_str_at(
+            command_prefix=str_at(routing, "command_prefix", DEFAULT_COMMAND_PREFIX),
+            session_concurrency=str_at(
                 routing, "session_concurrency", DEFAULT_SESSION_CONCURRENCY
             ),
-            queue_max_size=_int_at(routing, "queue_max_size", DEFAULT_QUEUE_MAX_SIZE),
-            dedup_capacity=_int_at(routing, "dedup_capacity", DEFAULT_DEDUP_CAPACITY),
-            dedup_ttl_ms=_int_at(routing, "dedup_ttl_ms", DEFAULT_DEDUP_TTL_MS),
+            queue_max_size=int_at(routing, "queue_max_size", DEFAULT_QUEUE_MAX_SIZE),
+            dedup_capacity=int_at(routing, "dedup_capacity", DEFAULT_DEDUP_CAPACITY),
+            dedup_ttl_ms=int_at(routing, "dedup_ttl_ms", DEFAULT_DEDUP_TTL_MS),
         ),
         hooks=HooksSection(
-            observer_timeout_ms=_int_at(
+            observer_timeout_ms=int_at(
                 hooks, "observer_timeout_ms", DEFAULT_OBSERVER_TIMEOUT_MS
             ),
-            interceptor_timeout_ms=_int_at(
+            interceptor_timeout_ms=int_at(
                 hooks, "interceptor_timeout_ms", DEFAULT_INTERCEPTOR_TIMEOUT_MS
             ),
         ),
         context=ContextSection(
-            provider_timeout_ms=_int_at(
+            provider_timeout_ms=int_at(
                 sections["context"], "provider_timeout_ms", DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
             ),
         ),
         plugins=PluginsSection(
-            disable=_str_tuple_at(plugins, "disable"),
-            search_paths=_str_tuple_at(plugins, "search_paths"),
+            disable=str_tuple_at(plugins, "disable"),
+            search_paths=str_tuple_at(plugins, "search_paths"),
             entries=plugin_entries,
         ),
         model=ModelSection(
-            provider=_opt_str_at(model, "provider"),
-            name=_opt_str_at(model, "name"),
+            provider=opt_str_at(model, "provider"),
+            name=opt_str_at(model, "name"),
         ),
         logging=LoggingSection(
-            level=_str_at(logging_values, "level", "info"),
-            file_enabled=_bool_at(logging_values, "file_enabled", True),
+            level=str_at(logging_values, "level", "info"),
+            file_enabled=bool_at(logging_values, "file_enabled", True),
         ),
     )

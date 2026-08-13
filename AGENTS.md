@@ -28,12 +28,16 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D20` 已落地内建文件工具（`builtins/tools_fs/`），`D21` 已落地内建 shell 工具
   （`builtins/tools_shell/`，§8.2 冻结清单六件套至此交齐），`D22` 已落地内建命令集
   （`builtins/commands_core/` + `runtime/introspection.py`，并为此扩了 `PluginContext`），
-  **阶段 5 进行中**，下一步 `D23`。
+  `D23` 已落地内建 CLI 能力、装配根与 `nm` 入口（`builtins/cli_entry/` +
+  `runtime/{bootstrap,instance,plugin_context}.py` + `runtime/cli/` + `embed/`），
+  **阶段 5 收口**；`D24` 已落地首次运行体验与开箱可用验收
+  （`kernel/config/{scaffold,json_schema}.py` + `runtime/first_run.py` + `nm init` +
+  `tests/e2e/`），**阶段 6 收口、需求 §16.1 达成**，下一步 `D25`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
-  `instance.py` 与 `cli/`，`embed/` 已落地薄门面，`kernel/` 有
+  `first_run.py`、`instance.py` 与 `cli/`，`embed/` 已落地薄门面，`kernel/` 有
   `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
-  `nm run` / `nm config show` / `nm session` 已可用。
+  `nm init` / `nm run` / `nm config show` / `nm session` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -59,6 +63,8 @@ examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
                            # 外加 baseline/：旧实现行为基线，D31 随 legacy/agent/ 一并删除
+                           # 外加 integration/（骨架集成，Fake 在能力边界）与
+                           # e2e/（开箱可用里程碑，只有传输层是替身）
 deploy/                    # Dockerfile / compose / entrypoint
 webui/                     # 前端源码（TypeScript）
 ```
@@ -146,10 +152,16 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   dataclass 兜底——`CFG-005` 要求每个生效值可追溯来源，「取自默认值」必须查得到。
 - **字段只加在 `schema.SECTION_SPECS`**，那张表同时是默认值、类型与 `extra="forbid"` 的
   唯一依据。不要在别处另开一张表，也不要绕过 `validate_config()` 直接构造小节。校验积木
-  （`FieldKind` / `FieldSpec` / `coerce_value`）在 `fields.py`，它**一个字段名都不认识**——
-  分界线就是这个：加字段改 `schema.py`，加一种字段形状才改 `fields.py`。
+  （`FieldKind` / `FieldSpec` / `coerce_value` 与六个 `*_at()` 收窄器）在 `fields.py`，
+  它**一个字段名都不认识**——分界线就是这个：加字段改 `schema.py`，加一种字段形状才改
+  `fields.py`。`json_schema.py` 是那张表的**派生物**（给编辑器用），不是第二份真相。
 - **`kernel/config/` 全包不写任何文件**（`EDG-501`）：`config.json` 只以 `"rb"` 打开且只在
-  `sources.read_config_file` 一处。生成初始配置是 `D24`，写日志是 `D12`。
+  `sources.read_config_file` 一处。`D24` 的 `scaffold.py` / `json_schema.py` 也不例外——
+  它们只**渲染**，落盘在 `runtime/first_run.py`（`O_CREAT|O_EXCL`，没有 `--force`，
+  既有配置一个字节都不动）。写日志是 `D12`。
+- **顶层 `$schema` 是 `validate_config()` 唯一放行的非小节键**（`schema.IGNORED_TOP_LEVEL_KEYS`）。
+  它必须是**具名的一条**，不是「`$` 开头就放行」——后者会让拼错成 `$turn` 的小节静默消失。
+  这是全项目第二处对未知键让路的地方，第一处是 `plugins` 小节里的插件 id。
 - **不要在 `schema.py` 里 module-level import `kernel.turn.limits`**：那会执行
   `kernel/turn/__init__.py`，把 engine/scheduling/folding 与 asyncio 拖上配置路径
   （`NFR-405` 冷启动预算 300 ms），`kernel.routing` 同理。`to_limits()` 用函数内 import，
@@ -381,7 +393,8 @@ nm legacy gateway
 
 ### 入口点
 
-- **`nm`（唯一命令）**：`src/nucleamind/runtime/cli/main.py`（最小骨架，真正的子命令在 `D23`）
+- **`nm`（唯一命令）**：`src/nucleamind/runtime/cli/main.py`，子命令 `init` / `run` /
+  `config show` / `session`（`plugins` / `capabilities` 见 `D29`）
 - **遗留 CLI**：`nm legacy` -> `src/nucleamind/runtime/legacy_entry.py` -> `legacy/cli/commands.py`
 - **遗留 Python SDK**：`legacy/nanobot.py`（新层门面 `embed/` 为重写，不移植旧实现）
 
