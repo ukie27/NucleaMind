@@ -1097,11 +1097,14 @@
   Completions、流式 tool_call 增量拼装、凭据走 `ctx.secret`、httpx + 声明 `net` 权限），
   实例从此有了真模型、`BAS-001`「配置一份凭据就能用」对最多用户成立；
   `D20` 已完成，内建文件工具 `builtins/tools_fs/` 落地（`fs.read`/`write`/`edit`/`list`/`grep`
-  五件套、双重路径校验、单工具禁用经 `wiring` 的声明过滤钩子），§8.2 冻结清单六件套已交五件。
+  五件套、双重路径校验、单工具禁用经 `wiring` 的声明过滤钩子）；
+  `D21` 已完成，内建 shell 工具 `builtins/tools_shell/` 落地（`shell.exec`、
+  「终止信号 → 宽限期 → 强杀」三步取消、宽限期用尽标 `SideEffect.UNKNOWN`、
+  子进程环境白名单），**§8.2 冻结清单六件套至此交齐**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
-  `model_openai/` 与 `tools_fs/`（`D21`–`D22` 逐个追加其余三项），`runtime/` 有 `wiring.py`；
-  `embed/` 仍是空骨架。
+  `model_openai/`、`tools_fs/` 与 `tools_shell/`（`D22` 追加 `commands_core/`），
+  `runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1161,6 +1164,34 @@
    那种）与 `D21` 的 `builtins/tools_shell/`（起子进程、要管取消与副作用未知的那种）
    是这个形态的五个样例，照着写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
+
+`D22` 开工前必须先拍板的一件事（`D21` 收口时发现，尚未有结论）：
+
+- **`commands_core` 的六个命令有五个够不到自己需要的数据，而 `R4` 挡着**。逐条看：
+  `/help` 要列出全部已注册命令（在 registry）、`/capabilities` 与 `/plugins` 要
+  `Diagnostics` / `ResolutionReport`（在 `kernel/observability/`）、`/config` 要**完整**
+  配置文档（`ctx.config` 按 `CFG-002` 只给自己那一块）、`/cancel` 要
+  `TurnOrchestrator.cancel()`（在 `kernel/turn/`）。只有 `/session` 勉强能靠注入的
+  `SessionStore` 解决。而 `CommandInvocation` 只带 `name` / `args` / `raw_text` /
+  `message` / `correlation`，`PluginContext` 只有
+  `config` / `state_dir` / `logger` / `events` / `spawn_task` / `fs` / `net` / `shell` /
+  `secret` / `plugin_id`——**两条路都够不到**。
+- 这不是 `D22` 实现时能顺手绕过去的细节，它决定 `commands_core` 长什么样。看得见的四条路，
+  各有各的代价，**不要在写代码时随手选一条**：
+  1. **扩 `PluginContext`**（加一个只读诊断门面 + 一个取消动作）。最正统，但那是**冻结的
+     SDK 表面**，要走 `NFR-103` 的评审闸门并改 `tests/sdk/test_public_surface.py` 的字面量
+     快照。好处是第三方插件也能写 `/status` 这类命令——那本来就是插件该有的能力。
+  2. **`commands_core` 不进 `builtins/`，由 `runtime/` 直接注册**。`R5` 允许 `runtime/`
+     同时看见 kernel 与 sdk，闭包一注入就完事。代价是它不再是「普通 manifest + `setup`」，
+     `BAS-005`「内建不享受特权」在这一项上破例，`/help` 也就列不出自己。
+  3. **装配根把快照塞进 `ctx.config`**。`/capabilities` 勉强可行（`ResolutionReport.to_json()`
+     本来就是 JSON），但 `/cancel` 是**动作**不是数据，`/config` 的内容会随时变，
+     静态快照给不出。半条路，不能覆盖六个命令。
+  4. **命令能力多一个注册形态**（`RegisteredCommand` 带一个 kernel 侧注入的依赖包）。
+     改的是 `D13`/`D14` 定死的四个注册载荷形状之一，牵连面比看起来大。
+- **倾向 1**，理由是 `/plugins`、`/capabilities` 这类命令本来就该是插件能写的东西，
+  而前三条都在给「内建是特殊的」找借口。但它动冻结表面，**必须先评审再动手**，
+  这正是 `D22` 该单独讨论的那 15 分钟。
 
 `D21` 留下的、`D22`/`D23`/`D26` 必须用到的事实：
 
