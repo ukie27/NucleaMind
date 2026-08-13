@@ -97,6 +97,7 @@ class ErrorCode(StrEnum):
     TIMEOUT_TOOL_CALL = "timeout.tool_call"
     TIMEOUT_TOOL_CANCEL = "timeout.tool_cancel"
     TIMEOUT_HOOK = "timeout.hook"
+    TIMEOUT_HTTP_REQUEST = "timeout.http_request"
 
     # CANCELLED
     CANCELLED_BY_USER = "cancelled.by_user"
@@ -106,6 +107,7 @@ class ErrorCode(StrEnum):
     # EXTERNAL_SERVICE
     EXTERNAL_MODEL_PROVIDER = "external.model_provider"
     EXTERNAL_CHANNEL = "external.channel"
+    EXTERNAL_HTTP_REQUEST = "external.http_request"
 
     # PLUGIN_FAILURE
     PLUGIN_LOAD_FAILED = "plugin.load_failed"
@@ -159,6 +161,9 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         # 后者仍是一次有结论的调用。共用一个码就查不出哪些 turn 留下了在跑的副作用（`D14`）。
         ErrorCode.TIMEOUT_TOOL_CANCEL: ErrorCategory.TIMEOUT,
         ErrorCode.TIMEOUT_HOOK: ErrorCategory.TIMEOUT,
+        # `ctx.net` 的出网超时（`D26`）。不复用 `TIMEOUT_TOOL_CALL`：发请求的可能是 Channel
+        # 或 Hook，把它记成「某个工具超时了」会让诊断指向一个根本没被调用的工具。
+        ErrorCode.TIMEOUT_HTTP_REQUEST: ErrorCategory.TIMEOUT,
         ErrorCode.CANCELLED_BY_USER: ErrorCategory.CANCELLED,
         ErrorCode.CANCELLED_BY_BUDGET: ErrorCategory.CANCELLED,
         # 实例关闭导致的取消：既不是用户按下 Ctrl-C，也不是撞上预算，
@@ -166,6 +171,9 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         ErrorCode.CANCELLED_BY_SHUTDOWN: ErrorCategory.CANCELLED,
         ErrorCode.EXTERNAL_MODEL_PROVIDER: ErrorCategory.EXTERNAL_SERVICE,
         ErrorCode.EXTERNAL_CHANNEL: ErrorCategory.EXTERNAL_SERVICE,
+        # 同上：插件经 `ctx.net` 打出去的请求失败了。复用 `EXTERNAL_MODEL_PROVIDER` 会把
+        # 一次 webhook 故障记到模型供应商头上。
+        ErrorCode.EXTERNAL_HTTP_REQUEST: ErrorCategory.EXTERNAL_SERVICE,
         ErrorCode.PLUGIN_LOAD_FAILED: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PLUGIN_HOOK_FAILED: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PLUGIN_REGISTRATION_CONFLICT: ErrorCategory.PLUGIN_FAILURE,

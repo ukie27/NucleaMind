@@ -22,6 +22,7 @@ marketing guides have intentionally been removed during the refactoring phase.
 | Understand provider selection | [`providers.md`](./providers.md) |
 | Understand session and runtime concepts | [`concepts.md`](./concepts.md) |
 | Read or migrate the built-in session storage format | [`session-storage.md`](./session-storage.md) |
+| Understand the plugin permission model | [`permissions.md`](./permissions.md) |
 | Inspect WebSocket behavior | [`websocket.md`](./websocket.md) |
 | Inspect the current Python SDK | [`python-sdk.md`](./python-sdk.md) |
 
@@ -29,6 +30,11 @@ Exception: [`session-storage.md`](./session-storage.md) documents the **new** ke
 built-in session storage format (`builtins/session_jsonl/`), not the inherited one. It is a
 published compatibility contract for external implementations, so keep it in sync with
 `src/nucleamind/builtins/session_jsonl/codec.py`.
+
+Same exception for [`permissions.md`](./permissions.md): it documents the **new** kernel's
+plugin permission model (`kernel/plugins/permissions.py`, `runtime/access/`), including the
+`permissions.json` file format and the explicit statement that application-level permissions
+are **not** process isolation.
 
 ## Current Feature References
 

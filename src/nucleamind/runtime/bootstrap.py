@@ -38,7 +38,6 @@ from nucleamind.contracts import (
     ModelProvider,
     NucleaError,
     OutboundMessage,
-    PermissionKind,
     SessionStore,
 )
 from nucleamind.kernel.config import (
@@ -56,6 +55,10 @@ from nucleamind.kernel.observability import (
     write_config_error,
 )
 from nucleamind.kernel.plugins import (
+    Decision,
+    Grant,
+    LedgerDecision,
+    PermissionLedger,
     channels_from,
     cli_entry_from,
     model_providers_from,
@@ -84,7 +87,7 @@ from nucleamind.sdk import CapabilityDecl, PluginContext, PluginManifest
 from .instance import AgentInstance, Closer
 from .introspection import build_instance_view, build_turn_control
 from .inventory import PluginInventory, build_inventory
-from .plugin_context import PluginGrants, PluginRuntime, RuntimePluginContext, build_plugin_context
+from .plugin_context import PluginRuntime, RuntimePluginContext, build_plugin_context
 from .wiring import Wiring, wire_capabilities
 
 #: `PluginManifest` 从这里再导出一次：`embed/` 只能 import `contracts/` 与 `runtime/`
@@ -92,9 +95,11 @@ from .wiring import Wiring, wire_capabilities
 __all__ = [
     "BUILTIN_MANIFESTS",
     "PluginManifest",
+    "approve",
     "bootstrap",
     "builtin_config_blocks",
     "capability_filter",
+    "declared_grants",
     "open_session_store",
 ]
 
@@ -156,17 +161,59 @@ def capability_filter(
     return keep
 
 
-def grants_of(manifest: PluginManifest) -> PluginGrants:
-    """一个提供方被授予的权限。
+def declared_grants(manifest: PluginManifest) -> tuple[Grant, ...]:
+    """manifest 的权限声明，翻成 kernel 侧的 `Grant`。
 
-    **`D23` 里它等于 manifest 声明的集合**：用户批准（`permissions.json`）是 `D26`。
-    如实写出来比留一个「看起来在判权限」的空壳好——后者会让评审以为这条已经做完了。
+    **翻译只在这里一处**：`R2` 禁止 `kernel/` 认识 `PermissionDecl`，因此账本收的是
+    `(kind, target, reason)` 三元组——与 `D25` 的「发现在 kernel、manifest 判定在 runtime」
+    是同一条分界线。
+
+    **声明是授权的上限**：账本里有、这里没有的记录不参与授权（它留在文件里只作审计）。
     """
-    kinds = {decl.kind for decl in manifest.permissions}
-    secrets = {
-        decl.target for decl in manifest.permissions if decl.kind is PermissionKind.SECRET
-    }
-    return PluginGrants(kinds=frozenset(kinds), secrets=frozenset(secrets))
+    return tuple(
+        Grant(kind=decl.kind, target=decl.target, reason=decl.reason)
+        for decl in manifest.permissions
+    )
+
+
+def approve(
+    ledger: PermissionLedger, manifest: PluginManifest, bus: EventBus
+) -> LedgerDecision:
+    """把一份声明判成实际授权，并把变更发成事件（`NFR-301`）。
+
+    **事件只在账本真的变了时发**（`decision.recorded` 非空）：一条每次启动都出现的
+    「已授予」只会让真正的扩权淹在噪声里，与 `D24` 的「没有孤儿时不发事件」同一条判据。
+    `pending` 与 `revoked` 例外——它们是**当前生效的拒绝**，每次启动都值得说一遍，
+    否则用户看到的现象是「插件装上了却什么都干不了」而日志里一个字都没有。
+    """
+    decision = ledger.decide(manifest.id, declared_grants(manifest))
+    for entry in decision.recorded:
+        bus.publish(
+            EventName.CAPABILITY_PERMISSION_GRANTED,
+            payload={
+                "plugin": manifest.id,
+                "permission": entry.name,
+                "decision": entry.decision.value,
+                "source": entry.source,
+                "reason": entry.reason,
+            },
+        )
+    for grant in (*decision.pending, *decision.revoked):
+        if any(entry.key == grant.key for entry in decision.recorded):
+            continue
+        bus.publish(
+            EventName.CAPABILITY_PERMISSION_GRANTED,
+            payload={
+                "plugin": manifest.id,
+                "permission": grant.name,
+                "decision": Decision.PENDING.value
+                if grant in decision.pending
+                else Decision.REVOKED.value,
+                "source": "ledger",
+                "reason": grant.reason,
+            },
+        )
+    return decision
 
 
 def _discover_plugins(
@@ -314,6 +361,7 @@ async def _wire(
     runtime: PluginRuntime,
     env: Mapping[str, str] | None,
     contexts: list[RuntimePluginContext],
+    ledger: PermissionLedger,
     *,
     builtin_cli_only: bool = False,
 ) -> Wiring:
@@ -337,10 +385,11 @@ async def _wire(
             config=config_block_for(manifest, config, derived),
             secrets=entry.secrets,
             state_dir=layout.plugins_dir / manifest.id,
-            grants=grants_of(manifest),
+            grants=approve(ledger, manifest, bus).granted,
             bus=bus,
             runtime=runtime,
             env=env,
+            workspace=workspace,
             config_path=layout.config_path,
         )
         # `build_plugin_context()` 的返回类型是 `PluginContext`（那是它存在的理由：
@@ -420,8 +469,11 @@ async def _bootstrap_locked(
     # 4–7 注册 → 解析覆盖 → 冻结。外部插件的发现是 `D25`/`D27`；这条路径两者共用。
     runtime = PluginRuntime()
     contexts: list[RuntimePluginContext] = []
+    # 权限账本：`permissions.json` 的批准叠在 manifest 声明之前（`D26`）。读不懂那份文件
+    # 是**启动失败**而不是「当成空账本」——后者等于一次静默的全部重新授予。
+    ledger = PermissionLedger.load(layout.permissions_path)
     wiring = await _wire(
-        selected, config, layout, loaded.workspace_root, bus, runtime, env, contexts
+        selected, config, layout, loaded.workspace_root, bus, runtime, env, contexts, ledger
     )
     if cli_entry_from(wiring.registry) is None and any(
         decl.kind is CapabilityKind.CLI_ENTRY
@@ -440,8 +492,12 @@ async def _bootstrap_locked(
             runtime,
             env,
             contexts,
+            ledger,
             builtin_cli_only=True,
         )
+    # 账本只在真的变了时落盘（`save()` 自己判 `dirty`）。写在注册之后：`setup()` 抛异常
+    # 时那个提供方的授权记录同样值得留下——下一次启动它不该被当成首次而重新全授。
+    ledger.save()
     for outcome in wiring.outcomes:
         bus.publish(
             EventName.PLUGIN_LOADED if outcome.error is None else EventName.PLUGIN_LOAD_FAILED,
@@ -641,6 +697,10 @@ async def open_session_store(
         PluginRuntime(),
         env,
         [],
+        # **只读路径不落盘**：`nm session` 不取实例锁，让它改写 `permissions.json` 会与
+        # 正在跑的实例抢同一个文件。判定照做（会话存储插件的授权语义不能两套），
+        # 但这个账本从头到尾没人调 `save()`。
+        PermissionLedger.load(layout.permissions_path),
     )
     wiring.report.raise_if_failed()
     return loaded, _require_sessions(wiring.registry)

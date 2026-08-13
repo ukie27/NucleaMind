@@ -34,12 +34,14 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/config/{scaffold,json_schema}.py` + `runtime/first_run.py` + `nm init` +
   `tests/e2e/`），**阶段 6 收口、需求 §16.1 达成**；`D25` 已落地插件发现
   （`kernel/plugins/discovery.py` + `runtime/inventory.py` + `plugins.enabled`），
-  **阶段 7 开工**，下一步 `D26`。
+  `D26` 已落地权限门面与生产级 `PluginContext`
+  （`kernel/plugins/{permissions,permission_codec}.py` + `runtime/access/` +
+  `nm permissions`），**阶段 7 推进中**，下一步 `D27`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
-  `first_run.py`、`inventory.py`、`instance.py` 与 `cli/`，`embed/` 已落地薄门面，
+  `first_run.py`、`inventory.py`、`instance.py`、`access/` 与 `cli/`，`embed/` 已落地薄门面，
   `kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
-  `nm init` / `nm run` / `nm config show` / `nm session` 已可用。
+  `nm init` / `nm run` / `nm config show` / `nm session` / `nm permissions` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -251,6 +253,32 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   目录名 / `.py` 文件名），启用判定发生在 `read_candidate()` 之前。因此 entry point 的
   name 必须等于 manifest 的 `id`，对不上即失败；未启用候选的 `version` 是空串。
   `plugins.enabled` 是外部插件的总开关，`plugins.disable`（按提供方，对内建也有效）压过它。
+
+`kernel/plugins/permissions.py` + `runtime/access/`（`D26`）是权限的唯一来源。六条：
+
+- **授权 = manifest 声明 ∩ 账本批准**，判定只在 `runtime/bootstrap.py::approve()` 一处
+  被调用（`D27` 的外部插件走同一条路，不要在 loader 里另判一次）。manifest → `Grant`
+  的翻译同样只在 `declared_grants()` 一处——`R2` 禁止 kernel 认识 `PermissionDecl`，
+  与 `D25` 的「发现在 kernel、manifest 判定在 runtime」是同一条分界线。
+- **批准模型是 TOFU + 扩权需显式**：首见即按声明整份授予并记 `permissions.json`
+  （`source="first_use"`），此后声明**扩大**时新增项默认落 `pending`（拒绝），撤销是显式
+  操作且压过声明。「首见」看的是有没有被 `decide()` 见过（`source` 是 `first_use` /
+  `declared`），**用户预先批准留下的 `user` 记录不算**——否则一个更宽松的动作会换来更严的
+  结果。读不懂账本是**启动失败**，静默当成空账本等于一次静默的全部重新授予。
+- **账本按 plugin id 索引而不是 `ProviderId`**（全部内建共用一个 `Builtin()`）。
+  加一条判定规则改 `permissions.py`，改文件长什么样改 `permission_codec.py`——分界线是
+  「认不认识判定」。
+- **三个门面在 `runtime/access/` 而不是 `kernel/`**：`HttpResponse` / `ShellResult` 在
+  `sdk/`，`R2` 够不着。因此 workspace 双重校验是**第三份实现**（另两份在 `tools_fs` /
+  `tools_shell`），shell 的环境白名单基线也是第二份——两处都有逐条对照测试，改一边要改多边。
+- **`ctx.fs` 读写分别判定**（`NFR-302`），`fs:read` / `fs:write` 各自收窄 `target`；
+  **认不出的 `target` 收窄成「什么都不许」而不是「整个根」**。`ctx.net` 判的是**解析之后**
+  的地址且**手动跟随重定向**（`EDG-406`），httpx 惰性 import；`ctx.shell` 走 `exec`
+  不经 shell、超时不抛、起不来折成 `exit_code=-1`。三者挡不住什么（TOCTOU、DNS 重绑定、
+  cwd 之外的绝对路径）各自如实写在 docstring 里，**别删掉那几段**。
+- **应用级权限 ≠ 进程隔离**（技术方案 §13.7）：同进程插件可以绕过全部门面直接
+  `import os`。这句写在 `sdk/api.py`、`runtime/access/__init__.py` 与 `docs/permissions.md`
+  里，是必须保留的诚实声明而不是免责套话。
 
 `builtins/`（`D17` 起）的落地形态只有一种：一份 `PluginManifest` 追加进
 `builtins/registry.py::BUILTIN_MANIFESTS`，加一个 `setup(api)`。五条通用约束：

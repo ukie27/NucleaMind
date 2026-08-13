@@ -233,7 +233,9 @@ src/nucleamind/
 │   │   ├── capabilities.py    # 五个单值 kind 的载荷形状与取回函数（D16）
 │   │   ├── builtin_loader.py  # 对 LoadRequest 泛化的 setup 运行器（D16）
 │   │   ├── host.py            # NucleaAPI 宿主侧实现（D16）
-│   │   └── permissions.py     # 权限授予与 Grant 派发（D26）
+│   │   ├── discovery.py       # 两条显式来源的插件发现（D25）
+│   │   ├── permissions.py     # 权限账本：TOFU 判定与 PluginGrants（D26）
+│   │   └── permission_codec.py # permissions.json 的词汇、解析与原子写（D26）
 │   ├── config/                # 含 plugin_blocks.py：plugins.<id>.{config,secrets}（D23）
 │   │   ├── layout.py          # 实例目录的路径代数（不含锁）
 │   │   ├── process.py         # 跨平台 PID 存活探测（Liveness 三态）
@@ -275,13 +277,20 @@ src/nucleamind/
 ├── runtime/                   # 第 5 层：组装根。唯一可同时 import kernel 与 builtins
 │   ├── wiring.py              # 依赖装配：registry ← builtins + plugins
 │   ├── introspection.py       # InstanceView / TurnControl 的生产实现（D22）
-│   ├── plugin_context.py      # 生产级 PluginContext（D23；权限判定的生产实现在 D26）
+│   ├── plugin_context.py      # 生产级 PluginContext（D23；授权判定接账本 D26）
+│   ├── inventory.py           # manifest 翻译与判定（D25）
+│   ├── access/                # ctx.fs / ctx.net / ctx.shell 的受守卫实现（D26）
+│   │   ├── paths.py           # 第三份 workspace 双重校验
+│   │   ├── files.py           # 读写分离的文件门面
+│   │   ├── shell.py           # 受限子进程（exec，不经 shell）
+│   │   └── net.py             # SSRF 守卫 + 手动跟随重定向
 │   ├── bootstrap.py           # 启动序列（§10.1 的 10 步）
 │   ├── first_run.py           # 首次运行落盘 config.json + config.schema.json（D24）
 │   ├── instance.py            # AgentInstance：就绪 / 运行 / 停止
 │   └── cli/                   # nm 可执行程序
 │       ├── main.py            # argv 解析与进程入口
-│       └── commands/          # nm init / run / config / session（plugins / capabilities 见 D29）
+│       └── commands/          # nm init / run / config / session / permissions
+│                              # （plugins / capabilities 见 D29）
 │
 ├── embed/                     # 第 5 层：嵌入式 Python SDK，runtime 的薄门面
 │   └── __init__.py            # open_instance() / run() / EmbeddedAgent（D23 落地）
@@ -1219,6 +1228,33 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 权限授予可审计（`NFR-301`）：授予结果写入 `<instance_dir>/permissions.json`，每次变更
 发布 `capability.permission_granted` 事件。默认最小权限，扩大权限必须是用户显式配置操作
 （`NFR-307`）。
+
+`D26` 落地时对本节的四处细化（实现在 `kernel/plugins/permissions.py`、
+`kernel/plugins/permission_codec.py` 与 `runtime/access/`）：
+
+- **批准模型定为 TOFU + 扩权需显式**。本节原文只说「配置授权」，但没有说授权从哪里来。
+  三条候选里取的是：**第一次见到一个提供方时按 manifest 声明整份授予并记录**
+  （`source="first_use"`），**此后声明集合扩大时新增项默认拒绝**（记 `pending`，
+  要 `nm permissions grant` 或改文件才生效），撤销同样是显式操作。理由是内建与插件必须
+  走同一条判定（`BAS-005`），而「配置白名单为准」会逼 `nm init` 要么列举六份内建的全部
+  权限（违背 `D24`「模板只放用户真的要改的键」）、要么给内建开一条默认全授的特权路径；
+  「启动时交互式提示」则要为 `embed/`、CI 与 Channel-only 部署再定义一套非交互回退。
+  **局限如实记录**：首次授予不是用户点头，它让**扩权**可见，不让**初装**可见。
+  更严的策略是把 `PermissionLedger.first_use_policy` 设成 `PENDING`。
+- **账本按 plugin id 索引而不是 `ProviderId`**：全部内建共用一个 `Builtin()`，按提供方
+  索引会让六份内建的权限并成一条（`D23` 在配置块上踩过同一个坑）。
+- **三个资源门面落在 `runtime/access/` 而不是 `kernel/plugins/`**：`HttpResponse` /
+  `ShellResult` 在 `sdk/api.py`，而 `R2` 禁止 `kernel/` import `sdk/`。把它们下沉到
+  `contracts/` 是另一条路（`CliEntry`、`SecretStr` 的先例），但那两次下沉是因为 **kernel
+  要调用**那些类型；这里 kernel 一次也不碰它们。`runtime/` 本就是唯一同时看得见两边的层，
+  `plugin_context.py` / `introspection.py` 是同一档先例。代价是 workspace 双重校验成为
+  **第三份实现**（`runtime/access/paths.py`），由对照测试逐条钉住。
+- **`ctx.fs` 的读写分别判定**（`NFR-302`）：`fs:read` 与 `fs:write` 各自收窄 `target`，
+  因此「可以读整个 workspace、只能写 `cache/`」表达得出来。访问器本身只要求两者之一——
+  只声明了写的插件同样该拿得到门面。
+- **补了两个 `ErrorCode`**：`EXTERNAL_HTTP_REQUEST` 与 `TIMEOUT_HTTP_REQUEST`（都给
+  `ctx.net`）。复用 `EXTERNAL_MODEL_PROVIDER` 会把一次 webhook 故障记到模型供应商头上，
+  复用 `TIMEOUT_TOOL_CALL` 会让诊断指向一个根本没被调用的工具。
 
 ### 7.6 SDK 版本策略
 

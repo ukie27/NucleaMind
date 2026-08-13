@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 7 Plugin Runtime 开工（`D00`–`D25` 均已完成，下一步 `D26`）
+- 当前阶段：阶段 7 Plugin Runtime 推进中（`D00`–`D26` 均已完成，下一步 `D27`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1354,6 +1354,81 @@
     16 failed / 4806 passed / 30 skipped，失败全部落在既有那批网络（`test_web_fetch_security`）
     与 oauth-cli-kit 家族，落在文档记的 14–18 区间内。
 
+- **`D26` 权限门面与生产级 `PluginContext`**（`kernel/plugins/{permissions,permission_codec}.py`
+  约 590 行 + `runtime/access/` 四个模块约 700 行 + `runtime/cli/commands/permissions.py` +
+  `contracts/{errors,events}.py` 各扩两条 + `runtime/{plugin_context,bootstrap}.py` 接线 +
+  `docs/permissions.md` + `tests/{kernel/test_permissions,runtime/test_access,
+  runtime/test_permission_wiring}.py` 与 CLI 用例共 100 个新用例）：
+  - **本轮拍板的三件事**，逐条记在下面。
+  - **① 批准模型定为 TOFU + 扩权需显式**。`D23` 起 `grants` 一直等于 manifest 声明本身，
+    而技术方案 §7.5 只说「配置授权」、没说授权从哪来。取的路是：**第一次见到一个提供方时
+    按声明整份授予并记进 `permissions.json`**（`source="first_use"`），**此后声明集合扩大
+    时新增项默认拒绝**（记 `pending`，要 `nm permissions grant` 或改文件才生效），撤销
+    同样是显式操作（`revoked` 压过声明）。理由是内建与插件必须走同一条判定（`BAS-005`）：
+    「配置白名单为准」会逼 `nm init` 要么列举六份内建的全部权限（违背 `D24`「模板只放
+    用户真的要改的键」）、要么给内建开一条默认全授的特权路径；「启动时交互式提示」则要为
+    `embed/`、CI、`tests/e2e/` 与将来的 Channel-only 部署再定义一套非交互回退，等于同时
+    维护两套语义。**局限如实写在模块 docstring 与 `docs/permissions.md` 里**：首次授予不是
+    用户点头，它让**扩权**可见、不让**初装**可见；要更严就把 `first_use_policy` 设成
+    `PENDING`（那条路真的可用，有用例）。
+  - **② 三个资源门面落在 `runtime/access/` 而不是开发方案点名的 `kernel/plugins/`**：
+    `HttpResponse` / `ShellResult` 在 `sdk/api.py`，而 `R2` 禁止 `kernel/` import `sdk/`。
+    下沉到 `contracts/` 是另一条路（`CliEntry`、`SecretStr` 的先例），但那两次是因为
+    **kernel 要调用**那些类型，这里 kernel 一次也不碰它们——为一个只有 `runtime/` 用得到的
+    返回值去动已冻结的契约表面不划算。代价是 workspace 双重校验成为**第三份实现**
+    （`runtime/access/paths.py`，前两份是 `tools_fs.WorkspaceGuard` 与 `tools_shell.CwdGuard`），
+    由 `test_path_guard_matches_the_fs_workspace_guard` 逐条对照钉住。
+  - **③ 新增一个 `EventName` `capability.permission_granted`**（技术方案 §7.5 点名，
+    `NFR-301`）。授予 / 待批准 / 撤销**共用它**，靠载荷的 `decision` 区分——一次授权状态
+    变化不值得发明三个事件名。`EventName` 的字面量快照因此从 31 条变 **32 条**。
+    **事件只在账本真的变了时发**（与 `D24` 的「没有孤儿时不发事件」同一条判据）：一条每次
+    启动都出现的「已授予」只会让真正的扩权淹在噪声里；`pending` / `revoked` 例外，
+    它们是当前生效的拒绝，每次启动都值得说一遍。
+  - **账本按 plugin id 索引而不是 `ProviderId`**：全部内建共用一个 `Builtin()`，按提供方
+    索引会让六份内建的权限并成一条——`D23` 在配置块上踩过同一个坑。
+  - **「首见」看的是有没有被 `decide()` 见过，而不是有没有记录**（这条是测试先发现的）：
+    用户可以**预先**批准一个还没装上的插件的权限，那些记录的 `source` 是 `user`。把它们
+    算成「见过」会让插件第一次真的加载时，除预批的那条外全部落进 `pending`——用户做了一个
+    更宽松的动作，却得到一个更严的结果。
+  - **`ctx.fs` 的读写分别判定**（`NFR-302`）：`fs:read` 与 `fs:write` 各自收窄 `target`，
+    「可以读整个 workspace、只能写 `cache/`」因此表达得出来；访问器本身只要求两者之一
+    ——只声明了写的插件同样该拿得到门面。**认不出的 `target` 收窄成「什么都不许」而不是
+    「整个根」**：一条写错的配置应当让插件读不到东西，而不是悄悄拿到全部访问权。
+  - **`ctx.net` 的 SSRF 守卫判的是「解析之后」的地址**（`EDG-406`）：先 `getaddrinfo()`
+    再对**每一个**返回地址判定，只要有一个落在回环/私有/链路本地网段就整体拒绝，
+    因此 `http://127.0.0.1.nip.io/` 这类域名伪装同样挡得住；重定向**手动跟随**
+    （`follow_redirects=False` + 自己循环），交给 httpx 跟随等于让第 2 跳绕过守卫。
+    **挡不住 DNS 重绑定，如实写在 docstring 里**，与 `paths.py` 的 TOCTOU 那段同一种诚实。
+    httpx **惰性 import**（`NFR-405`：单独一项约 280 ms，没人用 `ctx.net` 时一分钱不付）。
+  - **`ctx.shell` 走 `exec` 而不是 shell**：契约收的是 argv 列表，「不存在 shell 注入面」
+    是原文；`tools_shell` 那条 Windows `list2cmdline()` 的坑在这里根本不存在。超时**不抛**
+    （契约原文），返回 `timed_out=True` 且带上超时前已产生的输出；起不来折成 `exit_code=-1`
+    （不在 0–255 内，与「程序真的返回 1」分得开）。取消仍是「终止信号 → 宽限期 → 强杀」
+    三步。环境是白名单，基线名单与 `tools_shell/environ.py` 各写一份、有对照测试；
+    **`ctx.shell` 刻意不提供 `pass_env`**——那个开关的读者是运维，而这里的调用方是插件代码。
+  - **补了两个 `ErrorCode`**：`EXTERNAL_HTTP_REQUEST` 与 `TIMEOUT_HTTP_REQUEST`（都给
+    `ctx.net`）。复用 `EXTERNAL_MODEL_PROVIDER` 会把一次 webhook 故障记到模型供应商头上，
+    复用 `TIMEOUT_TOOL_CALL` 会让诊断指向一个根本没被调用的工具。
+  - **`nm permissions list|grant|revoke|forget` 是「用户显式操作」本身**（`NFR-307`）。
+    与 `nm config show` 一样**不取实例锁**，代价是改动要等实例下次启动才生效——那句话直接
+    印在 `grant` / `revoke` 的输出里。只读路径（`nm session` 的 `open_session_store`）
+    照常判定但**从头到尾没人调 `save()`**：让一条不取锁的命令改写 `permissions.json` 会与
+    正在跑的实例抢同一个文件。
+  - **读不懂账本是启动失败**（`CONFIG_INVALID`，10 条坏文件用例）：静默当成空账本等于
+    一次静默的**全部重新授予**，那正是这份文件要防的事。
+  - **`permissions.py` 超了 `kernel/` 的 500 行上限，于是把文件形态拆到
+    `permission_codec.py`**。分界线是「认不认识判定」：codec 知道文件长什么样、认得权限名
+    的写法，但一条记录该是 `granted` 还是 `pending` 它一个字都不管——与 `fields.py` /
+    `schema.py` 那条分界线同一种（`D10`/`D12`/`D16`/`D24` 之后同一条规则的第五次应用）。
+  - 验收：新层十个测试目录共 **2117 个用例全绿**（`D25` 收口时 2017）。`ruff check`
+    （src + plugins + tests + scripts）、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `legacy_debt --check` 未变、`check_startup_cost --check` 通过。语句覆盖率
+    `kernel/plugins/permissions.py` **99%**、`permission_codec.py` **96%**、
+    `runtime/access/` **87–100%**（合计 95%，未覆盖的是防御性 IO 分支与平台分支）。
+    **账本的启动开销可以忽略**：稳态 `load + 6 次 decide + save` 约 **0.25 ms**；
+    首次启动多一次 `permissions.json` 落盘（`fsync`，冷路径上几十 ms 量级，一次性）。
+    真实 `nm permissions list/grant/revoke` 在开发机上跑通。
+
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
@@ -1401,6 +1476,10 @@
   `runtime/inventory.py` 的 manifest 翻译与判定 + `plugins.enabled`），
   `Diagnostics.plugins_source` 从此有了真实现，**阶段 7 开工**；开发方案点名的
   `kernel/plugins/manifest.py` 不交付（`R2` 禁止 kernel 认识 manifest，理由见上）。
+  `D26` 已完成，权限账本（`kernel/plugins/{permissions,permission_codec}.py`，TOFU +
+  扩权需显式）与三个受守卫的资源门面（`runtime/access/`：workspace 双重校验、读写分离的
+  文件门面、SSRF 守卫、受限子进程）落地，`ctx.fs` / `ctx.net` / `ctx.shell` 从「抛
+  `CAPABILITY_MISSING` 指向 D26」变成真身，`nm permissions` 成为「用户显式扩权」的落点。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1454,16 +1533,36 @@
 
 ## 下一步工作
 
-1. **`D26` 权限门面与生产级 `PluginContext`**（阶段 7 第二步）：`permissions.json` 的
-   用户批准叠在 `grants_of(manifest)` 之前；`fs` / `net` / `shell` 三个访问器目前抛
-   `CAPABILITY_MISSING` 并指向 `D26`，`spawn_task` 也在那里。
-2. **`D27` 两阶段加载**：`D25` 已经把 `PluginInventory.discovered` 摆好了——那就是
+1. **`D27` 两阶段加载**（阶段 7 第三步）：`D25` 已经把 `PluginInventory.discovered` 摆好了——那就是
    加载计划的输入。外部 loader 是 `builtin_loader.load_into()` 的**同级调用方**
    （`SDK-007`），经 `runtime/wiring.py` 的 `to_load_request()` 翻译，**不要**写第二条
    注册路径。阶段 A 还欠 A4 依赖拓扑、A5 `config_schema` 逐字段校验、A6 权限授权、
-   A7 `state_version`。
-3. `nm plugins` / `nm capabilities`（`D29`）仍然没有；数据源已经齐了
+   A7 `state_version`。**A6 权限授权现在有落点了**：`PermissionLedger.decide()` 在
+   `runtime/bootstrap.approve()` 一处被调用，外部插件走同一条路，不要写第二条。
+2. `nm plugins` / `nm capabilities`（`D29`）仍然没有；数据源已经齐了
    （`AgentInstance.diagnostics`），与会话内的 `/plugins` 共用。
+
+`D26` 留下的、`D27`–`D30` 必须用到的事实：
+
+- **授权判定只有一个调用点**：`runtime/bootstrap.py::approve()`。`D27` 的外部插件加载
+  必须走它，不要在 loader 里另判一次——账本的 TOFU 语义（首见即授予、扩权落 `pending`）
+  只在那一处成立。manifest → `Grant` 的翻译同样只在 `declared_grants()` 一处（`R2` 禁止
+  kernel 认识 `PermissionDecl`）。
+- **`PluginGrants` 从 `kernel/plugins/permissions.py` 取**，不再在 `runtime/` 里定义；
+  它的形状是 `frozenset[(PermissionKind, target)]`，`allows()` / `allows_secret()` /
+  `targets()` 是它的全部查询面。`PluginGrants.of("fs:read", ...)` 是测试与 `embed/` 的
+  便利构造。
+- **`ctx.fs` / `ctx.shell` 需要 workspace**：`build_plugin_context(workspace=...)` 没传时
+  两个门面抛 `CAPABILITY_MISSING`（授权判定在此之前已经过了）。装配根传的是
+  `loaded.workspace_root`，与 `tools_fs` 同一个根。
+- **`runtime/access/paths.py` 是 workspace 双重校验的第三份实现**，改判定要改三处
+  （另两处：`builtins/tools_fs/paths.py`、`builtins/tools_shell/paths.py`），有对照测试。
+  `runtime/access/shell.py` 的环境基线名单同理，与 `builtins/tools_shell/environ.py` 对照。
+- **`import nucleamind.runtime.access` 不会拉进 httpx**（`net.py` 里是函数内 import）。
+  加新调用点前想一下这件事——`NFR-405` 的冷启动预算已经被 `model-openai` 那笔占满了。
+- **`EventName` 现在是 32 条**，新增的 `capability.permission_granted` 由授予 / 待批准 /
+  撤销共用，靠载荷的 `decision` 区分。加事件名要同时改
+  `tests/contracts/test_events.py::EVENT_NAME_SNAPSHOT`。
 
 `D25` 留下的、`D26`–`D29` 必须用到的事实：
 

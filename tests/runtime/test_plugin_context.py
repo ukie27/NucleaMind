@@ -19,11 +19,11 @@ from nucleamind.contracts import (
     EventName,
     InstanceId,
     NucleaError,
-    PermissionKind,
     RuntimeEvent,
     SecretStr,
 )
 from nucleamind.kernel.observability import EventBus
+from nucleamind.runtime.access import GuardedHttpAccess
 from nucleamind.runtime.plugin_context import (
     PluginGrants,
     PluginRuntime,
@@ -34,6 +34,10 @@ from nucleamind.runtime.plugin_context import (
 #: 形状匹配 `errors.py::_SECRET_VALUE_PATTERNS` 的哨兵，`sk-` + 16 位以上。
 SENTINEL = "sk-0123456789abcdef"
 
+#: `workspace=None` 是一个**有意义的取值**（「这个实例没有 workspace」），因此默认值不能
+#: 是 `None`——用一个哨兵把「没传」和「传了 None」分开。
+_UNSET: Path = Path("<unset>")
+
 
 def make_ctx(
     tmp_path: Path,
@@ -42,6 +46,7 @@ def make_ctx(
     secrets: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
     runtime: PluginRuntime | None = None,
+    workspace: Path | None = _UNSET,
 ) -> RuntimePluginContext:
     ctx = build_plugin_context(
         "probe",
@@ -52,6 +57,7 @@ def make_ctx(
         bus=EventBus(InstanceId("test")),
         runtime=runtime or PluginRuntime(),
         env=env,
+        workspace=(tmp_path / "workspace") if workspace is _UNSET else workspace,
     )
     assert isinstance(ctx, RuntimePluginContext)
     return ctx
@@ -82,20 +88,26 @@ def test_an_undeclared_accessor_is_denied(tmp_path: Path, accessor: str) -> None
     assert caught.value.code is ErrorCode.PERMISSION_DENIED
 
 
-def test_a_declared_accessor_says_it_is_not_implemented_yet(tmp_path: Path) -> None:
-    """`D26` 才有带守卫的实现。给一个能跑但没有守卫的门面才是真的危险。"""
-    ctx = make_ctx(tmp_path, grants=PluginGrants(frozenset({PermissionKind.NET})))
+def test_a_granted_accessor_hands_back_a_guarded_facade(tmp_path: Path) -> None:
+    """`D26` 起它是真身。授予 `net` 之后属性访问不再抛，交回的是带 SSRF 守卫的门面。"""
+    ctx = make_ctx(tmp_path, grants=PluginGrants.of("net"))
+    assert isinstance(ctx.net, GuardedHttpAccess)
+
+
+def test_a_facade_without_a_workspace_is_honest_about_it(tmp_path: Path) -> None:
+    """没有 workspace 时 `fs` / `shell` 无处落地——报 `CAPABILITY_MISSING` 而不是
+    悄悄拿一个临时目录当根。授权判定在此之前已经过了。"""
+    ctx = make_ctx(tmp_path, grants=PluginGrants.of("fs:read"), workspace=None)
     with pytest.raises(NucleaError) as caught:
-        _ = ctx.net
+        _ = ctx.fs
     assert caught.value.code is ErrorCode.CAPABILITY_MISSING
-    assert "D26" in caught.value.user_message
 
 
 # ---------------------------------------------------------------------- 凭据
 
 
 def _secret_grants() -> PluginGrants:
-    return PluginGrants(frozenset({PermissionKind.SECRET}), frozenset({"api_key"}))
+    return PluginGrants.of("secret:api_key")
 
 
 def test_a_granted_secret_resolves_from_the_environment(tmp_path: Path) -> None:

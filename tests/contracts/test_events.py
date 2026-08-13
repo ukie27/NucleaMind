@@ -63,6 +63,9 @@ def test_event_names_are_unique() -> None:
 #: 没改，证明不了它经过评审。增删事件名必须同时改这张表，那就是评审闸门。
 #: `turn.stopped_by_limit` 由 `D12` 按 `NFR-104` 补入（`D09` 的 `TurnStoppedByLimit`
 #: 原本没有落点，用 `turn.completed` 承载会让两种终态不可区分）。
+#: `capability.permission_granted` 由 `D26` 补入（技术方案 §7.5 点名，`NFR-301` 的可审计
+#: 要求授予变更看得见）。授予 / 撤销 / 待批准共用它，靠载荷的 `decision` 区分——一次授权
+#: 状态变化不值得发明三个事件名。
 EVENT_NAME_SNAPSHOT = (
     "instance.starting",
     "instance.ready",
@@ -78,6 +81,7 @@ EVENT_NAME_SNAPSHOT = (
     "capability.shadowed",
     "capability.disabled",
     "capability.resolved",
+    "capability.permission_granted",
     "session.started",
     "session.loaded",
     "session.compacted",

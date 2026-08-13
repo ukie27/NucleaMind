@@ -28,7 +28,11 @@ from nucleamind.contracts import (
 )
 from nucleamind.kernel.config import InstanceLock
 from nucleamind.kernel.turn import CancelToken
-from nucleamind.runtime.bootstrap import bootstrap, builtin_config_blocks, grants_of
+from nucleamind.runtime.bootstrap import (
+    bootstrap,
+    builtin_config_blocks,
+    declared_grants,
+)
 from nucleamind.runtime.instance import AgentInstance
 from nucleamind.sdk import CapabilityDecl, PluginManifest
 
@@ -380,14 +384,15 @@ async def test_stopping_twice_is_safe(tmp_path: Path) -> None:
     await instance.stop()
 
 
-def test_grants_come_from_the_manifest() -> None:
-    """`D23` 的权限等于声明集合，如实断言这件事（用户批准是 `D26`）。"""
+def test_declared_grants_come_from_the_manifest() -> None:
+    """声明是授权的**上限**（`D26`）：账本只能在这个集合里做减法。"""
     model = next(m for m in BUILTIN_MANIFESTS if m.id == "model-openai")
-    grants = grants_of(model)
-    assert grants.allows_secret("api_key")
-    assert not grants.allows_secret("other")
+    declared = declared_grants(model)
+    assert ("secret", "api_key") in {(g.kind.value, g.target) for g in declared}
+    # 用途说明原样带进账本——用户批准时读的就是这句（`PermissionDecl.reason` 必填）。
+    assert all(grant.reason for grant in declared)
     cli = next(m for m in BUILTIN_MANIFESTS if m.id == "cli-entry")
-    assert grants_of(cli).kinds == frozenset()
+    assert declared_grants(cli) == ()
 
 
 def test_the_fake_model_manifest_keeps_the_real_shape() -> None:

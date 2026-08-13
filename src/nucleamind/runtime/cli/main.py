@@ -33,6 +33,7 @@ _USAGE: Final = """用法：nm <命令> [参数...]
   config show        打印生效配置与每个值的来源
   session list       列出本实例的会话
   session show <id>  打印一个会话的摘要
+  permissions ...    查看与修改插件权限（list / grant / revoke / forget）
   legacy <参数...>   迁移期的遗留 CLI（随 legacy/agent/ 一并删除）
 
 选项：
@@ -135,6 +136,10 @@ def app(argv: list[str] | None = None) -> int:
         from .commands.session import session_command
 
         return _guard(lambda: session_command(options))
+    if command == "permissions":
+        from .commands.permissions import permissions_command
+
+        return _guard(lambda: permissions_command(options))
 
     sys.stderr.write(f"nm: 未知命令 {command!r}\n\n{_USAGE}")
     return 2

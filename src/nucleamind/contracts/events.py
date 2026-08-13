@@ -66,6 +66,7 @@ class EventName(StrEnum):
     CAPABILITY_SHADOWED = "capability.shadowed"
     CAPABILITY_DISABLED = "capability.disabled"
     CAPABILITY_RESOLVED = "capability.resolved"
+    CAPABILITY_PERMISSION_GRANTED = "capability.permission_granted"
 
     SESSION_STARTED = "session.started"
     SESSION_LOADED = "session.loaded"

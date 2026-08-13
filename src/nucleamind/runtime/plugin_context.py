@@ -1,20 +1,24 @@
 """生产级 `PluginContext`：内建与插件在运行期真正拿到的那个受限运行时（技术方案 §7.5）。
 
 职责：把实例的配置块、私有状态目录、事件总线、凭据引用与 `D22` 的两个门面
-（`InstanceView` / `TurnControl`）装成一个 `PluginContext`，并按 manifest 声明的权限
-挡住四个资源访问器。
-不负责：判定**用户**是否批准了这些权限（`D26` 的 `permissions.json`）、实现 `fs` / `net`
-/ `shell` 三个门面的行为（同上）、决定谁被加载（`D25`/`D27`）。
+（`InstanceView` / `TurnControl`）装成一个 `PluginContext`，并按**已批准**的权限挡住四个
+资源访问器。
+不负责：决定谁被授予什么（`kernel/plugins/permissions.py` 的账本）、实现 `fs` / `net`
+/ `shell` 三个门面的行为（`runtime/access/`）、决定谁被加载（`D25`/`D27`）。
 
 **这里是 `R5` 的落点**，与 `wiring.py` / `introspection.py` 同一条理由：`PluginContext`
 的类型在 `sdk/`，而 config 块、`InstanceLayout` 与 `EventBus` 在 `kernel/`——全项目只有
 `runtime/` 同时看得见两边。一致性靠 `build_plugin_context()` 的返回类型标注静态证明。
 
-**权限在 `D23` 等于 manifest 的声明，如实写在这里而不是假装已经做完**：`granted` 由装配根
-从 manifest 传进来，未声明的访问器抛 `PERMISSION_DENIED`（那条语义是真的）；已声明的三个
-资源门面抛 `NotImplementedError` 并指向 `D26`——六个内建一个都不用它们（`session_jsonl`
-用 `pathlib`、`model_openai` 用 httpx、`tools_shell` 自己起子进程，各自如实声明权限，见
-`D17`/`D19`/`D21`）。给它们一个能跑但没有守卫的实现，才是真的危险。
+**权限 = manifest 声明 ∩ 账本批准**（`D26`）：`PluginGrants` 由装配根从
+`PermissionLedger.decide()` 拿到并传进来，本类只问它、不问 manifest。因此「声明了但用户
+没批准」与「根本没声明」在这里是同一种结局（`PERMISSION_DENIED`），靠 `detail` 里的
+`reason` 区分——两者的补救动作不同：前者敲 `nm permissions grant`，后者要改 manifest。
+
+**三个资源门面是真身**（`runtime/access/`），但它们**不是进程隔离**：同进程 Python 插件
+可以绕过它们直接 `import os`。这条诚实声明写在 `sdk/api.py`、`runtime/access/__init__.py`
+与技术方案 §13.7，不是隐含前提。六个内建一个都不用它们（`session_jsonl` 用 `pathlib`、
+`model_openai` 用 httpx、`tools_shell` 自己起子进程，各自如实声明权限，见 `D17`/`D19`/`D21`）。
 
 **`instance` / `turns` 经一个可变持有者交下来**（`PluginRuntime`）：它们要等 registry 冻结
 与 orchestrator 装好之后才存在，而 `PluginContext` 必须在 `setup()` **之前**就交给插件。
@@ -43,7 +47,10 @@ from nucleamind.contracts import (
 )
 from nucleamind.kernel.config import resolve_text
 from nucleamind.kernel.observability import EventBus
+from nucleamind.kernel.plugins import PluginGrants
 from nucleamind.sdk import FileAccess, HttpAccess, PluginContext, ShellAccess
+
+from .access import GuardedFileAccess, GuardedHttpAccess, GuardedShellAccess
 
 __all__ = [
     "PluginEventBridge",
@@ -52,23 +59,6 @@ __all__ = [
     "RuntimePluginContext",
     "build_plugin_context",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class PluginGrants:
-    """一个提供方被授予的权限。
-
-    `D23` 里它等于 manifest 声明的集合，`D26` 会在这之前再叠一层用户批准
-    ——形状不必改，只是构造它的人多问一句。
-    """
-
-    kinds: frozenset[PermissionKind] = frozenset()
-    #: `secret:<name>` 的具体名字。`secret` 必须带 target（`PermissionDecl` 写死），
-    #: 因此「授予了 secret」这件事本身不足以取任何一个凭据。
-    secrets: frozenset[str] = frozenset()
-
-    def allows_secret(self, name: str) -> bool:
-        return PermissionKind.SECRET in self.kinds and name in self.secrets
 
 
 @dataclass(slots=True)
@@ -144,6 +134,10 @@ class RuntimePluginContext:
     bridge: PluginEventBridge
     runtime: PluginRuntime
     env: Mapping[str, str] | None = None
+    #: 资源门面的根：实例的 workspace（与 `tools_fs` 同一个根）。`None` 时三个门面一律
+    #: 抛 `CAPABILITY_MISSING`——那只发生在没有布局可言的调用点（测试与 `nm config show`），
+    #: 授权与否在此之前已经判过。
+    workspace: Path | None = None
     #: `config.json` 的路径。只用来让缺凭据的错误指得出「去改哪个文件」（`BAS-006`）；
     #: 本类**从不打开它**——配置的读取只在 `kernel/config/sources.py` 一处。
     config_path: Path | None = None
@@ -196,36 +190,53 @@ class RuntimePluginContext:
 
     # `NucleaError.capability` 收的是 `CapabilityRef`（kind + name），而这里的主语是**提供方**
     # 而不是某一项能力——`plugin` 键放在 `detail` 里，比硬凑一个 kind 诚实。
-    def _require(self, permission: PermissionKind) -> None:
-        if permission not in self.grants.kinds:
-            raise NucleaError(
-                ErrorCode.PERMISSION_DENIED,
-                "插件未被授予该权限。",
-                detail={"plugin": self.plugin_id_, "permission": permission.value},
-            )
+    def _require(self, *permissions: PermissionKind) -> None:
+        """任意一项被授予即放行。
 
-    def _pending(self, accessor: str) -> NucleaError:
-        return NucleaError(
-            ErrorCode.CAPABILITY_MISSING,
-            f"ctx.{accessor} 的带守卫实现尚未落地（D26）；"
-            "内建能力如实声明权限后直接使用标准库，见各自的 manifest。",
-            detail={"plugin": self.plugin_id_, "accessor": accessor},
+        `fs` 收两项（`fs:read` / `fs:write`）：只声明了写的插件同样该拿得到门面，读写的
+        分别判定在 `GuardedFileAccess` 里逐方法做（`NFR-302` 的读写分离）。
+        """
+        if any(self.grants.allows(permission) for permission in permissions):
+            return
+        raise NucleaError(
+            ErrorCode.PERMISSION_DENIED,
+            "插件未被授予该权限。",
+            detail={
+                "plugin": self.plugin_id_,
+                "permission": "|".join(permission.value for permission in permissions),
+                "suggestion": (
+                    "manifest 里声明它，并用 "
+                    f"`nm permissions grant {self.plugin_id_} <权限>` 批准。"
+                ),
+            },
         )
+
+    def _root(self, accessor: str) -> Path:
+        if self.workspace is None:
+            raise NucleaError(
+                ErrorCode.CAPABILITY_MISSING,
+                f"这个实例没有 workspace，ctx.{accessor} 无处落地。",
+                detail={"plugin": self.plugin_id_, "accessor": accessor},
+            )
+        return self.workspace
 
     @property
     def fs(self) -> FileAccess:
-        self._require(PermissionKind.FS_READ)
-        raise self._pending("fs")
+        self._require(PermissionKind.FS_READ, PermissionKind.FS_WRITE)
+        return GuardedFileAccess(self._root("fs"), grants=self.grants, plugin_id=self.plugin_id_)
 
     @property
     def net(self) -> HttpAccess:
         self._require(PermissionKind.NET)
-        raise self._pending("net")
+        return GuardedHttpAccess(
+            plugin_id=self.plugin_id_,
+            allowed_hosts=self.grants.targets(PermissionKind.NET),
+        )
 
     @property
     def shell(self) -> ShellAccess:
         self._require(PermissionKind.SHELL)
-        raise self._pending("shell")
+        return GuardedShellAccess(self._root("shell"), plugin_id=self.plugin_id_)
 
     def secret(self, name: str) -> SecretStr:
         """取一个凭据：`plugins.<id>.secrets.<name>` 的 `${VAR}` 字面量 → 环境变量。
@@ -304,6 +315,7 @@ def build_plugin_context(
     bus: EventBus,
     runtime: PluginRuntime,
     env: Mapping[str, str] | None = None,
+    workspace: Path | None = None,
     config_path: Path | None = None,
 ) -> PluginContext:
     """装一个受限运行时。返回类型即「它满足契约」的静态证明（见模块 docstring）。"""
@@ -316,6 +328,7 @@ def build_plugin_context(
         bridge=PluginEventBridge(bus, plugin_id),
         runtime=runtime,
         env=env,
+        workspace=workspace,
         config_path=config_path,
     )
     return ctx
