@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-12
-- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D18` 均已完成，下一步 `D19`–`D22`）
+- 更新时间：2026-08-13
+- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D19` 均已完成，下一步 `D20`–`D22`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -854,6 +854,79 @@
     新层七个测试目录共 **1471 个用例全绿**（`D17` 收口时 1412）。`ruff check`、
     `basedpyright`（新层 0 报错）、`legacy_debt --check` 未变、`check_startup_cost --check` OK。
 
+- **`D19` 内建 Model：`model_openai`**（`builtins/model_openai/` 五个模块约 1170 行 +
+  `builtins/registry.py` 的第三条 manifest + `tests/builtins/test_model_openai.py` 与
+  `tests/builtins/conftest.py` 共 120 个用例）：
+  - **凭据走 `ctx.secret("api_key")`，不走 `resolve_text()`**（本轮第一处需要拍板的取舍）。
+    `D11` 的遗留笔记写的是「provider 凭据用 `resolve_text()` 解单个字段」，但那个函数在
+    `kernel/config/secrets.py`，`R4` 禁止 `builtins/` import `kernel/`——按字面已不可执行。
+    改走 SDK 认可的通道：manifest 声明 `PermissionDecl(kind=SECRET, target="api_key")`，实现调
+    `ctx.secret("api_key")` 拿 `SecretStr`。`CFG-003`「明文不进配置文档」因此是**结构性**成立
+    的（配置块里根本没有 `api_key` 这个键），密钥名固定为 `SECRET_NAME` 常量——做成可配置
+    会让那条 `target` 变成一句谎话。`PERMISSION_DENIED` 与 `CONFIG_SECRET_MISSING` 天然可分。
+  - **HTTP 直接用 `httpx`，manifest 如实声明 `net` 权限，不走 `ctx.net`**（第二处取舍）。
+    `HttpAccess` 的 SSRF 守卫会拒绝私有网段，而交付要点明确要覆盖本地 vLLM / Ollama /
+    LM Studio（即 `127.0.0.1`）；且 `ctx.net` 的生产实现要等 `D26`。与 `D17` 的
+    `session_jsonl` 用 `pathlib`、如实声明 `fs:read`/`fs:write` 是同一条先例：门面能力不足
+    时，诚实声明比绕道更符合「应用级权限的价值是让越界意图可审计」。本地端点
+    （`ipaddress` 判回环/私有网段）额外关 keepalive、关代理——Ollama / vLLM 会在客户端
+    keepalive 到期前关掉空闲连接，`ALL_PROXY` 会把 localhost 送进够不着的代理，两条都是
+    真实端点上验证过的。
+  - **交付五个模块而不是开发方案点名的一个**：`wire.py`（纯函数线格式翻译，501 行）/
+    `faults.py`（错误映射）/ `settings.py`（配置）/ `provider.py`（IO 与取消）/ `__init__.py`
+    门面。切分的分界线是**碰不碰 IO**：线格式的每一条规则都能在 `wire.py` 上逐字节钉住、
+    不需要事件循环，行为才需要 `httpx.MockTransport`。混在一起会让「payload 少了一个键」
+    在异步栈里冒出来。
+  - **模型窗口只能来自配置**：`describe()` 是纯查询（契约写死它在预算推导路径上、不得发
+    网络请求），因此有 `models` / `default_context_window_tokens` 等键。`models` **非空即为
+    白名单**：运维一旦列举了在用的模型，一个拼错的 model_id 就该当场报 `CAPABILITY_MISSING`
+    而不是拿默认窗口蒙混。
+  - **`max_tokens_field` / `supports_temperature` 是配置项，不是按模型名猜的表**。gpt-5、
+    o1/o3/o4 只认 `max_completion_tokens` 且拒绝 `temperature`，旧实现为此维护了一张靠 slug
+    匹配、越滚越大的厂商特例表。做成配置意味着用户换新模型只需改一行——这正是「显式优于
+    魔法」「少结构」。同理不移植旧实现的角色交替重排、`<tool_call>` 文本兜底、`json_repair`
+    修参数、OpenRouter 归因头、Mistral id 规整——它们各有各的不该进内建的理由
+    （改写组装器交下来的消息越过 `MOD-004` / 把模型正文当结构化数据是 `EDG-306` 要防的 /
+    静默修正坏输入违反原则 7）。
+  - **流式 tool_call 增量拼装是本模块最易出错处**，四个线格式坑逐一处理：`index` 才是身份键
+    （`id`/`name` 只在首片），`arguments` 是被切碎的字符串（只能 `+=`、流结束才 `json.loads`），
+    判空用**真值**而不是 `is not None`（有端点在首片发 `"arguments": ""`），开了 `include_usage`
+    时**收尾片的 `choices` 是空数组**、`finish_reason` 因此不在最后一片。`call_id` 去重是
+    **强制项**——`ModelResponse.__post_init__` 对重复 `call_id` 直接抛错，而 Zhipu/GLM 会让
+    并行调用共用一个 `id`；补了什么写进 `provider_metadata`（补救必须可查）。
+  - **流式中途失败必须先 `yield DONE(ERROR)` 再抛**（`protocols.py` 写死、`EDG-304`）：
+    `kernel/turn/folding.py` 据此把已收到的文本按 `interrupted=True` 落库，而不是把半截输出
+    当成完整答案。一片都没吐过就失败则不发 DONE（没有「已产生的内容」要收尾）。
+  - **内容过滤是 HTTP 200 上的正常响应而不是异常**，走 `StopReason.CONTENT_FILTER`
+    （`is_complete_answer` 因此为假）。`STOP_SEQUENCE` **不可达**——OpenAI 对自然结束与撞上
+    stop 序列都回 `"stop"`，契约有那个枚举值不等于这个 Provider 分得出来，docstring 如实写明
+    不假装能区分。
+  - **错误映射按语义分类**（`MOD-003`）：401→`CONFIG_SECRET_MISSING`（与 `ctx.secret()` 缺失
+    同码，用户看到的是同一件事）、403→`PERMISSION_DENIED`、429 按 `error.code` 分**限速可
+    重试 / 欠费不可重试**（两者都是 429，撞限速等一会儿就好，欠费重试一万次也不会好，未知
+    code 默认可重试）、408/409/5xx 可重试、其余 4xx 不可、`httpx.TimeoutException` 与流空闲
+    看门狗→`TIMEOUT_MODEL_REQUEST`。`detail` **只放状态码与 `error.type`/`code`，不放
+    `error.message`**——那段自由文本会回显 prompt 或被 echo 回来的凭据（`D13` 的先例）。
+  - **两处不显眼但会咬人的实现点**：① 孤立 UTF-16 代理码位在序列化前剔除——Windows 控制台
+    粘贴文本会带进来，`httpx` 编码请求体时抛 `UnicodeEncodeError`，一次正常对话因此整轮失败
+    且错误指不到原因（本模块唯一一处输入规整，单独测试）；② 流空闲看门狗（每片
+    `asyncio.wait_for`）与请求级超时是两件事——请求超时保护不了「开了口就不再吐字」的流。
+  - **未新增 `ErrorCode`**：认证失败与限流的区别由 `NucleaError.retryable` 承载，五个现有码
+    （`CONFIG_SECRET_MISSING` / `PERMISSION_DENIED` / `EXTERNAL_MODEL_PROVIDER` /
+    `TIMEOUT_MODEL_REQUEST` / `CAPABILITY_MISSING`）够用。**未碰 `kernel/`**。
+  - **测试全走 `httpx.MockTransport`，一个 socket 都不开**；`tests/builtins/conftest.py` 照搬
+    `tests/integration/` 的 autouse 网络闸门（拦 `connect`/`getaddrinfo` 的**目标**、回环放行，
+    不拦 socket 构造），是「零真实网络」的可执行断言。凭据哨兵用 `sk-`+≥16 字符（匹配
+    `errors.py::_SECRET_VALUE_PATTERNS`），驱动一次 401 后断言它不出现在 `repr` / `detail` /
+    `user_message` / 事件序列化里（`MOD-002`）。踩到一个坑：`httpx` 0.28 不再导出
+    `IteratorStream`，流式 stub 改用 `Response(200, content=<async iterator>)`。
+  - 验收：`tests/builtins`(240) 全绿，`builtins/model_openai/` 语句覆盖率 **97%**
+    （未覆盖的全是防御性分支：非字符串 host、客户端复用短路、`_metadata` 的空值跳过）；
+    新层八个测试目录共 **1591 个用例全绿**（`D18` 收口时 1471）。`ruff check`（src + tests）、
+    `basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`legacy_debt --check` 未变、
+    `check_startup_cost --check` OK（`import nucleamind` 仍 0.5 ms、只拉入 1 个模块——
+    `provider.py` 含 httpx，只在真正加载时才被 `import_setup()` 拉进来）；新层 `Any` 数仍为 0。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -877,10 +950,14 @@
   （JSONL + `meta.json`、`committed_bytes` 提交水位、发布格式文档），
   `BUILTIN_MANIFESTS` 从此不再是空元组；`D18` 已完成，内建 Context Provider
   `builtins/context_basic/` 落地（基线系统指令 + 运行时事实 + 运维指令三类片段、
-  零权限零 IO），`CTX-006`/`EDG-307` 的「无 Memory 也有可用上下文」由此成立。
+  零权限零 IO），`CTX-006`/`EDG-307` 的「无 Memory 也有可用上下文」由此成立；
+  `D19` 已完成，内建 Model Provider `builtins/model_openai/` 落地（OpenAI 兼容 Chat
+  Completions、流式 tool_call 增量拼装、凭据走 `ctx.secret`、httpx + 声明 `net` 权限），
+  实例从此有了真模型、`BAS-001`「配置一份凭据就能用」对最多用户成立。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
-  `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/` 与 `context_basic/`
-  （`D19`–`D22` 逐个追加其余五项），`runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
+  `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/` 与
+  `model_openai/`（`D20`–`D22` 逐个追加其余四项），`runtime/` 有 `wiring.py`；
+  `embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -928,17 +1005,37 @@
 
 ## 下一步工作
 
-1. 继续阶段 5 的其余内建能力：`D19` model_openai、`D20` tools_fs、
-   `D21` tools_shell、`D22` commands_core。它们之间无相互依赖，可并行开发。
+1. 继续阶段 5 的其余内建能力：`D20` tools_fs、`D21` tools_shell、`D22` commands_core
+   （`D19` model_openai 已完成）。它们之间无相互依赖，可并行开发。
    **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
    `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
    注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
    自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
-   `D17` 的 `builtins/session_jsonl/`（要写盘的那种）与 `D18` 的 `builtins/context_basic/`
-   （纯内存、零权限的那种）是这个形态的两个样例，照着写即可。
+   `D17` 的 `builtins/session_jsonl/`（要写盘的那种）、`D18` 的 `builtins/context_basic/`
+   （纯内存、零权限的那种）与 `D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）
+   是这个形态的三个样例，照着写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
 
-`D18` 留下的、`D19`–`D23` 必须用到的事实：
+`D19` 留下的、`D23`/`D26` 必须用到的事实：
+
+- **`ctx.secret("api_key")` 必须真的能取到值，`model_openai` 才起得来**。`D19` 只能对着
+  `FakePluginContext` 测（生产级 `PluginContext` 是 `D26`）。`D23`/`D26` 落地时，
+  `ctx.secret()` 的实现要接到 `kernel/config/secrets.py::resolve_text` 上——那是 `D11` 那条
+  「provider 凭据用 `resolve_text()`」笔记的正确落点：由 ctx 那侧调，而不是让 `builtins/`
+  直接调（`R4` 拦得住）。`CONFIG_SECRET_MISSING`（授权了但环境变量没导出）与
+  `PERMISSION_DENIED`（没授权）必须可区分，`model_openai` 依赖这个区分把「去补配置」和
+  「去改权限」两种补救分开。
+- **`OpenAIModelProvider` 有一个 `aclose()`，`ModelProvider` 协议里没有它**。httpx 连接池
+  要在实例停止时释放，`D23` 装配时应当在关停路径上调它一次（多次调用安全）。协议不加生命
+  周期钩子是刻意的——不是每个 Provider 都有连接池。
+- **`auth="none"` 时 `model_openai` 不碰 `ctx.secret()`**。本地 vLLM / Ollama / LM Studio
+  没有密钥，`D23` 给本地端点装配时**不要**为它授予 `secret:api_key`，否则一个必然缺失的
+  凭据会让实例起不来。授不授 `secret` 权限要跟着 `auth` 走。
+- **`model_openai` 声明了 `net` 权限并直接用 httpx**，`ctx.net` 的 SSRF 守卫对它不生效。
+  `D26` 落地权限模型后，`net` 权限对内建的意义仍只是「可审计」而非进程隔离——这是
+  `sdk/api.py` 写死的应用级权限语义，不是 `model_openai` 的特例。
+
+`D18` 留下的、`D20`–`D23` 必须用到的事实：
 
 - **`context_basic` 不产出 `trust=SYSTEM` 的运维内容**。用户在配置里写的自定义指令是
   `TrustLevel.OPERATOR`，落在历史之后的一条 user 消息里而不是 system 消息里（`CMD-005`）。
@@ -1085,15 +1182,18 @@
 - **`EventName` 现在有字面量快照**（`tests/contracts/test_events.py::EVENT_NAME_SNAPSHOT`）。
   新增事件名要同时改那张表，那就是 `NFR-104` 的评审闸门。
 
-`D11` 留下的、`D19`/`D24`/`D26` 必须用到的事实：
+`D11` 留下的、`D24`/`D26` 必须用到的事实：
 
 - **`ctx.secret()` 返回的就是 `contracts.SecretStr`**（`D26`），不需要任何跨层转换——
   这正是把它下沉到 `contracts/` 换来的。
 - **要落盘一份配置，先过 `prepare_for_write()`**（`D24`）。`kernel/config/` 自身仍然一个
   字节都不写。
-- **provider 凭据用 `resolve_text()` 解单个字段**（`D19`）：没有引用时它原样返回 `str`，
-  「这个值来自环境变量」这条信息因此保得住；缺失时抛 `CONFIG_SECRET_MISSING`，必须与
-  `PERMISSION_DENIED` 可区分（`sdk/api.py::secret` 的 docstring 已写死这条）。
+- ~~**provider 凭据用 `resolve_text()` 解单个字段**（`D19`）~~ **`D19` 改走 `ctx.secret()`**：
+  `resolve_text()` 在 `kernel/config/secrets.py`，`R4` 禁止 `builtins/` import `kernel/`，
+  这条笔记按字面已不可执行。`model_openai` 声明 `secret:api_key` 并调 `ctx.secret("api_key")`
+  拿 `SecretStr`，`CONFIG_SECRET_MISSING` 与 `PERMISSION_DENIED` 的区分由 ctx 那侧兑现
+  （`FakePluginContext` 已有此行为基准）。`resolve_text()` 仍在，接线在 `D23`/`D26`——
+  把 `ctx.secret()` 的实现接到它上面，而不是让 `builtins/` 直接调它。
 
 `D10` 留下的、`D11`/`D12`/`D14`/`D23` 必须用到的事实：
 
@@ -1289,7 +1389,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅   D19– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅   D20– ⬜（尚未开始）
 
 ## 本目录文档分类
 

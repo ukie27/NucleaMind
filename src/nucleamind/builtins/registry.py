@@ -24,7 +24,7 @@ from typing import Final
 from nucleamind.contracts import CapabilityKind, PermissionKind
 from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
 
-__all__ = ["BUILTIN_MANIFESTS", "CONTEXT_BASIC", "SESSION_JSONL"]
+__all__ = ["BUILTIN_MANIFESTS", "CONTEXT_BASIC", "MODEL_OPENAI", "SESSION_JSONL"]
 
 #: `D17` 内建 Session（技术方案 §8.1）。
 #:
@@ -100,6 +100,126 @@ CONTEXT_BASIC: Final = PluginManifest(
     critical=True,
 )
 
-#: 全部内建能力的 manifest。`D19`–`D22` 逐个追加（model_openai / tools_fs /
-#: tools_shell / commands_core / cli_entry）。
-BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (SESSION_JSONL, CONTEXT_BASIC)
+#: `D19` 内建 Model Provider（技术方案 §8.1、§15 第 5 项）。
+#:
+#: `critical=True`：没有模型就没有 Agent。一份写错的 `base_url`、一个没导出的
+#: `OPENAI_API_KEY`，都应当在启动时被指出来，而不是等用户发出第一条消息才炸。
+#:
+#: **两条权限都如实声明**：
+#: - `net`：直接用 httpx 而不是 `ctx.net`。`HttpAccess` 的 SSRF 守卫会拒绝私有网段，
+#:   而本内建的交付要点就包含本地 vLLM / Ollama / LM Studio。与 `session_jsonl` 用
+#:   `pathlib` 是同一条先例——门面能力不足时，诚实声明比绕道更符合「让越界意图可审计」。
+#: - `secret:api_key`：凭据只从 `ctx.secret("api_key")` 来，配置块里根本没有这个键，
+#:   `CFG-003`「明文不进配置文档」因此是结构性成立的而不是靠流程遵守。
+#:   密钥名固定为 `SECRET_NAME` 常量——做成可配置会让这条 `target` 变成一句谎话。
+MODEL_OPENAI: Final = PluginManifest(
+    id="model-openai",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind.builtins.model_openai:setup",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.MODEL, name="openai"),),
+    permissions=(
+        PermissionDecl(
+            kind=PermissionKind.NET,
+            reason="调用 OpenAI 兼容的 Chat Completions 端点；地址由运维在配置里显式指定，"
+            "可以是本地的 vLLM / Ollama / LM Studio。",
+        ),
+        PermissionDecl(
+            kind=PermissionKind.SECRET,
+            target="api_key",
+            reason="向模型端点认证。auth=\"none\" 时（本地模型服务）不会取用。",
+        ),
+    ),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "base_url": {
+                "type": "string",
+                "default": "https://api.openai.com/v1",
+                "description": "端点根，原样使用不追加 /v1——各家后缀差异极大"
+                "（OpenVINO 是 /v3，vLLM 没有约定）。",
+            },
+            "auth": {
+                "type": "string",
+                "enum": ["bearer", "api_key_header", "none"],
+                "default": "bearer",
+                "description": "认证形态：Authorization: Bearer / Azure 的 api-key 头 / "
+                "无凭据（本地模型服务）。",
+            },
+            "models": {
+                "type": "object",
+                "description": "按模型标识列举窗口、上限与线格式偏好。"
+                "非空即为白名单：不在其中的模型 describe() 会报能力缺失。",
+                "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                        "context_window_tokens": {"type": "integer", "minimum": 1},
+                        "max_output_tokens": {"type": "integer", "minimum": 1},
+                        "capabilities": {"type": "array", "items": {"type": "string"}},
+                        "max_tokens_field": {
+                            "type": "string",
+                            "enum": ["max_tokens", "max_completion_tokens"],
+                        },
+                        "supports_temperature": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "default_context_window_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 128000,
+                "description": "models 未覆盖时的上下文窗口，Context 预算由它推导。",
+            },
+            "default_max_output_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 4096,
+                "description": "models 未覆盖时的单次输出上限。",
+            },
+            "capabilities": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["tool_calls", "streaming"],
+                "description": "显式列出支持项（MOD-005）。不在表里的能力一律报缺失，"
+                "不静默降级。",
+            },
+            "max_tokens_field": {
+                "type": "string",
+                "enum": ["max_tokens", "max_completion_tokens"],
+                "default": "max_tokens",
+                "description": "输出上限的字段名。gpt-5、o1/o3/o4 只认后者。",
+            },
+            "supports_temperature": {
+                "type": "boolean",
+                "default": True,
+                "description": "关掉后 temperature 被省略而不是钳值——推理模型对它直接 400。",
+            },
+            "request_timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 120000,
+                "description": "ModelRequest.timeout_ms 为 0（不限）时的兜底。",
+            },
+            "stream_idle_timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 60000,
+                "description": "流打开后卡住的看门狗。请求级超时保护不了一个开了口"
+                "就不再吐字的流。",
+            },
+            "include_usage": {
+                "type": "boolean",
+                "default": False,
+                "description": "流式请求是否携带 stream_options.include_usage。"
+                "默认关：不少兼容端点会对未知字段 400。",
+            },
+        },
+        "additionalProperties": False,
+    },
+    critical=True,
+)
+
+#: 全部内建能力的 manifest。`D20`–`D22` 逐个追加（tools_fs / tools_shell /
+#: commands_core / cli_entry）。
+BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (SESSION_JSONL, CONTEXT_BASIC, MODEL_OPENAI)

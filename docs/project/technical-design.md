@@ -1273,6 +1273,27 @@ JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式�
   超窗，偏大则白丢内容。两份由 `tests/builtins/test_context_basic.py` 的一条逐字符对照
   测试钉住，与 `kernel/config/schema.py` 重写六个默认值是同一种做法。
 
+`D19` 落地时对本段「Model Provider」一行的四处细化（实现在 `builtins/model_openai/`）：
+
+- **凭据走 `ctx.secret("api_key")` 而不是 `resolve_text()`**。`resolve_text()` 在
+  `kernel/config/secrets.py`，`R4` 禁止 `builtins/` import `kernel/`，因此内建 Provider
+  够不着它。manifest 声明 `secret:api_key` + 实现调 `ctx.secret("api_key")` 是 SDK 认可的
+  唯一通道；接线（`ctx.secret()` 的实现接到 `resolve_text()` 上）在 `D23`/`D26` 由 ctx 那
+  侧完成。`CFG-003`「明文不进配置文档」因此是结构性成立的——配置块里根本没有 `api_key`
+  这个键。
+- **直接用 httpx 并如实声明 `net` 权限，不走 `ctx.net`**。`HttpAccess` 的 SSRF 守卫会拒绝
+  私有网段，而本内建的交付要点就包含本地 vLLM / Ollama / LM Studio。与 `session_jsonl`
+  用 `pathlib` 是同一条先例：门面能力不足时，诚实声明比绕道更符合「应用级权限的价值是让
+  越界意图可审计」。本地端点（`ipaddress` 判回环/私有网段）额外关 keepalive、关代理。
+- **`describe()` 的模型窗口只能来自配置**。契约写死它在预算推导路径上、不得发网络请求，
+  因此有 `models` / `default_context_window_tokens` 等配置键；`models` 非空即视为白名单。
+  `max_tokens_field` / `supports_temperature` 也做成配置而不是按模型名 slug 猜的表——用户
+  换新模型只需改一行，这是「显式优于魔法」。
+- **`StopReason.STOP_SEQUENCE` 不可达**。OpenAI Chat Completions 对自然结束与撞上 stop
+  序列都回 `"stop"`，线格式里没有第三种取值。契约有那个枚举值不等于这个 Provider 分得
+  出来，docstring 如实写明不假装能区分。内容过滤是 HTTP 200 上的 `CONTENT_FILTER` 正常
+  响应而不是异常。
+
 ### 8.2 基础工具集的冻结清单
 
 内建工具**恰好 6 个**，清单本身是接口（`BAS-008`）：
