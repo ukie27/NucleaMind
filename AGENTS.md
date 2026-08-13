@@ -24,7 +24,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`tests/integration/`，28 个用例），**阶段 4 收口**；`D16` 已落地内建加载路径与契约测试
   套件（`kernel/plugins/` 四个模块 + `builtins/registry.py` + `runtime/wiring.py`），
   `D17` 已落地内建 Session（`builtins/session_jsonl/`），`D18` 已落地内建 Context
-  （`builtins/context_basic/`），**阶段 5 进行中**，下一步 `D19`–`D22`。
+  （`builtins/context_basic/`），`D19` 已落地内建 Model（`builtins/model_openai/`），
+  `D20` 已落地内建文件工具（`builtins/tools_fs/`），**阶段 5 进行中**，下一步 `D21`–`D22`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
   `config/`、`observability/`、`routing/` 与 `plugins/`。
@@ -230,6 +231,21 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `os` / `pathlib` / `socket` / 裸 `open` 之类的名字，manifest 的 `permissions` 必须为空。
   要写盘的内建（`tools_fs` / `tools_shell`）**不进**那张表，走 `session_jsonl` 那条路
   ——如实声明权限，而不是绕道。
+- **一份 manifest 里的多条能力声明可以按配置少注册几条，但只有一条路**（`D20`）：
+  `runtime/wiring.py` 的 `keep: CapabilityFilter` 裁掉声明，内建导出一个只看配置的
+  `enabled_tool_names(config)` 决定注册谁，两者**同源于同一份配置**。`D16` 的
+  「声明 ⊆ 注册」不变量一条也不放松——忘了传 `keep` 就会被 `CapabilityHost.finish()` 以
+  `PLUGIN_LOAD_FAILED` 挡下，那个报错是对的。别改用「注册一个总是失败的桩工具」来糊弄
+  `TOL-006`：那正是「声明了但不可用」。
+- **`tools_fs` 的路径守卫是 `NFR-302` 的唯一防线**（`builtins/tools_fs/paths.py`）：逻辑
+  校验（`normpath`，挡 `..`）与 realpath 校验（`resolve()`，挡符号链接与重解析点）**缺一
+  不可**，两次比较都过 `os.path.normcase`。不做 `expanduser()`、绝对路径接受但过同一道门、
+  Windows 保留设备名两个平台一律拒绝。TOCTOU 挡不住，docstring 里如实写着，别删掉那段。
+  越界错误的 `detail` 只放原始串——宿主机绝对路径进模型可见的错误就是泄漏。
+- **失败发生在落盘之前才敢标 `SideEffect.NONE`**：`tools_fs` 的写走「临时文件 → `fsync`
+  → `os.replace`」，替换成功后没有可失败的步骤，因此它一次 `UNKNOWN` 都不产出，
+  `base.FsTool` 把折出来的失败一律标 `NONE`。`D21` 的 `shell.exec` **不能照抄这一句**——
+  取消宽限期用尽正是 `UNKNOWN` 的正主（`EDG-407`）。
 - **自报的 `estimated_tokens` 要和组装器同一把尺**：`R4` 逼得公式在
   `builtins/context_basic/instructions.py` 与 `kernel/turn/context_builder.py` 各写一份
   （都是 `ceil(len/3)`），由一条逐字符对照测试钉住。自报偏小会让请求真的超出模型窗口，

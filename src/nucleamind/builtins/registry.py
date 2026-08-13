@@ -24,7 +24,7 @@ from typing import Final
 from nucleamind.contracts import CapabilityKind, PermissionKind
 from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
 
-__all__ = ["BUILTIN_MANIFESTS", "CONTEXT_BASIC", "MODEL_OPENAI", "SESSION_JSONL"]
+__all__ = ["BUILTIN_MANIFESTS", "CONTEXT_BASIC", "MODEL_OPENAI", "SESSION_JSONL", "TOOLS_FS"]
 
 #: `D17` 内建 Session（技术方案 §8.1）。
 #:
@@ -220,6 +220,91 @@ MODEL_OPENAI: Final = PluginManifest(
     critical=True,
 )
 
-#: 全部内建能力的 manifest。`D20`–`D22` 逐个追加（tools_fs / tools_shell /
-#: commands_core / cli_entry）。
-BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (SESSION_JSONL, CONTEXT_BASIC, MODEL_OPENAI)
+#: `D20` 内建文件工具（技术方案 §8.2 的冻结清单，`shell.exec` 是 `D21`）。
+#:
+#: `critical=False`：没有文件工具的 Agent 仍然能对话，这与「没有模型」「没有会话存储」
+#: 不是一回事。一份写错的 workspace 路径应当让这一项加载失败并留下诊断，而不是把整个
+#: 实例拽下水。
+#:
+#: **五条声明必须与 `tools_fs.TOOL_NAMES` 逐一对应**，由测试对照。被 `disable` 关掉的
+#: 工具**不会**被注册，因此装配根必须用同一份配置过滤这里的声明
+#: （`runtime/wiring.py` 的 `keep` 参数 + `tools_fs.enabled_tool_names()`）——否则
+#: `D16` 的 `CapabilityHost.finish()` 会以 `PLUGIN_LOAD_FAILED` 拒绝加载，而那个报错是对的。
+#:
+#: 两条权限如实声明而不用 `ctx.fs`：`FileAccess` 只有 `read_text` / `write_text` /
+#: `list_dir`，没有目录遍历、没有原子替换、没有按字节数截断的读，用它实现本内建等于
+#: 重写一遍它。与 `session_jsonl` 同一条先例——门面能力不足时，诚实声明比绕道更符合
+#: 「让越界意图可审计」。
+TOOLS_FS: Final = PluginManifest(
+    id="tools-fs",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind.builtins.tools_fs:setup",
+    capabilities=(
+        CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.read"),
+        CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.write"),
+        CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.edit"),
+        CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.list"),
+        CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.grep"),
+    ),
+    permissions=(
+        PermissionDecl(
+            kind=PermissionKind.FS_READ,
+            reason="读取 workspace 内的文件与目录，供 fs.read / fs.list / fs.grep 使用。",
+        ),
+        PermissionDecl(
+            kind=PermissionKind.FS_WRITE,
+            reason="原子写入 workspace 内的文件，供 fs.write / fs.edit 使用。",
+        ),
+    ),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "workspace": {
+                "type": "string",
+                "description": "全部路径解析的根。缺省时使用本插件的私有状态目录；"
+                "装配根会把配置里的 workspace.root 填在这里。",
+            },
+            "disable": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "要关掉的工具名（TOL-006）。被关掉的工具不会注册，"
+                "因此也不出现在模型可见的工具列表里。表外的名字会被拒绝。",
+            },
+            "max_read_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 1048576,
+                "description": "单次从磁盘读取的字节上限。超出是截断而不是失败。",
+            },
+            "max_result_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 32768,
+                "description": "单个工具结果的字符上限，不得超过契约的 65536。",
+            },
+            "max_entries": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 500,
+                "description": "fs.list 单次返回的条目数上限。",
+            },
+            "max_matches": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 200,
+                "description": "fs.grep 单次返回的匹配数上限。",
+            },
+        },
+        "additionalProperties": False,
+    },
+    critical=False,
+)
+
+#: 全部内建能力的 manifest。`D21`–`D22` 逐个追加（tools_shell / commands_core / cli_entry）。
+BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (
+    SESSION_JSONL,
+    CONTEXT_BASIC,
+    MODEL_OPENAI,
+    TOOLS_FS,
+)

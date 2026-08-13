@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D19` 均已完成，下一步 `D20`–`D22`）
+- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D20` 均已完成，下一步 `D21`–`D22`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -927,6 +927,72 @@
     `check_startup_cost --check` OK（`import nucleamind` 仍 0.5 ms、只拉入 1 个模块——
     `provider.py` 含 httpx，只在真正加载时才被 `import_setup()` 拉进来）；新层 `Any` 数仍为 0。
 
+- **`D20` 内建工具：`tools_fs`**（`builtins/tools_fs/` 九个模块约 1597 行 +
+  `builtins/registry.py` 的第四条 manifest + `runtime/wiring.py` 的一个可选参数 +
+  `tests/builtins/test_tools_fs.py` 102 个用例）：
+  - **单工具禁用（`TOL-006`）与 `D16`「声明 ⊆ 注册」的冲突，本轮唯一需要拍板的取舍**。
+    `CapabilityHost.finish()` 要求 manifest 声明的每一项都真的被注册，而 `TOL-006` 要求被
+    禁用的工具**从 registry 里消失**（模型可见列表与可执行集合同源）——静态的
+    `BUILTIN_MANIFESTS` 无法按配置少声明一项，`plugins.disable` 也帮不上忙（全部内建共用
+    一个 `Builtin()` ProviderId，provider 级禁用对内建没有粒度）。
+    **取的路**：`runtime/wiring.py` 的 `to_load_request()` / `wire_capabilities()` 增加一个
+    可选的 `keep: CapabilityFilter`，`tools_fs` 导出 `enabled_tool_names(config)`，装配根用
+    **同一份配置**同时喂给声明过滤与 `setup()`。D16 的不变量一条也不放松（声明与注册仍
+    严格相等，只是两者同源于配置而不是同源于常量），机制对 `D21` 的 `tools_shell` 与第三方
+    工具插件通用。`keep=None` 时行为与 `D16` 完全一致。有一条用例专门断言**忘了传 `keep`
+    就会被 `PLUGIN_LOAD_FAILED` 挡下**——那个报错是对的。
+  - **路径守卫是双重校验，缺一不可**（`paths.WorkspaceGuard`，`EDG-405`、`NFR-302`）：
+    ① `os.path.normpath` 后（不跟随符号链接）必须落在根内，挡 `..`；② `Path.resolve()` 后
+    必须**再**落在根内，挡符号链接与 Windows 重解析点。两次比较都过 `os.path.normcase`
+    （Windows 折叠大小写、POSIX 是恒等），因此同一段代码在两个平台给出同一套判定。
+    前缀比较显式要求落在分隔符边界上——否则 `/x/ws-evil` 会被判成 `/x/ws` 的后代。
+  - **三条与 legacy `path_utils.py` 不同的判定**：① **不做 `expanduser()`**（`~` 是模型给的
+    普通字符，展开它等于凭空多出一条通往主目录的路径，而一个真叫 `~` 的目录反倒读不到）；
+    ② **绝对路径接受但过同一道门**（`FileAccess` 那条「绝对路径一律拒绝」是针对没有根校验
+    的门面说的，拒绝只会换来模型拼一串 `../`）；③ **Windows 保留设备名两个平台一律拒绝**
+    （`CON`/`NUL`/`COM1`…能通过 containment 却根本不是文件；为它开平台分支就破坏 `NFR-605`）。
+    越界错误的 `detail` 里**只放原始串、不放解析结果**——把宿主机绝对路径写进模型可见的
+    错误里是另一种泄漏，有一条用例逐字段钉住。
+  - **TOCTOU 如实写进 docstring，不假装挡得住**：校验与随后的 `open()` 之间目标可被换成
+    越界符号链接，挡它需要 `openat` + `O_NOFOLLOW` 一类原语，而那在 Windows 上没有对等物。
+    这是应用级守卫，真正的隔离是 P2 的子进程插件宿主。
+  - **`execute()`「约定不抛」只实现一次**（`base.FsTool`）。逸出的异常会被 Kernel 记成
+    `side_effect=UNKNOWN`，而本包的五个工具**总是知道**：所有失败都发生在真正落盘之前
+    （写走「同目录临时文件 → `fsync` → `os.replace`」，替换成功之后没有可失败的步骤），
+    因此折出来的失败一律 `NONE`，本包不产出 `UNKNOWN`——那个取值留给 `D21` 的 `shell.exec`。
+    让五个工具各写一遍 try/except 迟早漏一个分支，而漏掉的代价是一次谎报。
+  - **`EDG-205` 的四类各有可预期结果**：含 NUL 字节 → 判二进制 → `INPUT_UNSUPPORTED_MEDIA`
+    整份拒绝（给模型乱码只会让它继续猜）；非法 UTF-8 但无 NUL → `errors="replace"` 解码 +
+    `data["lossy"]=True`（一行坏字节不该让整份日志读不出来）；空文件 → 成功且内容为空串；
+    超过 `max_read_bytes` → 截断而非失败。但 **`fs.edit` 拒绝有损解码的文件**：读可以将就，
+    写回去等于把那些 `�` 变成文件的真实内容。
+  - **`NFR-605` 落在字节上**：读的一侧把 `\r\n` 与孤立 `\r` 归一成 `\n`，写的一侧以二进制
+    模式原样落盘（文本模式会在 Windows 上把 `\n` 翻成 `\r\n`，两个平台的产物就不同了）。
+    结果里的路径一律是 posix 相对路径，`fs.list` 的顺序在收集后统一排序而不是文件系统序。
+    测试夹具本身也改用 `write_bytes`——`write_text` 会让夹具变成平台相关的。
+  - **`fs.write` / `fs.edit` 是 `DESTRUCTIVE` + `EXCLUSIVE`**：覆盖既有内容不可撤销
+    （`TOL-004` 的确认策略要拦的正是这一档，「它只写一个文件」不构成降级理由）；两次写同
+    一个文件的结果又取决于顺序，而 turn 内的并行调度不保证顺序。`fs.edit` 命中 0 处或命中
+    多处且未传 `replace_all` 时**不做任何修改**。
+  - **`fs.grep` 的正则由模型给，ReDoS 有面**，三道约束把它压成有界代价：pattern 长度封顶
+    512、**每处理一个文件检查一次取消**（只在入口检查等于取消要等整次搜索结束）、匹配数
+    封顶。这不是「挡住了 ReDoS」——足够病态的 pattern 仍能卡住一次调用，但那次调用会被
+    `tool_timeout_ms` 收走而不是拖垮实例。二进制文件与读不动的文件**跳过而不是报错**。
+  - **`MAX_TOOL_RESULT_LENGTH` 不在 `contracts/__init__` 里**，从 `contracts.tool` 取
+    （`tests/contracts/test_tool.py` 也是这么取的）。截断标记**算在上限内**：先按最坏情况
+    算能留多少字符，再用真实的 `shown` 渲染标记，因此返回值长度恒 ≤ 上限且标记里报的数字
+    与实际截出来的长度是同一个数。配置的 `max_result_chars` 超过契约上界直接拒绝——放行
+    只会让每次调用都在构造 `ToolResult` 时才炸，那时错误指向的是 kernel 而不是这行配置。
+  - **符号链接用例建不了就 `skip`，不当成通过**；但 Windows 上另加了两条**目录联接**
+    （`mklink /J`）用例——它不需要提权，走的又是同一条 `resolve()` 判定，因此在开发机上
+    重解析点这条守卫**真的跑过了**（本机 4 条 symlink 用例 skip，2 条 junction 用例通过）。
+  - **`critical=False`**：没有文件工具的 Agent 仍然能对话，这与「没有模型」「没有会话存储」
+    不是一回事。**未新增 `ErrorCode`**，**未碰 `kernel/`**（`runtime/wiring.py` 是 `R5` 允许
+    同时看见 `kernel/` 与 `sdk/` 的唯一一层）。
+  - 验收：`tests/builtins`(342) 全绿；新层八个测试目录共 **1693 个用例全绿**（`D19` 收口时
+    1591）。`ruff check`（src + plugins + tests）、`basedpyright`（新层 0 报错，legacy 仍是
+    既有 4 个）、`legacy_debt --check` 未变、`check_startup_cost --check` OK；新层 `Any` 数仍为 0。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -953,10 +1019,12 @@
   零权限零 IO），`CTX-006`/`EDG-307` 的「无 Memory 也有可用上下文」由此成立；
   `D19` 已完成，内建 Model Provider `builtins/model_openai/` 落地（OpenAI 兼容 Chat
   Completions、流式 tool_call 增量拼装、凭据走 `ctx.secret`、httpx + 声明 `net` 权限），
-  实例从此有了真模型、`BAS-001`「配置一份凭据就能用」对最多用户成立。
+  实例从此有了真模型、`BAS-001`「配置一份凭据就能用」对最多用户成立；
+  `D20` 已完成，内建文件工具 `builtins/tools_fs/` 落地（`fs.read`/`write`/`edit`/`list`/`grep`
+  五件套、双重路径校验、单工具禁用经 `wiring` 的声明过滤钩子），§8.2 冻结清单六件套已交五件。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
-  `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/` 与
-  `model_openai/`（`D20`–`D22` 逐个追加其余四项），`runtime/` 有 `wiring.py`；
+  `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
+  `model_openai/` 与 `tools_fs/`（`D21`–`D22` 逐个追加其余三项），`runtime/` 有 `wiring.py`；
   `embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
@@ -1005,16 +1073,40 @@
 
 ## 下一步工作
 
-1. 继续阶段 5 的其余内建能力：`D20` tools_fs、`D21` tools_shell、`D22` commands_core
-   （`D19` model_openai 已完成）。它们之间无相互依赖，可并行开发。
+1. 继续阶段 5 的其余内建能力：`D21` tools_shell、`D22` commands_core
+   （`D19` model_openai 与 `D20` tools_fs 已完成）。它们之间无相互依赖，可并行开发。
    **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
    `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
    注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
    自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
    `D17` 的 `builtins/session_jsonl/`（要写盘的那种）、`D18` 的 `builtins/context_basic/`
-   （纯内存、零权限的那种）与 `D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）
-   是这个形态的三个样例，照着写即可。
+   （纯内存、零权限的那种）、`D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）
+   与 `D20` 的 `builtins/tools_fs/`（一份 manifest 里多条能力声明、且能按配置少注册几条的
+   那种）是这个形态的四个样例，照着写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
+
+`D20` 留下的、`D21`/`D23` 必须用到的事实：
+
+- **`D23` 必须给 `tools_fs` 传两样东西，缺一样都会安静地跑偏**：① 配置块里的
+  `workspace` 键（没配就退回插件私有状态目录 `<instance>/plugins/tools-fs/`，文件工具会
+  在一个没人预期的地方读写，与 `D17` 的 `dir` 是同一个坑）；② `wire_capabilities()` 的
+  `keep` 参数（`lambda manifest, decl: decl.name in enabled_tool_names(config_of(manifest))`）。
+  **不传 `keep` 时，只要用户在配置里禁用了任何一个工具，`tools-fs` 就会以
+  `PLUGIN_LOAD_FAILED` 加载失败**——那是 `CapabilityHost.finish()` 在如实报告「声明与注册
+  对不上」，有一条用例专门钉住它。`critical=False`，因此失败只记进 `Wiring.outcomes`，
+  实例仍会起来但没有文件工具。
+- **`D21` 的 `tools_shell` 直接复用 `keep` 这条路**：单工具禁用不需要再发明第二套机制，
+  `shell.exec` 只有一个名字，但形态完全一致。同时注意 `tools_shell` **不进**
+  `test_builtin_no_privilege.py::_READ_ONLY_BUILTIN_PACKAGES`——它如实声明 `shell` 权限，
+  与 `tools_fs` 声明 `fs:read`/`fs:write` 同理。
+- **`SideEffect.UNKNOWN` 在 `D21` 才第一次真的出现**。`tools_fs` 的失败全部发生在落盘之前
+  （临时文件 + `os.replace`），因此它一次 `UNKNOWN` 都不产出；`shell.exec` 的取消宽限期用尽
+  是那个取值的正主（`EDG-407`），别照抄 `base.FsTool` 里「折出来的失败一律 `NONE`」那一句。
+- **路径守卫可以直接复用**：`shell.exec` 的 cwd 要限定在 workspace，`tools_fs.WorkspaceGuard`
+  就是那道门。但它在 `builtins/tools_fs/` 里，而 `builtins/` 之间互相 import 是否可接受要先
+  确认（`R4` 只管 `builtins → kernel`）；不确定就照 §4「优先重复而非过早抽象」各写一份，
+  两份由一条对照测试钉住——与 `estimate_tokens` 在 `context_basic` 与 `context_builder` 里
+  各写一份是同一种做法。
 
 `D19` 留下的、`D23`/`D26` 必须用到的事实：
 
@@ -1389,7 +1481,7 @@
   （`D00` 之前就存在），不是新层引入的。
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅   D20– ⬜（尚未开始）
+D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅   D21– ⬜（尚未开始）
 
 ## 本目录文档分类
 

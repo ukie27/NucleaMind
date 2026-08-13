@@ -44,7 +44,19 @@ from nucleamind.kernel.registry import (
 )
 from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginContext, PluginManifest
 
-__all__ = ["Wiring", "builtin_provider", "to_declaration", "to_load_request", "wire_capabilities"]
+__all__ = [
+    "CapabilityFilter",
+    "Wiring",
+    "builtin_provider",
+    "to_declaration",
+    "to_load_request",
+    "wire_capabilities",
+]
+
+#: 「这条能力声明这次还算数吗」。装配根按配置回答，`to_load_request()` 据此裁剪声明
+#: （`TOL-006`，见那里的 docstring）。拿到整份 manifest 而不只是 `CapabilityDecl`，
+#: 是因为回答这个问题需要知道是谁的配置块。
+CapabilityFilter = Callable[[PluginManifest, CapabilityDecl], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,17 +95,34 @@ def to_declaration(decl: CapabilityDecl) -> CapabilityDeclaration:
     )
 
 
-def to_load_request(manifest: PluginManifest, provider: ProviderId) -> LoadRequest:
+def to_load_request(
+    manifest: PluginManifest,
+    provider: ProviderId,
+    *,
+    keep: CapabilityFilter | None = None,
+) -> LoadRequest:
     """把一份 manifest 投影成 kernel 认识的加载请求。
 
     `critical` 是提供方级的，Host 会把它灌进 `RegisteredHook` 与
     `RegisteredContextProvider`——`kernel/` 不认识 manifest，而 `CTX-005`/`PLG-004`
     的分叉必须在 kernel 里判。
+
+    **`keep` 是 `TOL-006` 的落点**（`D20`）。`CapabilityHost` 要求 manifest 声明的每一项
+    都真的被注册，而「按名字单独禁用一个工具」要求被禁用的那项从 registry 里消失——静态
+    manifest 无法按配置少声明一项，于是由这里裁掉。裁剪与 `setup()` 的注册决定必须**同源
+    于同一份配置**（`builtins/tools_fs` 导出 `enabled_tool_names()` 正是为此），否则
+    `finish()` 会以 `PLUGIN_LOAD_FAILED` 报「声明了却没注册」——那个报错是对的。
+
+    刻意**不**在这里读配置：装配根才知道每个提供方的配置块长什么样，而 `runtime/wiring.py`
+    的职责是翻译而不是决策。`keep` 为 `None` 时行为与 `D16` 完全一致。
     """
+    declarations = manifest.capabilities
+    if keep is not None:
+        declarations = tuple(decl for decl in declarations if keep(manifest, decl))
     return LoadRequest(
         provider=provider,
         setup=manifest.setup,
-        declarations=tuple(to_declaration(decl) for decl in manifest.capabilities),
+        declarations=tuple(to_declaration(decl) for decl in declarations),
         critical=manifest.critical,
     )
 
@@ -105,6 +134,7 @@ async def wire_capabilities(
     provider_for: Callable[[PluginManifest], ProviderId] = builtin_provider,
     resolve_setup: Callable[[str], SetupFn] = import_setup,
     disabled: Mapping[ProviderId, str] | None = None,
+    keep: CapabilityFilter | None = None,
 ) -> Wiring:
     """注册全部 manifest 声明的能力 → 解析覆盖 → 冻结，返回装配产物。
 
@@ -112,11 +142,17 @@ async def wire_capabilities(
     形状）。`context_for` 必填：`D16` 还没有生产级 `PluginContext`（那是 `D26`），
     给一个默认值等于邀请别人把无权限的桩子带进生产。
 
+    `keep` 按配置裁掉本次不生效的能力声明（`TOL-006`，见 `to_load_request()`）。它对
+    每一份 manifest 一视同仁——`D21` 的 `tools_shell` 与第三方工具插件走同一条路，不存在
+    「tools_fs 专用」的裁剪。
+
     **异常约定**：`critical=True` 的提供方加载失败时原样抛出；其余失败记进
     `Wiring.outcomes`。覆盖冲突不抛，进 `report.failures` 由调用方处置。
     """
     registry = CapabilityRegistry()
-    requests = [to_load_request(manifest, provider_for(manifest)) for manifest in manifests]
+    requests = [
+        to_load_request(manifest, provider_for(manifest), keep=keep) for manifest in manifests
+    ]
 
     def host_for(batch: RegistrationBatch, request: LoadRequest) -> CapabilityHost[PluginContext]:
         host = CapabilityHost(
