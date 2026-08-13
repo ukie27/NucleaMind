@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 6 开箱可用**已收口**（`D00`–`D24` 均已完成，需求 §16.1 达成，下一步 `D25`）
+- 当前阶段：阶段 7 Plugin Runtime 开工（`D00`–`D25` 均已完成，下一步 `D26`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1293,8 +1293,68 @@
     真实 `nm init`（0）/ 重复 `nm init`（3）在开发机上跑通。
     **需求 §16.1 的五条至此逐条有对应用例，这是对外可宣称「可用」的第一个节点。**
 
-## 正在进行
+- **`D25` Manifest 与插件发现**（`kernel/plugins/discovery.py` 约 300 行 +
+  `runtime/inventory.py` 约 270 行 + `kernel/config/` 两处小改 + `runtime/bootstrap.py` 接线
+  + `tests/{kernel/test_discovery,runtime/test_inventory}.py` 与 `test_bootstrap.py` 共
+  43 个新用例）：
+  - **本轮拍板的三件事**，逐条记在下面。
+  - **① 不交付开发方案点名的 `kernel/plugins/manifest.py`**。manifest 的类型与校验自
+    `D05` 起就在 `sdk/manifest.py`，而 `R2` 禁止 `kernel/` import `sdk/`——在 kernel 侧
+    再写一份就是**第二套 manifest 校验**，那正是 `D06` 定下要避免的事。改成 `D16` 的
+    做法：机制（entry point 枚举、路径扫描、取回**原始**数据）在
+    `kernel/plugins/discovery.py`，翻译与判定（`parse_manifest` → id/平台/`sdk_range`）在
+    `runtime/inventory.py`（`R5` 的落点，与 `wiring.py` / `introspection.py` 同一条理由）。
+    已回写技术方案 §7.1。
+  - **② 「未启用即不导入」靠「候选 id 先于 manifest 可知」成立**，不是靠纪律。三条来源的
+    候选 id 分别是 entry point 的 **name**、目录名与 `.py` 文件名，都不需要读、更不需要
+    导入 manifest，因此启用判定发生在 `read_candidate()` **之前**。代价是 entry point 的
+    name 必须等于 manifest 里的 `id`，对不上即失败——静默以 manifest 为准会让
+    `plugins.enabled` 指不到任何东西，而用户看到的现象是「我明明启用了它」。
+    可观察的后果：未启用候选的 `version` 是**空串**，那不是漏填而是这条设计的证据。
+  - **③ 配置新增 `plugins.enabled`，键名沿用已发布的 `search_paths`**（技术方案原文写的是
+    `plugins.paths`，`D23` 已经发过 `search_paths`，不改名）。`enabled` 决定「这个候选要不要
+    进加载阶段」，既有的 `disable` 仍是**按提供方禁用**（对内建同样有效），两张表都写了时
+    **`disable` 胜出**。`RESERVED_PLUGIN_KEYS` 因此是三个。
+  - **`enabled` 不是一个没人读的键**（`plugin_blocks.py` 立过这条规矩）：本轮把清单接到
+    `Diagnostics.plugins_source` 上（README 点名的那条），`/plugins` 与 `D29` 的
+    `nm plugins` 从此列得出候选、跳过原因与失败。**只发现、不加载**——`setup` 指向一个
+    根本不存在的模块时实例照样起来，两阶段加载是 `D27`。
+  - **`PluginStatus` 补了一个 `reason` 字段**。`DISABLED` 至少有三个来源（没列进 `enabled` /
+    列进了 `disable` / 平台不匹配），而 `PluginState` 刻意不为它们各加一个取值（`D12` 定死
+    「不发明第二套生命周期 taxonomy」），差别因此落在这一行自由文本上。已校验但尚未加载
+    仍是 `DISCOVERED`——`LOADED` 要等 `D27` 真的跑过 `setup`。
+  - **不扫描 `InstanceLayout.plugins_dir`**：那是插件的**状态**目录（`D17` 起就在用），
+    同时当成代码来源会让一个只写了状态的子目录看起来像一个装错了的插件。搜索路径只有
+    `plugins.search_paths` 一条来源，相对路径按**实例目录**解析（用户写 `"./my-plugins"`
+    时「相对谁」的唯一合理答案是那份配置所在的目录，不是 `nm` 的 cwd）。
+  - **不兼容与不匹配是两回事**：`sdk_range` 对不上是**失败**（`PLUGIN_SDK_INCOMPATIBLE`，
+    不带病加载，`SDK-005`）；平台不匹配只是**跳过**（用户什么都不用改，换个平台就生效）。
+    跨来源重复 id 时**各方都不生效**并记一条 `PLUGIN_REGISTRATION_CONFLICT`，与
+    `kernel/registry` 的冲突语义一致；搜索路径不存在是**失败而不是静默跳过**——那是用户
+    显式写下的一条配置，静默忽略会让「我的插件怎么没被发现」查不出原因。
+  - **单文件插件用 `spec_from_file_location` 加载，不改 `sys.path`、不登记
+    `sys.modules`**：搜索路径是用户随手指的目录，把它塞进导入路径会让那里的任何 `.py`
+    都能被后续 `import` 命中。导入期异常折成 `PLUGIN_LOAD_FAILED` 且**只放类型名不放
+    异常消息**（`D13` 的先例，有哨兵用例）。
+  - **两条自证用例**：「发现阶段不导入任何东西」旁边有一条「真的去读时那份模块**必须**
+    被执行」——否则前一条断言在任何实现下都会通过。20 个未启用 entry point 的用例断言
+    0 次导入 + 一个很松的墙钟上界（`NFR-401`）。
+  - **未新增 `ErrorCode`**（`PLUGIN_SDK_INCOMPATIBLE` / `PLUGIN_MANIFEST_UNSUPPORTED` /
+    `PLUGIN_LOAD_FAILED` / `PLUGIN_REGISTRATION_CONFLICT` / `CONFIG_INVALID` 够用），
+    **未新增 `EventName`**（发现发 `plugin.discovered`、失败发 `plugin.failed`，载荷第一个键
+    与内建那次发布同名）。
+  - 验收：新层十个测试目录共 **2017 个用例全绿**（`D24` 收口时 1974）。`ruff check`
+    （src + tests）、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `legacy_debt --check` 未变、`check_startup_cost --check` 通过——`bootstrap+start`
+    在 D25 前后都是 185–196 ms，发现阶段没有可测量的开销（`startup_ms` 的告警仍是
+    `D24` 记的那条 `import httpx`）。新层 `Any` 数仍为 0。语句覆盖率
+    `runtime/inventory.py` **100%**、`kernel/plugins/discovery.py` **96%**
+    （未覆盖的 5 行全是防御性分支：`iterdir` 的 `OSError`、`spec_from_file_location`
+    交回 `None`、`match` 的兜底）。完整 `tests/legacy`
+    16 failed / 4806 passed / 30 skipped，失败全部落在既有那批网络（`test_web_fetch_security`）
+    与 oauth-cli-kit 家族，落在文档记的 14–18 区间内。
 
+## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
   `D07` 已完成，旧实现行为基线就位；`D08` 已完成，取消与预算就位；`D09` 已完成，
@@ -1337,11 +1397,16 @@
   `runtime/first_run.py` 唯一写入点、`nm init`），缺凭据的错误补上了「哪个文件」这一半，
   `ToolExecutor.orphans` 接上报告，`check_startup_cost.py` 增加冷启动到可接受输入指标，
   `tests/e2e/` 逐条对应需求 §16.1 的五个里程碑，**阶段 6 收口、开箱可用达成**。
+  `D25` 已完成，插件发现落地（`kernel/plugins/discovery.py` 的两条显式来源 +
+  `runtime/inventory.py` 的 manifest 翻译与判定 + `plugins.enabled`），
+  `Diagnostics.plugins_source` 从此有了真实现，**阶段 7 开工**；开发方案点名的
+  `kernel/plugins/manifest.py` 不交付（`R2` 禁止 kernel 认识 manifest，理由见上）。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
   `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
-  `bootstrap.py`、`first_run.py`、`instance.py` 与 `cli/`；`embed/` 已落地薄门面。
+  `bootstrap.py`、`first_run.py`、`inventory.py`、`instance.py` 与 `cli/`；
+  `embed/` 已落地薄门面。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1389,13 +1454,34 @@
 
 ## 下一步工作
 
-1. **`D25` Manifest 与插件发现**（阶段 7 开工）：`kernel/plugins/manifest.py`、
-   `kernel/plugins/discovery.py`。**缝已经留好**：`plugins.<id>.config` 的逐字段校验
-   （manifest 的 `config_schema`）是阶段 A 的活，形状校验已经在
-   `kernel/config/plugin_blocks.py`；外部 loader 是 `builtin_loader.py` 的**同级调用方**
-   而不是第二份实现（`SDK-007`）。
-2. `Diagnostics.plugins_source` 仍是默认的空元组，`nm plugins` / `nm capabilities`
-   （`D29`）也还没有——两件事都要等真的有外部插件才有内容可列。
+1. **`D26` 权限门面与生产级 `PluginContext`**（阶段 7 第二步）：`permissions.json` 的
+   用户批准叠在 `grants_of(manifest)` 之前；`fs` / `net` / `shell` 三个访问器目前抛
+   `CAPABILITY_MISSING` 并指向 `D26`，`spawn_task` 也在那里。
+2. **`D27` 两阶段加载**：`D25` 已经把 `PluginInventory.discovered` 摆好了——那就是
+   加载计划的输入。外部 loader 是 `builtin_loader.load_into()` 的**同级调用方**
+   （`SDK-007`），经 `runtime/wiring.py` 的 `to_load_request()` 翻译，**不要**写第二条
+   注册路径。阶段 A 还欠 A4 依赖拓扑、A5 `config_schema` 逐字段校验、A6 权限授权、
+   A7 `state_version`。
+3. `nm plugins` / `nm capabilities`（`D29`）仍然没有；数据源已经齐了
+   （`AgentInstance.diagnostics`），与会话内的 `/plugins` 共用。
+
+`D25` 留下的、`D26`–`D29` 必须用到的事实：
+
+- **`plugins.enabled` 是外部插件的总开关**，`plugins.disable` 压过它。前者是 `D25` 新增的
+  保留键，后者仍是既有的「按提供方禁用」（对内建同样有效）。`RESERVED_PLUGIN_KEYS`
+  现在是三个，改它要同时改 `SECTION_SPECS["plugins"]`。
+- **`D27` 的加载计划输入是 `build_inventory().discovered`**，每一项带着候选（来源、位置）
+  与已校验的 manifest。**不要在 `D27` 里重新发现一遍**，也不要把发现挪进加载——「未启用
+  即零导入开销」是靠「先筛后读」成立的。
+- **entry point 的 name 必须等于 manifest 的 id**，这条判定在
+  `runtime/inventory.py::_validate`。`D30` 写插件模板与文档时要写明这一条。
+- **`PluginStatus.reason` 是自由文本**，取值来自 `inventory._SKIP_REASONS` 那张表。
+  `D29` 渲染 `nm plugins` 时直接印它，不要在 CLI 侧再写一份原因文案。
+- **`kernel/plugins/discovery.py` 不认识 manifest 类型**（`R2`），它交出的是 `object`。
+  要给发现加一种来源，加在那里；要给校验加一条规则，加在 `runtime/inventory.py`。
+  分界线与 `builtin_loader` / `wiring` 那次完全相同。
+- **`import nucleamind.runtime.inventory` 会拉进 pydantic**（`sdk/manifest.py`）。
+  它只在装配根上被 import，`nm config show` 这类路径够不着——加新调用点前想一下这件事。
 
 `D24` 留下的、`D25`–`D29` 必须用到的事实：
 
@@ -1442,9 +1528,9 @@
   而不是另起一套任务表。
 - **`ToolExecutor.orphans` 仍然没有调用方**（`D14` 留的那条）：实例停止时应当报告它。
   `AgentInstance.stop()` 是它唯一合理的落点，`D24` 或 `D26` 顺手接上即可。
-- **`Diagnostics.plugins_source` 仍是默认的空元组**：`nm plugins` / `/plugins` 因此列不出
-  任何东西，那是对的——现在确实一个外部插件都没有。`D25`–`D27` 落地后在
-  `runtime/bootstrap.py` 里给它传一个真实现，**不要**再写第二套查询。
+- ~~**`Diagnostics.plugins_source` 仍是默认的空元组**~~ **`D25` 已接上**：数据源是
+  `runtime/inventory.py::PluginInventory.statuses`，在 `runtime/bootstrap.py` 里传入。
+  `D27` 加载完插件后应当**更新**那一份状态，而不是再写第二套查询。
 - **`nm plugins` / `nm capabilities` 还没有**（`D29`）。`runtime/cli/commands/` 里加一个
   模块即可，数据源是 `AgentInstance.diagnostics`，与会话内的 `/plugins` 共用。
 - **Windows 上有两条已知的平台差异**：控制台编码不是 UTF-8（输出遇到编不出来的字符会
@@ -1905,8 +1991,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅
-D24– ⬜（尚未开始）
+D22 ✅  D23 ✅  D24 ✅  D25 ✅
+D26– ⬜（尚未开始）
 
 ## 本目录文档分类
 

@@ -45,7 +45,13 @@ class PluginState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PluginStatus:
-    """单个插件的诊断视图（开发方案 `D12`：状态、版本、已注册能力、失败原因与阶段）。"""
+    """单个插件的诊断视图（开发方案 `D12`：状态、版本、已注册能力、失败原因与阶段）。
+
+    `reason` 是 `state` 的补充说明（`D25` 补）：`DISABLED` 至少有三个来源——没列进
+    `plugins.enabled`、列进了 `plugins.disable`、平台不匹配，而用户要做的事各不相同。
+    `PluginState` 刻意不为它们各加一个取值（那就是在发明第二套生命周期 taxonomy），
+    于是差别落在这一行自由文本上。空串表示无需补充。
+    """
 
     plugin_id: PluginId
     version: str
@@ -53,6 +59,7 @@ class PluginStatus:
     capabilities: tuple[str, ...] = ()
     failure: NucleaError | None = None
     failed_phase: str | None = None
+    reason: str = ""
 
     def to_json(self) -> dict[str, JsonValue]:
         return {
@@ -62,6 +69,7 @@ class PluginStatus:
             "capabilities": list(self.capabilities),
             "failure": None if self.failure is None else error_to_json(self.failure),
             "failed_phase": self.failed_phase,
+            "reason": self.reason,
         }
 
 

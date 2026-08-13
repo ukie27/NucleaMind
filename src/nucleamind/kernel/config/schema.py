@@ -141,6 +141,7 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
         "dedup_ttl_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_DEDUP_TTL_MS),
     },
     "plugins": {
+        "enabled": FieldSpec(FieldKind.STR_LIST, ()),
         "disable": FieldSpec(FieldKind.STR_LIST, ()),
         "search_paths": FieldSpec(FieldKind.STR_LIST, ()),
     },
@@ -246,15 +247,20 @@ class WorkspaceSection:
 
 @dataclass(frozen=True, slots=True)
 class PluginsSection:
-    """插件加载的开关与逐插件的配置块。真正的加载在 `D25`，这里只固定配置形状。
+    """插件发现与加载的开关，以及逐插件的配置块。
 
-    `disable` / `search_paths` 是**保留键**，`plugins` 小节里其余的键都是插件 id
-    （技术方案 §6.7 的 `plugins.<plugin_id>.config`），形状校验在 `plugin_blocks.py`。
+    `enabled` / `disable` / `search_paths` 是**保留键**，`plugins` 小节里其余的键都是
+    插件 id（技术方案 §6.7 的 `plugins.<plugin_id>.config`），形状校验在 `plugin_blocks.py`。
     """
 
-    #: 显式禁用的插件 id。id 形状由 `D25` 用 `contracts` 的解析器校验。
+    #: 显式启用的插件 id（`D25`，技术方案 §7.1「发现与启用分离」）。**不在这张表里的
+    #: 候选连 manifest 都不会被读**，「安装 ≠ 启用」（`DST-002`）因此没有绕行路径。
+    enabled: tuple[str, ...] = ()
+    #: 显式禁用的提供方 id。它压过 `enabled`，也对内建生效（`resolve(disabled=...)`）。
     disable: tuple[str, ...] = ()
-    #: 额外的插件搜索路径，在 `InstanceLayout.plugins_dir` 之外。
+    #: 插件搜索路径（技术方案 §7.1 的 `plugins.paths`；键名沿用 `D23` 已发布的这一个）。
+    #: 每条路径下的直接子项：含 `plugin.toml` 的目录，或单个 `.py`。**不含
+    #: `InstanceLayout.plugins_dir`**——那是插件的状态目录，不是代码来源。
     search_paths: tuple[str, ...] = ()
     #: 插件 id -> 它的 `{config, secrets}`。装配根按 id 取，取不到就给空块。
     entries: Mapping[str, PluginEntry] = blocks.NO_PLUGIN_ENTRIES
@@ -319,6 +325,7 @@ class NucleaConfig:
             },
             "context": {"provider_timeout_ms": self.context.provider_timeout_ms},
             "plugins": {
+                "enabled": list(self.plugins.enabled),
                 "disable": list(self.plugins.disable),
                 "search_paths": list(self.plugins.search_paths),
                 **blocks.entries_to_json(self.plugins.entries),
@@ -477,6 +484,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             ),
         ),
         plugins=PluginsSection(
+            enabled=str_tuple_at(plugins, "enabled"),
             disable=str_tuple_at(plugins, "disable"),
             search_paths=str_tuple_at(plugins, "search_paths"),
             entries=plugin_entries,

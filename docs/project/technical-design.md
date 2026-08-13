@@ -1026,7 +1026,7 @@ asyncio 抢占不了同步回调，因此「超时隔离」的形态是**测量 
 | 来源 | 用途 | 形式 |
 | --- | --- | --- |
 | Python entry point 组 `nucleamind.plugins` | 已安装的正式插件包 | `name = "pkg.module:MANIFEST"` |
-| 配置中的显式路径 `plugins.paths` | 本地开发、单文件插件 | 目录含 `plugin.toml`，或单个 `.py` 暴露 `MANIFEST` |
+| 配置中的显式路径 `plugins.search_paths` | 本地开发、单文件插件 | 目录含 `plugin.toml`，或单个 `.py` 暴露 `MANIFEST` |
 
 不采用的方案及理由：
 
@@ -1035,9 +1035,26 @@ asyncio 抢占不了同步回调，因此「超时隔离」的形态是**测量 
   「安装 ≠ 启用」的解耦（`DST-002`）。
 - nanobot 现有的 `pkgutil` 扫描只保留在旧路径中，新体系内建能力用静态清单，
   行为确定且可读（「显式优于魔法」）。
+- **不扫描 `InstanceLayout.plugins_dir`**（`D25` 补）：那是插件的**状态**目录
+  （`<instance>/plugins/<id>/`），把它同时当成代码来源会让一个只写了状态的子目录看起来
+  像一个装错了的插件。
 
 **发现与启用分离**：发现产出候选列表；只有 `plugins.enabled` 中显式列出的插件才会进入
 加载阶段。未列出的插件不导入其模块，因此不产生启动开销。
+
+`D25` 落地时的两处细化：
+
+- 配置键名沿用 `D23` 已发布的 `plugins.search_paths`（原文写的是 `plugins.paths`），
+  新增的只有 `plugins.enabled`。
+- **候选 id 在读 manifest 之前就已知**（entry point 的 name / 目录名 / `.py` 文件名），
+  「未启用即不导入」因此是没有路径而不是一条纪律。代价是 entry point 的 name 必须等于
+  manifest 里的 `id`，对不上即失败——静默以 manifest 为准会让 `plugins.enabled`
+  指不到任何东西。
+- 实现分两层：机制（枚举、扫描、取回原始数据）在 `kernel/plugins/discovery.py`，
+  manifest 的解析与判定在 `runtime/inventory.py`。**开发方案点名的
+  `kernel/plugins/manifest.py` 不交付**：manifest 的类型与校验自 `D05` 起在 `sdk/`，
+  而 `R2` 禁止 `kernel/` import 它，在 kernel 侧再写一份就是第二套校验（`D06` 的约定）。
+  这与 `D16` 让 `builtin_loader.py` 对 `LoadRequest` 泛化是同一种做法。
 
 ### 7.2 Manifest
 

@@ -32,11 +32,13 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `runtime/{bootstrap,instance,plugin_context}.py` + `runtime/cli/` + `embed/`），
   **阶段 5 收口**；`D24` 已落地首次运行体验与开箱可用验收
   （`kernel/config/{scaffold,json_schema}.py` + `runtime/first_run.py` + `nm init` +
-  `tests/e2e/`），**阶段 6 收口、需求 §16.1 达成**，下一步 `D25`。
+  `tests/e2e/`），**阶段 6 收口、需求 §16.1 达成**；`D25` 已落地插件发现
+  （`kernel/plugins/discovery.py` + `runtime/inventory.py` + `plugins.enabled`），
+  **阶段 7 开工**，下一步 `D26`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
-  `first_run.py`、`instance.py` 与 `cli/`，`embed/` 已落地薄门面，`kernel/` 有
-  `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
+  `first_run.py`、`inventory.py`、`instance.py` 与 `cli/`，`embed/` 已落地薄门面，
+  `kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
   `nm init` / `nm run` / `nm config show` / `nm session` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
@@ -231,7 +233,7 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `getaddrinfo` 的**目标**、回环放行。别改成拦 `socket.socket` 的构造——Windows 的
   `ProactorEventLoop` 用 `socketpair()` 做 self-pipe，那样只会证明事件循环起不来。
 
-`kernel/plugins/`（`D16`）是能力注册的唯一通道。写内建或插件前记住四条：
+`kernel/plugins/`（`D16`、`D25`）是能力注册与插件发现的唯一通道。写内建或插件前记住六条：
 
 - **`CapabilityHost` 是唯一的 `NucleaAPI` 实现**，内建与外部插件共用它（`SDK-007`、
   `BAS-005`）。它不继承 `NucleaAPI`（`R2` 禁止 `kernel/` import `sdk/`），一致性由
@@ -242,6 +244,13 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `capabilities` 是有约束力的全集，`overrides` 只能从那里来（`EDG-102`）。
 - **manifest 里别写 `priority`**：默认值 100 会被原样采纳，而内建基准是 0
   （`to_declaration()` 用 `model_fields_set` 判断作者写没写）。
+- **发现（`discovery.py`）不认识 manifest 类型**，它只交出 `object`：manifest 的解析与
+  判定在 `runtime/inventory.py`（`R5`），`kernel/` 里没有第二套 manifest 校验。加一种
+  **来源**改前者，加一条**校验规则**改后者。
+- **「未启用即不导入」靠「候选 id 先于 manifest 可知」成立**（entry point 的 name /
+  目录名 / `.py` 文件名），启用判定发生在 `read_candidate()` 之前。因此 entry point 的
+  name 必须等于 manifest 的 `id`，对不上即失败；未启用候选的 `version` 是空串。
+  `plugins.enabled` 是外部插件的总开关，`plugins.disable`（按提供方，对内建也有效）压过它。
 
 `builtins/`（`D17` 起）的落地形态只有一种：一份 `PluginManifest` 追加进
 `builtins/registry.py::BUILTIN_MANIFESTS`，加一个 `setup(api)`。五条通用约束：

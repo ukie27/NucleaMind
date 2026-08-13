@@ -2,8 +2,8 @@
 
 职责：按 §10.1 的十步装配一个实例——取锁、加载配置、挑选内建清单、注册能力、解析覆盖、
 校验必需能力、装出 `OrchestratorDeps` 与两个门面。
-不负责：跑它（`instance.py`）、解析 argv（`runtime/cli/`）、发现外部插件（`D25`/`D27`）、
-生成首次运行的配置（`D24`）。
+不负责：跑它（`instance.py`）、解析 argv（`runtime/cli/`）、加载外部插件（`D27`；
+`D25` 的发现只到「候选与 manifest 校验」为止，产出接在诊断上）、生成首次运行的配置（`D24`）。
 
 **内建的配置块由这里合成**（`CFG-002` 的另一面）：`R4` 禁止 `builtins/` 够到 `kernel/`，
 因此「会话写哪个目录」「workspace 的根在哪」「命令前缀是什么」只能由装配根经
@@ -83,6 +83,7 @@ from nucleamind.sdk import CapabilityDecl, PluginContext, PluginManifest
 
 from .instance import AgentInstance, Closer
 from .introspection import build_instance_view, build_turn_control
+from .inventory import PluginInventory, build_inventory
 from .plugin_context import PluginGrants, PluginRuntime, RuntimePluginContext, build_plugin_context
 from .wiring import Wiring, wire_capabilities
 
@@ -166,6 +167,45 @@ def grants_of(manifest: PluginManifest) -> PluginGrants:
         decl.target for decl in manifest.permissions if decl.kind is PermissionKind.SECRET
     }
     return PluginGrants(kinds=frozenset(kinds), secrets=frozenset(secrets))
+
+
+def _discover_plugins(
+    config: NucleaConfig, layout: InstanceLayout, bus: EventBus
+) -> PluginInventory:
+    """§10.1 步骤 3b：发现外部插件并把结果发成事件（`D25`）。
+
+    **只发现、不加载**：`plugins.enabled` 之外的候选连 manifest 都不会被读，因此未启用的
+    插件不产生任何导入开销（`NFR-401`、`DST-002`）。真正的两阶段加载是 `D27`。
+
+    搜索路径按实例目录解析相对路径——用户在 `config.json` 里写 `"./my-plugins"` 时，
+    「相对谁」的唯一合理答案是那份配置所在的目录，而不是 `nm` 的当前工作目录。
+    """
+    inventory = build_inventory(
+        enabled=config.plugins.enabled,
+        disabled=config.plugins.disable,
+        search_paths=[
+            path if (path := Path(raw)).is_absolute() else layout.root / raw
+            for raw in config.plugins.search_paths
+        ],
+    )
+    for item in inventory.discovered:
+        bus.publish(
+            EventName.PLUGIN_DISCOVERED,
+            # 载荷的第一个键与内建那次发布同名（`_wire` 里的 `plugin`）：同一个事件名
+            # 出现两种形状，按事件回放的诊断就要为它写两个分支。
+            payload={
+                "plugin": item.manifest.id,
+                "version": item.manifest.version,
+                "source": item.candidate.kind.value,
+            },
+        )
+    for failure in inventory.failures:
+        bus.publish(
+            EventName.PLUGIN_FAILED,
+            payload={"plugin": failure.plugin_id, "phase": "discovery"},
+            error=failure.error,
+        )
+    return inventory
 
 
 def _select_manifests(
@@ -373,6 +413,10 @@ async def _bootstrap_locked(
     # 3 内建清单（跳过被禁用项，CLI 入口除外）
     selected = _select_manifests(manifests, config)
 
+    # 3b 外部插件发现（`D25`）。**只发现、不加载**：加载是 `D27`。产出接到诊断上，
+    # `/plugins` 与 `nm plugins` 因此列得出候选、跳过原因与失败。
+    inventory = _discover_plugins(config, layout, bus)
+
     # 4–7 注册 → 解析覆盖 → 冻结。外部插件的发现是 `D25`/`D27`；这条路径两者共用。
     runtime = PluginRuntime()
     contexts: list[RuntimePluginContext] = []
@@ -420,6 +464,7 @@ async def _bootstrap_locked(
         bus=bus,
         ring=ring,
         wiring=wiring,
+        inventory=inventory,
         sessions=sessions,
         model=model,
         model_id=model_id,
@@ -449,6 +494,7 @@ def _assemble(
     bus: EventBus,
     ring: MemoryRingSink,
     wiring: Wiring,
+    inventory: PluginInventory,
     sessions: SessionStore,
     model: ModelProvider,
     model_id: str,
@@ -518,7 +564,13 @@ def _assemble(
         deliver=deliver,
     )
     orchestrator = TurnOrchestrator(deps)
-    diagnostics = Diagnostics(events=ring, capabilities_source=lambda: wiring.report)
+    diagnostics = Diagnostics(
+        events=ring,
+        capabilities_source=lambda: wiring.report,
+        # `D25`：`/plugins` 的数据源。内建不出现在这里——它们是 `Builtin()` 提供方而不是
+        # 插件，`/capabilities` 才是回答「这项能力谁提供的」的地方。
+        plugins_source=inventory.statuses,
+    )
     # `D22` 的两个门面：命令索引与配置文档都用 callable 取，理由见 `introspection.py`。
     # 配置文档交的是 `${VAR}` 字面量那一棵树（`/config` 的脱敏靠这条结构性保证）。
     runtime.ready(
