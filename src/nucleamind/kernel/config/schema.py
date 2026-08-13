@@ -31,8 +31,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Mapping, Sequence
 
 from ...contracts import ErrorCode, NucleaError
+from . import plugin_blocks as blocks
 from .fields import FieldKind, FieldSpec, coerce_value, issue, suggest
 from .merge import pointer_of
+from .plugin_blocks import PluginEntry
 
 if TYPE_CHECKING:
     from ...contracts import JsonValue
@@ -46,6 +48,7 @@ __all__ = [
     "LoggingSection",
     "ModelSection",
     "NucleaConfig",
+    "PluginEntry",
     "PluginsSection",
     "RoutingSection",
     "TurnSection",
@@ -220,12 +223,22 @@ class WorkspaceSection:
 
 @dataclass(frozen=True, slots=True)
 class PluginsSection:
-    """插件加载的开关。真正的加载在 `D25`，这里只固定配置形状。"""
+    """插件加载的开关与逐插件的配置块。真正的加载在 `D25`，这里只固定配置形状。
+
+    `disable` / `search_paths` 是**保留键**，`plugins` 小节里其余的键都是插件 id
+    （技术方案 §6.7 的 `plugins.<plugin_id>.config`），形状校验在 `plugin_blocks.py`。
+    """
 
     #: 显式禁用的插件 id。id 形状由 `D25` 用 `contracts` 的解析器校验。
     disable: tuple[str, ...] = ()
     #: 额外的插件搜索路径，在 `InstanceLayout.plugins_dir` 之外。
     search_paths: tuple[str, ...] = ()
+    #: 插件 id -> 它的 `{config, secrets}`。装配根按 id 取，取不到就给空块。
+    entries: Mapping[str, PluginEntry] = blocks.NO_PLUGIN_ENTRIES
+
+    def entry(self, plugin_id: str) -> PluginEntry:
+        """取一个插件的条目。**没配过不是错误**——每个字段都有默认值的插件应当免配置可用。"""
+        return self.entries.get(plugin_id, PluginEntry())
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +298,7 @@ class NucleaConfig:
             "plugins": {
                 "disable": list(self.plugins.disable),
                 "search_paths": list(self.plugins.search_paths),
+                **blocks.entries_to_json(self.plugins.entries),
             },
             "model": {"provider": self.model.provider, "name": self.model.name},
             "logging": {"level": self.logging.level, "file_enabled": self.logging.file_enabled},
@@ -323,15 +337,19 @@ def _validate_section(
         return {}
 
     values: dict[str, JsonValue] = {}
-    for key in raw:
-        if key not in specs:
-            issues.append(
-                issue(
-                    ErrorCode.CONFIG_UNKNOWN_FIELD,
-                    f"未知配置字段。{suggest(key, list(specs))}",
-                    pointer_of([name, key]),
+    # `plugins` 小节里的未知键**不是**未知字段，而是插件 id（技术方案 §6.7 的
+    # `plugins.<plugin_id>.config`）。它们的形状由 `plugin_blocks.py` 校验，
+    # 因此这里不能一并报成 `CONFIG_UNKNOWN_FIELD`。
+    if name != blocks.PLUGINS_SECTION:
+        for key in raw:
+            if key not in specs:
+                issues.append(
+                    issue(
+                        ErrorCode.CONFIG_UNKNOWN_FIELD,
+                        f"未知配置字段。{suggest(key, list(specs))}",
+                        pointer_of([name, key]),
+                    )
                 )
-            )
     for field_name, spec in specs.items():
         if field_name not in raw:
             continue
@@ -399,6 +417,10 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             )
 
     sections = {name: _validate_section(name, data.get(name), issues) for name in SECTION_SPECS}
+    raw_plugins = data.get(blocks.PLUGINS_SECTION)
+    plugin_entries = (
+        blocks.validate_plugin_entries(raw_plugins, issues) if isinstance(raw_plugins, Mapping) else {}
+    )
 
     if issues:
         errors: list[JsonValue] = [
@@ -462,6 +484,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
         plugins=PluginsSection(
             disable=_str_tuple_at(plugins, "disable"),
             search_paths=_str_tuple_at(plugins, "search_paths"),
+            entries=plugin_entries,
         ),
         model=ModelSection(
             provider=_opt_str_at(model, "provider"),

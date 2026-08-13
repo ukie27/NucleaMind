@@ -1,0 +1,311 @@
+"""生产级 `PluginContext`：内建与插件在运行期真正拿到的那个受限运行时（技术方案 §7.5）。
+
+职责：把实例的配置块、私有状态目录、事件总线、凭据引用与 `D22` 的两个门面
+（`InstanceView` / `TurnControl`）装成一个 `PluginContext`，并按 manifest 声明的权限
+挡住四个资源访问器。
+不负责：判定**用户**是否批准了这些权限（`D26` 的 `permissions.json`）、实现 `fs` / `net`
+/ `shell` 三个门面的行为（同上）、决定谁被加载（`D25`/`D27`）。
+
+**这里是 `R5` 的落点**，与 `wiring.py` / `introspection.py` 同一条理由：`PluginContext`
+的类型在 `sdk/`，而 config 块、`InstanceLayout` 与 `EventBus` 在 `kernel/`——全项目只有
+`runtime/` 同时看得见两边。一致性靠 `build_plugin_context()` 的返回类型标注静态证明。
+
+**权限在 `D23` 等于 manifest 的声明，如实写在这里而不是假装已经做完**：`granted` 由装配根
+从 manifest 传进来，未声明的访问器抛 `PERMISSION_DENIED`（那条语义是真的）；已声明的三个
+资源门面抛 `NotImplementedError` 并指向 `D26`——六个内建一个都不用它们（`session_jsonl`
+用 `pathlib`、`model_openai` 用 httpx、`tools_shell` 自己起子进程，各自如实声明权限，见
+`D17`/`D19`/`D21`）。给它们一个能跑但没有守卫的实现，才是真的危险。
+
+**`instance` / `turns` 经一个可变持有者交下来**（`PluginRuntime`）：它们要等 registry 冻结
+与 orchestrator 装好之后才存在，而 `PluginContext` 必须在 `setup()` **之前**就交给插件。
+`D22` 的 `commands_source` 是 callable 也是同一条理由——那次是测试先发现的
+（构造时收快照会让 `/help` 永远为空）。
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from logging import Logger, getLogger
+from pathlib import Path
+
+from nucleamind.contracts import (
+    ErrorCode,
+    EventName,
+    InstanceView,
+    JsonValue,
+    NucleaError,
+    PermissionKind,
+    RuntimeEvent,
+    SecretStr,
+    TurnControl,
+)
+from nucleamind.kernel.config import resolve_text
+from nucleamind.kernel.observability import EventBus
+from nucleamind.sdk import FileAccess, HttpAccess, PluginContext, ShellAccess
+
+__all__ = [
+    "PluginEventBridge",
+    "PluginGrants",
+    "PluginRuntime",
+    "RuntimePluginContext",
+    "build_plugin_context",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class PluginGrants:
+    """一个提供方被授予的权限。
+
+    `D23` 里它等于 manifest 声明的集合，`D26` 会在这之前再叠一层用户批准
+    ——形状不必改，只是构造它的人多问一句。
+    """
+
+    kinds: frozenset[PermissionKind] = frozenset()
+    #: `secret:<name>` 的具体名字。`secret` 必须带 target（`PermissionDecl` 写死），
+    #: 因此「授予了 secret」这件事本身不足以取任何一个凭据。
+    secrets: frozenset[str] = frozenset()
+
+    def allows_secret(self, name: str) -> bool:
+        return PermissionKind.SECRET in self.kinds and name in self.secrets
+
+
+@dataclass(slots=True)
+class PluginRuntime:
+    """装配根与插件之间的**可变**交接点。
+
+    只有两个成员，且都在 registry 冻结之后才填得上。做成一个共享对象而不是给每个 ctx
+    各塞一个 setter，是为了让「实例就绪」这件事只有一个开关。
+    """
+
+    instance_view: InstanceView | None = None
+    turn_control: TurnControl | None = None
+
+    def ready(self, *, instance_view: InstanceView, turn_control: TurnControl) -> None:
+        self.instance_view = instance_view
+        self.turn_control = turn_control
+
+
+class PluginEventBridge:
+    """把插件的**异步** handler 接到 `EventBus` 的**同步**订阅面上。
+
+    `bus.publish()` 是同步的、绝不 await 订阅者（`D12` 的结论），而 `EventSubscriber` 的
+    handler 是协程。桥接方式是唯一诚实的那个：在回调里 `create_task`，没有运行中的事件
+    循环就记一次丢弃——`publish()` 会在没有 loop 的路径上被调用（`instance.starting`、
+    `nm config show`），在那里凭空起一个 loop 才是错的。
+    """
+
+    def __init__(self, bus: EventBus, plugin_id: str) -> None:
+        self._bus = bus
+        self._plugin_id = plugin_id
+        self._handlers: dict[EventName, list[Callable[[RuntimeEvent], Awaitable[None]]]] = {}
+        self._subscribed = False
+        #: 没有事件循环时被丢弃的投递数。查得到才排查得动。
+        self.dropped = 0
+        #: 已派生的任务，实例停止时由装配根一并取消。
+        self.tasks: set[asyncio.Task[None]] = set()
+
+    def subscribe(self, event: EventName, handler: Callable[[RuntimeEvent], Awaitable[None]]) -> None:
+        handlers = self._handlers.setdefault(event, [])
+        if handler in handlers:
+            return
+        handlers.append(handler)
+        if not self._subscribed:
+            self._bus.subscribe(self._deliver, name=f"plugin:{self._plugin_id}")
+            self._subscribed = True
+
+    def _deliver(self, event: RuntimeEvent) -> None:
+        handlers = self._handlers.get(event.name)
+        if not handlers:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.dropped += len(handlers)
+            return
+        for handler in handlers:
+            # `handler(event)` 的静态类型是 `Awaitable[None]`（契约签名），而
+            # `create_task` 只吃协程——`_as_coroutine` 是这条缝的唯一填法。
+            task: asyncio.Task[None] = loop.create_task(_as_coroutine(handler(event)))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+
+
+@dataclass(slots=True)
+class RuntimePluginContext:
+    """`PluginContext` 的生产实现。结构化满足契约，不继承任何宿主基类。"""
+
+    plugin_id_: str
+    config_: Mapping[str, JsonValue]
+    state_dir_: Path
+    grants: PluginGrants
+    secret_refs: Mapping[str, str]
+    bridge: PluginEventBridge
+    runtime: PluginRuntime
+    env: Mapping[str, str] | None = None
+    #: 经 `spawn_task()` 派生的任务。实例停止时由装配根取消（`EDG-104`、`EDG-105`）。
+    tasks: set[asyncio.Task[None]] = field(default_factory=set)
+
+    @property
+    def plugin_id(self) -> str:
+        return self.plugin_id_
+
+    @property
+    def config(self) -> Mapping[str, JsonValue]:
+        """**只有自己那一块**（`CFG-002`）：`plugins.<id>.config` 原样交出。"""
+        return self.config_
+
+    @property
+    def state_dir(self) -> Path:
+        """`<instance_dir>/plugins/<id>/`。**这里才创建它**——装配根不为一个可能从未写盘
+        的插件先建目录（`nm capabilities` 不该在磁盘上留痕）。"""
+        self.state_dir_.mkdir(parents=True, exist_ok=True)
+        return self.state_dir_
+
+    @property
+    def logger(self) -> Logger:
+        return getLogger(f"nucleamind.plugin.{self.plugin_id_}")
+
+    @property
+    def events(self) -> PluginEventBridge:
+        return self.bridge
+
+    def spawn_task(self, coro: Awaitable[None], *, name: str) -> None:
+        """在实例的事件循环上派生一个后台任务。
+
+        **异常约定**：没有运行中的事件循环时抛 `KERNEL_INVARIANT_VIOLATED`——`setup()`
+        在装配期同步执行，那时派生后台任务就是在赌一个还不存在的循环。
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            raise NucleaError(
+                ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                "当前没有运行中的事件循环，无法派生后台任务。",
+                detail={"plugin": self.plugin_id_, "task": name},
+            ) from exc
+        task: asyncio.Task[None] = loop.create_task(
+            _as_coroutine(coro), name=f"{self.plugin_id_}:{name}"
+        )
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    # `NucleaError.capability` 收的是 `CapabilityRef`（kind + name），而这里的主语是**提供方**
+    # 而不是某一项能力——`plugin` 键放在 `detail` 里，比硬凑一个 kind 诚实。
+    def _require(self, permission: PermissionKind) -> None:
+        if permission not in self.grants.kinds:
+            raise NucleaError(
+                ErrorCode.PERMISSION_DENIED,
+                "插件未被授予该权限。",
+                detail={"plugin": self.plugin_id_, "permission": permission.value},
+            )
+
+    def _pending(self, accessor: str) -> NucleaError:
+        return NucleaError(
+            ErrorCode.CAPABILITY_MISSING,
+            f"ctx.{accessor} 的带守卫实现尚未落地（D26）；"
+            "内建能力如实声明权限后直接使用标准库，见各自的 manifest。",
+            detail={"plugin": self.plugin_id_, "accessor": accessor},
+        )
+
+    @property
+    def fs(self) -> FileAccess:
+        self._require(PermissionKind.FS_READ)
+        raise self._pending("fs")
+
+    @property
+    def net(self) -> HttpAccess:
+        self._require(PermissionKind.NET)
+        raise self._pending("net")
+
+    @property
+    def shell(self) -> ShellAccess:
+        self._require(PermissionKind.SHELL)
+        raise self._pending("shell")
+
+    def secret(self, name: str) -> SecretStr:
+        """取一个凭据：`plugins.<id>.secrets.<name>` 的 `${VAR}` 字面量 → 环境变量。
+
+        **未授权与「授权了但没配」必须可区分**（`sdk/api.py` 写死的约定，`D19` 的
+        `model_openai` 依赖它把「去改权限」和「去补配置」两种补救分开）。变量名没导出、
+        或导出成空串，同样是 `CONFIG_SECRET_MISSING`——由 `resolve_text()` 抛出，
+        错误里只有变量名与位置（`EDG-502`）。
+        """
+        if not self.grants.allows_secret(name):
+            raise NucleaError(
+                ErrorCode.PERMISSION_DENIED,
+                "插件未被授予该凭据。",
+                detail={"plugin": self.plugin_id_, "secret": name},
+            )
+        literal = self.secret_refs.get(name)
+        if literal is None:
+            raise NucleaError(
+                ErrorCode.CONFIG_SECRET_MISSING,
+                "配置里没有这个凭据引用。",
+                detail={
+                    "plugin": self.plugin_id_,
+                    "secret": name,
+                    "pointer": f"/plugins/{self.plugin_id_}/secrets/{name}",
+                    "suggestion": f'在 config.json 里写 {{"secrets": {{"{name}": "${{VAR}}"}}}}。',
+                },
+            )
+        resolved = resolve_text(
+            literal,
+            env=self.env,
+            pointer=f"/plugins/{self.plugin_id_}/secrets/{name}",
+        )
+        # 不含 `${VAR}` 的字面量原样返回 `str`，但它按位置就是一个凭据——包起来，
+        # 免得一个直接写死的密钥因为「没有引用」而以明文出现在日志里。
+        return resolved if isinstance(resolved, SecretStr) else SecretStr(resolved)
+
+    @property
+    def instance(self) -> InstanceView:
+        view = self.runtime.instance_view
+        if view is None:
+            raise self._too_early("instance")
+        return view
+
+    @property
+    def turns(self) -> TurnControl:
+        control = self.runtime.turn_control
+        if control is None:
+            raise self._too_early("turns")
+        return control
+
+    def _too_early(self, accessor: str) -> NucleaError:
+        return NucleaError(
+            ErrorCode.KERNEL_INVARIANT_VIOLATED,
+            f"实例尚未就绪，ctx.{accessor} 在 setup() 期间不可用。",
+            detail={"plugin": self.plugin_id_, "accessor": accessor},
+        )
+
+
+async def _as_coroutine(awaitable: Awaitable[None]) -> None:
+    """`spawn_task` 收的是 `Awaitable`（契约签名），而 `create_task` 只吃协程。"""
+    await awaitable
+
+
+def build_plugin_context(
+    plugin_id: str,
+    *,
+    config: Mapping[str, JsonValue],
+    secrets: Mapping[str, str],
+    state_dir: Path,
+    grants: PluginGrants,
+    bus: EventBus,
+    runtime: PluginRuntime,
+    env: Mapping[str, str] | None = None,
+) -> PluginContext:
+    """装一个受限运行时。返回类型即「它满足契约」的静态证明（见模块 docstring）。"""
+    ctx: PluginContext = RuntimePluginContext(
+        plugin_id_=plugin_id,
+        config_=dict(config),
+        state_dir_=state_dir,
+        grants=grants,
+        secret_refs=dict(secrets),
+        bridge=PluginEventBridge(bus, plugin_id),
+        runtime=runtime,
+        env=env,
+    )
+    return ctx

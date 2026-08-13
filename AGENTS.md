@@ -30,8 +30,10 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`builtins/commands_core/` + `runtime/introspection.py`，并为此扩了 `PluginContext`），
   **阶段 5 进行中**，下一步 `D23`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `runtime/` 有 `wiring.py` 与 `introspection.py`，`embed/` 仍是空骨架，`kernel/` 有
+  `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
+  `instance.py` 与 `cli/`，`embed/` 已落地薄门面，`kernel/` 有
   `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
+  `nm run` / `nm config show` / `nm session` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -62,9 +64,9 @@ webui/                     # 前端源码（TypeScript）
 ```
 
 `contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面，
-`kernel/registry/` 已落地；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
-`model_openai/`、`tools_fs/`、`tools_shell/` 与 `commands_core/`，
-`runtime/` 有 `wiring.py` 与 `introspection.py`，`embed/` 仍是空骨架，按开发方案逐个填充。
+`kernel/registry/` 已落地；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
+`context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
+`cli_entry/`），`runtime/` 与 `embed/` 已落地（见上），按开发方案逐个填充。
 **新代码直接写在最终位置**，不要放临时目录。
 
 契约层已冻结、后续模块必须复用而不是另起炉灶的三样东西：

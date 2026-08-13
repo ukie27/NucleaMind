@@ -1,26 +1,45 @@
-"""`nm` 进程入口：argv 解析与子命令派发。
+"""`nm` 的进程入口：argv 解析与子命令派发（技术方案 §4.2、开发方案 `D23`）。
 
-职责：解析顶层 argv，暴露 `nm --version` 与迁移期的 `nm legacy`。
-不负责：实现子命令行为，也不组装 Agent 实例——真正的子命令在 D23 落地。
+职责：解析顶层 argv 与实例选择参数，把控制权交给 `run` / `config` / `session` 三个子命令，
+并把未捕获的异常折成可读诊断与非零退出码。
+不负责：装配实例（`runtime/bootstrap.py`）、实现交互（`builtins/cli_entry/`）、
+插件子命令（`D29` 的 `nm plugins` / `nm capabilities`）。
+
+**入口与能力是两件事**（开发方案 `D23` 的要点）：`builtins/cli_entry/` 是可被插件覆盖的
+**能力**（把 stdin 变成 `InboundMessage`），本模块是不可被覆盖的**进程入口**——它决定
+argv 怎么解析、实例怎么装、退出码是什么。`BAS-010` 的「插件可覆盖 CLI 实现」说的是前者。
+
+**信号处理在这里**（进程归 `runtime/`）：首个 `Ctrl-C` 取消在跑的 turn 并让会话继续，
+第二个退出进程（§10.3、`contracts.CliEntry.run` 的取消语义）。
 """
 
 from __future__ import annotations
 
+import asyncio
+import signal
 import sys
+from collections.abc import Callable, Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
+from typing import Final
 
-_USAGE = """Usage: nm <command> [args...]
+from nucleamind.contracts import NucleaError
 
-Commands:
-  legacy <args...>   Run the migration-period legacy CLI (removed with legacy/agent/)
+_USAGE: Final = """用法：nm <命令> [参数...]
 
-Options:
-  -V, --version      Print the version
-  -h, --help         Print this help
+命令：
+  run [-p 提示词]    启动实例并进入交互式会话（或跑单次执行）
+  config show        打印生效配置与每个值的来源
+  session list       列出本实例的会话
+  session show <id>  打印一个会话的摘要
+  legacy <参数...>   迁移期的遗留 CLI（随 legacy/agent/ 一并删除）
 
-The real subcommands (run / plugins / capabilities / config / session) are not
-implemented yet.
+选项：
+  --instance <名字>      选实例（默认 default）
+  --instance-dir <目录>  直接指定实例目录，压过 --instance
+  --set <小节.键>=<值>   本次运行的临时配置覆盖，可重复
+  -V, --version          打印版本
+  -h, --help             打印本说明
 """
 
 
@@ -31,26 +50,128 @@ def resolve_version() -> str:
         return "0+unknown"
 
 
+class Options:
+    """实例选择参数。三项都对应 `load_config()` 的同名形参。"""
+
+    __slots__ = ("instance", "instance_dir", "overrides", "rest")
+
+    def __init__(self) -> None:
+        self.instance: str | None = None
+        self.instance_dir: str | None = None
+        self.overrides: list[str] = []
+        self.rest: list[str] = []
+
+
+def parse_options(argv: Sequence[str]) -> Options:
+    """摘出实例选择参数，其余原样留给子命令。
+
+    **异常约定**：缺参数值时抛 `NucleaError(INPUT_MALFORMED)`，由 `app()` 折成退出码 2。
+    """
+    from nucleamind.contracts import ErrorCode
+
+    options = Options()
+    items = list(argv)
+    index = 0
+    while index < len(items):
+        item = items[index]
+        if item in ("--instance", "--instance-dir", "--set"):
+            index += 1
+            if index >= len(items):
+                raise NucleaError(
+                    ErrorCode.INPUT_MALFORMED,
+                    f"{item} 后面要跟一个值。",
+                    detail={"argument": item},
+                )
+            if item == "--instance":
+                options.instance = items[index]
+            elif item == "--instance-dir":
+                options.instance_dir = items[index]
+            else:
+                options.overrides.append(items[index])
+        else:
+            options.rest.append(item)
+        index += 1
+    return options
+
+
 def app(argv: list[str] | None = None) -> int:
-    """`nm` 的进程入口。返回值即进程退出码（console_scripts 包装为 sys.exit）。"""
+    """`nm` 的进程入口。返回值即进程退出码（console_scripts 包装为 `sys.exit`）。"""
     args = list(sys.argv[1:] if argv is None else argv)
 
     if not args or args[0] in ("-h", "--help"):
         sys.stdout.write(_USAGE)
         return 0
-
     if args[0] in ("-V", "--version"):
         sys.stdout.write(f"nucleamind {resolve_version()}\n")
         return 0
-
     if args[0] == "legacy":
         # 迁移期唯一的遗留入口。延迟导入：不让遗留依赖进入 `nm --version` 路径。
         from nucleamind.runtime.legacy_entry import run_legacy
 
         return run_legacy(args[1:])
 
-    sys.stderr.write(f"nm: unknown command {args[0]!r}\n\n{_USAGE}")
+    try:
+        options = parse_options(args[1:])
+    except NucleaError as error:
+        return _report(error)
+
+    command = args[0]
+    # 子命令延迟导入：`nm --version` 与 `nm --help` 不该付出装配根那条 import 链的代价
+    # （`NFR-405` 的冷启动预算）。
+    if command == "run":
+        from .commands.run import run_command
+
+        return _guard(lambda: run_command(options))
+    if command == "config":
+        from .commands.config import config_command
+
+        return _guard(lambda: config_command(options))
+    if command == "session":
+        from .commands.session import session_command
+
+        return _guard(lambda: session_command(options))
+
+    sys.stderr.write(f"nm: 未知命令 {command!r}\n\n{_USAGE}")
     return 2
+
+
+def _guard(run: Callable[[], int]) -> int:
+    """跑一个子命令，把 `NucleaError` 折成诊断输出与退出码。
+
+    **用户看到的不该是 traceback**：启动失败最常见的原因是配置写错或凭据没导出，
+    而那两件事的补救办法都写在 `NucleaError.detail` 里。
+    """
+    try:
+        return run()
+    except NucleaError as error:
+        return _report(error)
+    except KeyboardInterrupt:
+        sys.stderr.write("\n已中断。\n")
+        return 130
+
+
+def _report(error: NucleaError) -> int:
+    """打印一条可操作的错误。**只打 `user_message` 与 `detail`**，两者都已脱敏。"""
+    sys.stderr.write(f"nm: {error.user_message}\n")
+    for key, value in sorted(error.detail.items()):
+        sys.stderr.write(f"  {key}: {value}\n")
+    return 2
+
+
+def install_cancel_handler(
+    loop: asyncio.AbstractEventLoop, on_interrupt: Callable[[], None]
+) -> None:
+    """安装 `Ctrl-C` 处理。
+
+    **不用 `loop.add_signal_handler`**：Windows 上它没有实现，而两个平台各写一条信号
+    路径会让「按下去之后发生什么」有两套答案。`signal.signal` 在两个平台都可用，回调里
+    只做一次 `call_soon_threadsafe`——真正的取消动作在事件循环里跑。
+    """
+    def handler(signum: int, frame: object) -> None:
+        del signum, frame
+        loop.call_soon_threadsafe(on_interrupt)
+
+    signal.signal(signal.SIGINT, handler)
 
 
 def main() -> None:

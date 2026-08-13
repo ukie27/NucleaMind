@@ -26,6 +26,7 @@ from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
 
 __all__ = [
     "BUILTIN_MANIFESTS",
+    "CLI_ENTRY",
     "COMMANDS_CORE",
     "CONTEXT_BASIC",
     "MODEL_OPENAI",
@@ -420,13 +421,80 @@ COMMANDS_CORE: Final = PluginManifest(
                 "default": 16384,
                 "description": "单条命令输出的字符上限，超出即截断并标注。",
             },
+            "prefix": {
+                "type": "string",
+                "default": "/",
+                "description": "/help 里印出的命令前缀。装配根会把 routing.command_prefix "
+                "填在这里——内建够不着那一节配置（R4）。",
+            },
         },
         "additionalProperties": False,
     },
     critical=False,
 )
 
-#: 全部内建能力的 manifest。`D23` 追加 cli_entry。
+#: `D23` 内建 CLI 入口（技术方案 §8.1，需求 `BAS-009`、`BAS-010`、`EDG-108`）。
+#:
+#: `critical=True`：CLI 入口不可禁用——不装任何 Channel 插件也必须存在本地交互入口。
+#: 它加载失败时实例没有任何可用入口，那不是「少一个功能」而是「起来了也没人能说话」。
+#: 装配根另有一条守卫：`plugins.disable` 试图关掉本项时**显式拒绝配置**（`EDG-108`）。
+#:
+#: **两条能力，一份 manifest**：`CLI_ENTRY` 拥有进程（决定 `nm` 返回什么退出码），
+#: `CHANNEL` 拥有消息路径（`MSG-007`：CLI 的输入输出与其它平台走同一条契约）。
+#: 拆成两份 manifest 会让它们可以各自被禁用，而它们共用一个控制台对象——那种组合无意义。
+#:
+#: **一条权限也不声明**：stdin/stdout 是进程自己的 IO，不是对实例资源的访问，
+#: 与 `commands_core` 读 `ctx.instance` 同一档。
+CLI_ENTRY: Final = PluginManifest(
+    id="cli-entry",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind.builtins.cli_entry:setup",
+    capabilities=(
+        CapabilityDecl(kind=CapabilityKind.CLI_ENTRY, name="stdio"),
+        CapabilityDecl(kind=CapabilityKind.CHANNEL, name="cli"),
+    ),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "instance_id": {
+                "type": "string",
+                "description": "入站消息上标注的实例标识。装配根会填；编排用的是 "
+                "OrchestratorDeps.instance_id，这里只是可追溯的标签。",
+            },
+            "channel_id": {
+                "type": "string",
+                "default": "cli",
+                "description": "SessionKey 的 channel_id 分量。改它等于换一条会话线。",
+            },
+            "conversation_id": {
+                "type": "string",
+                "default": "local",
+                "description": "SessionKey 的 conversation_id 分量。",
+            },
+            "user_id": {
+                "type": "string",
+                "default": "local",
+                "description": "发送者标识。本地用户恒为实例拥有者（operator）。",
+            },
+            "prompt": {
+                "type": "string",
+                "default": "> ",
+                "description": "交互式会话的提示符。允许空串。"
+                "默认只用 ASCII——Windows 中文控制台是 GBK。",
+            },
+            "show_reasoning": {
+                "type": "boolean",
+                "default": False,
+                "description": "是否显示模型的推理片段。命令行的 --reasoning 也能打开。",
+            },
+        },
+        "additionalProperties": False,
+    },
+    critical=True,
+)
+
+#: 全部内建能力的 manifest。
 BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (
     SESSION_JSONL,
     CONTEXT_BASIC,
@@ -434,4 +502,5 @@ BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (
     TOOLS_FS,
     TOOLS_SHELL,
     COMMANDS_CORE,
+    CLI_ENTRY,
 )

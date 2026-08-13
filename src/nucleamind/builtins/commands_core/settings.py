@@ -23,7 +23,9 @@ __all__ = [
     "COMMAND_NAMES",
     "CONFIG_DISABLE_KEY",
     "CONFIG_MAX_OUTPUT_CHARS_KEY",
+    "CONFIG_PREFIX_KEY",
     "DEFAULT_MAX_OUTPUT_CHARS",
+    "DEFAULT_PREFIX",
     "CommandsSettings",
     "enabled_command_names",
     "resolve_settings",
@@ -42,6 +44,13 @@ COMMAND_NAMES: Final[tuple[str, ...]] = (
 
 CONFIG_DISABLE_KEY: Final = "disable"
 CONFIG_MAX_OUTPUT_CHARS_KEY: Final = "max_output_chars"
+CONFIG_PREFIX_KEY: Final = "prefix"
+
+#: `/help` 里印出的命令前缀的兜底值。真值是 `routing.command_prefix`，由装配根经配置块
+#: 交下来（`R4` 让内建够不着 `kernel/config`）。**与
+#: `kernel/routing/dispatcher.py::DEFAULT_COMMAND_PREFIX` 各写一份**，有对照测试——
+#: 与 `estimate_tokens` 在两处各写一份是同一种做法。
+DEFAULT_PREFIX: Final = "/"
 
 #: 单条命令输出的字符上限。命令输出直接进终端与聊天窗口，而 `/config` 在一份大配置上
 #: 能轻易吐出几十 KB——那对聊天渠道是一次投递失败，对终端是一屏刷不完的噪声。
@@ -54,6 +63,8 @@ class CommandsSettings:
 
     enabled: frozenset[str]
     max_output_chars: int
+    #: `/help` 渲染用的命令前缀。它**不参与命令身份**，只影响展示。
+    prefix: str = DEFAULT_PREFIX
 
 
 def _disabled_names(config: Mapping[str, JsonValue]) -> frozenset[str]:
@@ -100,4 +111,13 @@ def resolve_settings(config: Mapping[str, JsonValue]) -> CommandsSettings:
             "commands-core 的 max_output_chars 必须是正整数。",
             detail={"key": CONFIG_MAX_OUTPUT_CHARS_KEY},
         )
-    return CommandsSettings(enabled=enabled_command_names(config), max_output_chars=raw)
+    prefix = config.get(CONFIG_PREFIX_KEY, DEFAULT_PREFIX)
+    if not isinstance(prefix, str) or not prefix:
+        raise NucleaError(
+            ErrorCode.CONFIG_INVALID,
+            "commands-core 的 prefix 必须是非空字符串。",
+            detail={"key": CONFIG_PREFIX_KEY},
+        )
+    return CommandsSettings(
+        enabled=enabled_command_names(config), max_output_chars=raw, prefix=prefix
+    )

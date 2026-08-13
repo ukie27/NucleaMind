@@ -234,7 +234,7 @@ src/nucleamind/
 │   │   ├── builtin_loader.py  # 对 LoadRequest 泛化的 setup 运行器（D16）
 │   │   ├── host.py            # NucleaAPI 宿主侧实现（D16）
 │   │   └── permissions.py     # 权限授予与 Grant 派发（D26）
-│   ├── config/
+│   ├── config/                # 含 plugin_blocks.py：plugins.<id>.{config,secrets}（D23）
 │   │   ├── layout.py          # 实例目录的路径代数（不含锁）
 │   │   ├── process.py         # 跨平台 PID 存活探测（Liveness 三态）
 │   │   ├── lock.py            # instance.lock：O_EXCL + 陈旧锁回收
@@ -274,14 +274,15 @@ src/nucleamind/
 ├── runtime/                   # 第 5 层：组装根。唯一可同时 import kernel 与 builtins
 │   ├── wiring.py              # 依赖装配：registry ← builtins + plugins
 │   ├── introspection.py       # InstanceView / TurnControl 的生产实现（D22）
+│   ├── plugin_context.py      # 生产级 PluginContext（D23；权限判定的生产实现在 D26）
 │   ├── bootstrap.py           # 启动序列（§10.1 的 10 步）
 │   ├── instance.py            # AgentInstance：就绪 / 运行 / 停止
 │   └── cli/                   # nm 可执行程序
 │       ├── main.py            # argv 解析与进程入口
-│       └── commands/          # nm run / plugins / capabilities / config / session
+│       └── commands/          # nm run / config / session（plugins / capabilities 见 D29）
 │
 ├── embed/                     # 第 5 层：嵌入式 Python SDK，runtime 的薄门面
-│   └── __init__.py            # RunResult / StreamEvent / SessionSnapshot
+│   └── __init__.py            # open_instance() / run() / EmbeddedAgent（D23 落地）
 │
 └── legacy/                    # 隔离区：nanobot 遗留代码，只出不进
     ├── README.md              # 说明隔离规则与迁移状态
@@ -940,6 +941,17 @@ Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
 - 顶层 schema `extra="forbid"`，未知字段报错并给出 JSON Pointer 位置（`CFG-001`）。
 - 插件配置块 `plugins.<plugin_id>.config` 用插件自带 schema 校验；插件只能读到自身块
   和显式授予的共享键（`CFG-002`）。Host API 不提供全局配置读取方法。
+  > `D23` 落地时的两处细化（实现在 `kernel/config/plugin_blocks.py`）：
+  > - **凭据是 `config` 的兄弟键 `plugins.<id>.secrets`，不在 `config` 里面**。`D19` 已经
+  >   定死凭据不进插件的配置块（`model-openai` 的 `config_schema` 因此没有 `api_key`），
+  >   而 §6.7 又要求 secret 只以 `${VAR}` 引用形式出现——两条合起来的唯一落点就是同级的
+  >   `secrets`。`ctx.secret(name)` = 取 `plugins.<id>.secrets.<name>` 的字面量 →
+  >   `resolve_text()`。`CFG-003` 因此仍是结构性成立的：配置树里躺的自始至终是引用。
+  > - **逐字段校验留给 `D25` 阶段 A**（manifest 自带的 `config_schema`）。`D23` 只保证
+  >   条目的**形状**（是个对象、只有 `config` / `secrets` 两个键），具体字段由各内建的
+  >   `resolve_settings()` 在 `setup()` 里校验并抛 `CONFIG_INVALID`。
+  > - 保留键 `disable` / `search_paths` 与插件 id 共用一个命名空间，因此叫这两个名字的
+  >   插件无法配置——那被显式拒绝而不是静默当成保留键。
 - Secret 只以引用形式出现：`{"api_key": "${OPENAI_API_KEY}"}`。解析结果包装为
   `SecretStr`，`__repr__` 与序列化输出恒为 `***`。写回配置时保留原始 `${VAR}` 字面量
   （`CFG-003`）。缺失变量报错时只给出变量名（`EDG-502`）。
@@ -1216,7 +1228,7 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 
 | 能力 | 模块 | 实现要点 |
 | --- | --- | --- |
-| CLI 入口 | `builtins/cli/` | stdin/stdout + 单次执行模式；`Ctrl-C` → `cancel.request()`，第二次 `Ctrl-C` 退出进程；输入输出走统一消息契约（`MSG-007`） |
+| CLI 入口 | `builtins/cli_entry/` | stdin/stdout + 单次执行模式；`Ctrl-C` → 取消在跑的 turn，再按一次退出进程；输入输出走统一消息契约（`MSG-007`） |
 | Model Provider | `builtins/model_openai/` | OpenAI 兼容 Chat Completions（回答 §17.2 第 5 项） |
 | Session | `builtins/session_jsonl/` | 每 session 一个 JSONL + 一个 meta.json，追加写 + 原子替换 |
 | Context | `builtins/context_basic/` | 系统指令 + 历史 + 按 token 预算的尾部保留裁剪 |
@@ -1313,6 +1325,20 @@ JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式�
   出来，docstring 如实写明不假装能区分。内容过滤是 HTTP 200 上的 `CONTENT_FILTER` 正常
   响应而不是异常。
 
+`D23` 落地时对「CLI 入口」一行的三处细化（实现在 `builtins/cli_entry/`）：
+
+- **一份 manifest 声明两条能力**：`CLI_ENTRY:stdio` 与 `CHANNEL:cli`。`CliEntry.run()` 只
+  拿得到 `ctx`，而 `PluginContext` 没有「提交一条消息」的成员；把 CLI 的输入做成 Channel
+  之后，装配根的 Channel 泵就把它接上了——**不需要为此再扩一次 `PluginContext`**（`D22`
+  刚扩过一次）。这也正是「CLI 消息经过与其他 Channel 相同的契约路径」（`MSG-007`）的
+  可断言形态：`CliChannel` 直接继承 `sdk.testing.ChannelContract`。
+- **两次 `Ctrl-C` 的实际语义**：第一次在有 turn 在跑时取消那些 turn、会话继续；没有 turn
+  在跑时它就是「退出」。退出路径先跑 `stop()`（释放实例锁）再 `os._exit`——读 stdin 的
+  工作线程阻塞在 `readline()` 上，没有可移植的唤醒方式（`entry.py::_readline` 如实写着）。
+- **`instance_id` 与提示符经配置块交下来**，与 `D17` 的 `dir`、`D20` 的 `workspace` 同一条
+  先例。提示符默认只用 ASCII，且输出遇到编不出来的字符时降级成转义而不是让这一轮失败
+  ——Windows 中文控制台是 GBK。
+
 ### 8.2 基础工具集的冻结清单
 
 内建工具**恰好 6 个**，清单本身是接口（`BAS-008`）：
@@ -1395,6 +1421,20 @@ lifecycle: start / stop / health
  9  阶段 D 按拓扑序 start() 长生命周期服务（Channel、后台任务）
 10  发布 instance.ready 事件 + instance_ready Hook
 ```
+
+`D23` 落地时对本节的四处细化（实现在 `runtime/bootstrap.py`）：
+
+- **步骤 3 的「跳过被禁用项」在 manifest 层做**，不是 registry 的 `disabled` 映射：全部内建
+  共用一个 `Builtin()` ProviderId，按提供方禁用对内建没有粒度。`plugins.disable` 里出现一个
+  声明了 `CLI_ENTRY` 的提供方即**拒绝配置**（`EDG-108`）。
+- **`EDG-108` 的「覆盖失败时回落内建」= 用同一批 manifest 再装一次**，但只让内建提供
+  CLI 入口。半装好的 registry 已经冻结，打补丁比重来更容易出错。
+- **JSONL 事件 sink 只能在步骤 2 之后接上**：它的开关（`logging.file_enabled`）在配置里。
+  在此之前发生的事只进内存环，这是配置与日志开关之间不可消除的先后关系。
+- **`plugins.<id>.config` 由装配根合成**：派生默认值（`session-jsonl` 的 `dir`、
+  `tools_fs`/`tools_shell` 的 `workspace`、`commands-core` 的 `prefix`、`cli-entry` 的
+  `instance_id`）+ 用户写的那份，**用户显式写过的键压过派生值**。同一份配置同时喂给
+  `wire_capabilities(keep=...)` 与 `setup()`（`TOL-006` 成立的全部条件）。
 
 启动开销目标（`NFR-405`）：无插件默认安装的**冷启动到可接受输入 ≤ 300 ms**（不含
 Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中作为回归指标记录，

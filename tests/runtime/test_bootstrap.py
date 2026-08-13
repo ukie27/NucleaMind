@@ -1,0 +1,353 @@
+"""`D23` 装配根：`bootstrap()` 的十步、必需能力校验与 `AgentInstance` 的生命周期。
+
+职责：验装配链本身——配置块怎么交到内建手上、`keep` 与 `setup()` 是否同源、必需能力
+缺失时是不是显式失败、`EDG-108` 的两条守卫、Channel 泵是否真的把 CLI 输入送进 turn、
+停止时锁是否释放。
+不负责：验单个内建的行为（`tests/builtins/`）、验 kernel 各机制（`tests/kernel/`）。
+
+**Fake 只换模型这一项**（`_support.TEST_MANIFESTS`）：其余六份 manifest 与生产完全一致，
+因此这套用例真的走了一遍 `session_jsonl` 写盘、`tools_fs` 建守卫、`commands_core` 读
+`ctx.instance` 的那条路。往里再多换一个 Fake，这套用例就退化成 `tests/kernel/` 的重复。
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from nucleamind.builtins.registry import BUILTIN_MANIFESTS
+from nucleamind.contracts import (
+    CapabilityKind,
+    ErrorCode,
+    EventName,
+    NucleaError,
+    SessionKey,
+    StreamState,
+)
+from nucleamind.kernel.config import InstanceLock
+from nucleamind.kernel.turn import CancelToken
+from nucleamind.runtime.bootstrap import bootstrap, builtin_config_blocks, grants_of
+from nucleamind.runtime.instance import AgentInstance
+from nucleamind.sdk import CapabilityDecl, PluginManifest
+
+from ._support import (
+    FAKE_MODEL_ID,
+    SCRIPT,
+    TEST_MANIFESTS,
+    manifests_without,
+    text_response,
+    write_config,
+)
+
+
+@pytest.fixture(autouse=True)
+def _script() -> None:
+    """每个用例从同一条脚本起步：一句普通回答。用例可以自己覆盖 `SCRIPT`。"""
+    SCRIPT[:] = [text_response("好的。")]
+
+
+async def _boot(root: Path, **kwargs: object) -> AgentInstance:
+    manifests = kwargs.pop("manifests", TEST_MANIFESTS)
+    assert isinstance(manifests, tuple)
+    return await bootstrap(instance_dir=root, manifests=manifests, **kwargs)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------- 步骤 1–2：锁与配置
+
+
+async def test_bootstrap_holds_the_instance_lock_until_stop(tmp_path: Path) -> None:
+    write_config(tmp_path)
+    instance = await _boot(tmp_path)
+    try:
+        with pytest.raises(NucleaError) as caught:
+            InstanceLock(instance.layout.lock_path).acquire()
+        assert caught.value.code is ErrorCode.CONFIG_INSTANCE_LOCKED
+    finally:
+        await instance.stop()
+    # 停止之后锁必须真的放开，否则一次正常退出会砖掉实例直到下次陈旧回收。
+    released = InstanceLock(instance.layout.lock_path).acquire()
+    released.release()
+
+
+async def test_a_failed_start_releases_the_lock(tmp_path: Path) -> None:
+    """启动失败也要放锁：否则「配置写错了」会附赠一个锁死的实例目录。"""
+    write_config(tmp_path, model={"name": None})
+    with pytest.raises(NucleaError):
+        await _boot(tmp_path)
+    InstanceLock(tmp_path / "instance.lock").acquire().release()
+
+
+async def test_a_broken_config_is_written_to_the_logs(tmp_path: Path) -> None:
+    """`EDG-501` 的后半句。这是 `write_config_error()` 唯一的调用点。"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text('{"turn": {"max_iterations": -1}}', encoding="utf-8")
+    with pytest.raises(NucleaError) as caught:
+        await _boot(tmp_path)
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+    logs = list((tmp_path / "logs").glob("config-errors-*.jsonl"))
+    assert logs, "配置解析错误必须留在 logs/ 里"
+    record = json.loads(logs[0].read_text(encoding="utf-8").splitlines()[0])
+    assert record["error"]["code"] == ErrorCode.CONFIG_INVALID.value
+
+
+async def test_the_original_config_file_is_never_rewritten(tmp_path: Path) -> None:
+    """`EDG-501` 的前半句：拒绝启动，且原文件一个字节都不改。"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    raw = '{"turn": {"max_iterations": -1}}'
+    (tmp_path / "config.json").write_text(raw, encoding="utf-8")
+    with pytest.raises(NucleaError):
+        await _boot(tmp_path)
+    assert (tmp_path / "config.json").read_text(encoding="utf-8") == raw
+
+
+# ------------------------------------------------------------------ 步骤 3：清单与 EDG-108
+
+
+async def test_disabling_the_cli_entry_is_rejected(tmp_path: Path) -> None:
+    """`EDG-108`：配置试图禁用 CLI 入口时显式拒绝并说明原因。"""
+    write_config(tmp_path, plugins={"disable": ["cli-entry"]})
+    with pytest.raises(NucleaError) as caught:
+        await _boot(tmp_path)
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+    assert caught.value.detail["pointer"] == "/plugins/disable"
+    assert caught.value.detail["plugin"] == "cli-entry"
+
+
+async def test_disabling_a_non_critical_builtin_is_honoured(tmp_path: Path) -> None:
+    write_config(tmp_path, plugins={"disable": ["tools-shell"]})
+    instance = await _boot(tmp_path)
+    try:
+        assert "shell.exec" not in [spec.name for spec in instance.deps.tool_specs]
+    finally:
+        await instance.stop()
+
+
+async def test_the_cli_stays_usable_with_every_disableable_builtin_off(tmp_path: Path) -> None:
+    """§16.1 第 5 条：把能关的内建全关掉，CLI 仍然可用。"""
+    write_config(tmp_path, plugins={"disable": ["tools-fs", "tools-shell", "commands-core"]})
+    instance = await _boot(tmp_path)
+    try:
+        assert instance.deps.tool_specs == ()
+        code = await instance.run_cli(["-p", "在吗"], CancelToken())
+        assert code == 0
+    finally:
+        await instance.stop()
+
+
+# --------------------------------------------------------------- 步骤 4–7：配置块与裁剪
+
+
+async def test_each_builtin_gets_its_own_config_block(tmp_path: Path) -> None:
+    """七份内建共用一个 `Builtin()` ProviderId，配置块**只能**按 manifest 索引。"""
+    write_config(tmp_path)
+    instance = await _boot(tmp_path)
+    try:
+        blocks = {ctx.plugin_id: dict(ctx.config) for ctx in instance.contexts}
+        assert blocks["session-jsonl"]["dir"] == str(instance.layout.sessions_dir)
+        assert blocks["tools-fs"]["workspace"] == str(instance.config.workspace_root)
+        assert "dir" not in blocks["tools-fs"]
+    finally:
+        await instance.stop()
+
+
+async def test_derived_blocks_hand_down_what_builtins_cannot_know(tmp_path: Path) -> None:
+    """`R4` 让内建够不着实例布局与 routing 小节，这四个键因此必须由装配根填。"""
+    write_config(tmp_path, routing={"command_prefix": "!"})
+    instance = await _boot(tmp_path)
+    try:
+        derived = builtin_config_blocks(
+            instance.config.config, instance.layout, instance.config.workspace_root
+        )
+        assert derived["commands-core"]["prefix"] == "!"
+        assert derived["cli-entry"]["instance_id"] == instance.layout.root.name
+        assert derived["tools-shell"]["workspace"] == str(instance.config.workspace_root)
+    finally:
+        await instance.stop()
+
+
+async def test_user_config_beats_the_derived_default(tmp_path: Path) -> None:
+    """派生的是默认位置，不是不可覆盖的策略。"""
+    elsewhere = tmp_path / "elsewhere"
+    write_config(tmp_path, plugins={"session-jsonl": {"config": {"dir": str(elsewhere)}}})
+    instance = await _boot(tmp_path)
+    try:
+        block = {ctx.plugin_id: dict(ctx.config) for ctx in instance.contexts}["session-jsonl"]
+        assert block["dir"] == str(elsewhere)
+    finally:
+        await instance.stop()
+
+
+async def test_disabling_one_tool_filters_both_the_declaration_and_the_registration(
+    tmp_path: Path,
+) -> None:
+    """`TOL-006`：`keep` 与 `setup()` 同源于同一份配置，否则 `finish()` 会当场报错。"""
+    write_config(tmp_path, plugins={"tools-fs": {"config": {"disable": ["fs.write", "fs.edit"]}}})
+    instance = await _boot(tmp_path)
+    try:
+        names = {spec.name for spec in instance.deps.tool_specs}
+        assert "fs.write" not in names
+        assert "fs.read" in names
+        active = {binding.name for binding in instance.report.active}
+        assert "fs.write" not in active
+    finally:
+        await instance.stop()
+
+
+async def test_disabling_one_command_keeps_the_rest(tmp_path: Path) -> None:
+    write_config(tmp_path, plugins={"commands-core": {"config": {"disable": ["config"]}}})
+    instance = await _boot(tmp_path)
+    try:
+        view = instance.runtime.instance_view
+        assert view is not None
+        names = {spec.name for spec in view.commands()}
+        assert "config" not in names
+        assert "help" in names
+    finally:
+        await instance.stop()
+
+
+async def test_a_secret_reference_reaches_the_plugin(tmp_path: Path) -> None:
+    """`plugins.<id>.secrets` → `ctx.secret()` → `${VAR}`，明文不进配置文档（`CFG-003`）。"""
+    write_config(
+        tmp_path,
+        plugins={"tools-fs": {"secrets": {"api_key": "${NM_TEST_TOKEN}"}}},
+    )
+    instance = await _boot(tmp_path, env={"NM_TEST_TOKEN": "sk-0123456789abcdef"})
+    try:
+        document = json.dumps(instance.config.to_json(), ensure_ascii=False)
+        assert "sk-0123456789abcdef" not in document
+        assert "${NM_TEST_TOKEN}" in document
+    finally:
+        await instance.stop()
+
+
+# ------------------------------------------------------------------ 步骤 8：必需能力
+
+
+@pytest.mark.parametrize(
+    ("missing", "kind"),
+    [("session-jsonl", "SESSION_STORE"), ("model-openai", "MODEL"), ("cli-entry", "CLI_ENTRY")],
+)
+async def test_missing_required_capabilities_fail_the_start(
+    tmp_path: Path, missing: str, kind: str
+) -> None:
+    """§10.1 步骤 8：三项必需能力各须有一个生效实现，缺一即以 `CAPABILITY_MISSING` 终止。"""
+    write_config(tmp_path)
+    with pytest.raises(NucleaError) as caught:
+        await _boot(tmp_path, manifests=manifests_without(missing))
+    assert caught.value.code is ErrorCode.CAPABILITY_MISSING
+    assert caught.value.detail["kind"] == kind
+
+
+async def test_a_missing_model_name_names_the_field(tmp_path: Path) -> None:
+    """「缺什么、去哪儿补」是启动错误的全部价值（`BAS-006` 的前身）。"""
+    write_config(tmp_path, model={"provider": "fake"})
+    with pytest.raises(NucleaError) as caught:
+        await _boot(tmp_path)
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+    assert caught.value.detail["pointer"] == "/model/name"
+
+
+async def test_a_failing_cli_override_falls_back_to_the_builtin(tmp_path: Path) -> None:
+    """`EDG-108`/`BAS-010`：覆盖 CLI 的提供方没交出实现时强制回落，实例仍然有入口。"""
+    broken = PluginManifest(
+        id="cli-broken",
+        version="0.1.0",
+        sdk_range=">=0.1.0,<0.2.0",
+        setup="tests.runtime.test_bootstrap:setup_broken_cli",
+        capabilities=(
+            CapabilityDecl(
+                kind=CapabilityKind.CLI_ENTRY, name="broken", overrides="builtin:stdio"
+            ),
+        ),
+        critical=False,
+    )
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=(*TEST_MANIFESTS, broken))
+    try:
+        entries = [b for b in instance.report.active if b.kind is CapabilityKind.CLI_ENTRY]
+        assert [binding.name for binding in entries] == ["stdio"]
+        assert await instance.run_cli(["-p", "在吗"], CancelToken()) == 0
+    finally:
+        await instance.stop()
+
+
+def setup_broken_cli(api: object) -> None:
+    """声明了 CLI 入口却一项都不注册。`CapabilityHost.finish()` 会如实报出来。"""
+    del api
+
+
+# ------------------------------------------------------------------ 步骤 9–10 与运行
+
+
+async def test_the_startup_sequence_is_traceable_through_events(tmp_path: Path) -> None:
+    """开发方案的验收：十步可通过事件序列逐步追踪。"""
+    write_config(tmp_path)
+    instance = await _boot(tmp_path)
+    try:
+        await instance.start()
+        names = [event.name for event in instance.diagnostics.events.events()]
+        assert names[0] is EventName.INSTANCE_STARTING
+        assert EventName.PLUGIN_DISCOVERED in names
+        assert EventName.PLUGIN_LOADED in names
+        assert names[-1] is EventName.INSTANCE_READY
+    finally:
+        await instance.stop()
+    tail = [event.name for event in instance.diagnostics.events.events()][-2:]
+    assert tail == [EventName.INSTANCE_STOPPING, EventName.INSTANCE_STOPPED]
+
+
+async def test_a_cli_turn_goes_through_the_channel_pump(tmp_path: Path) -> None:
+    """`MSG-007`：CLI 的输入是一条真的 `InboundMessage`，出站经同一条 `deliver` 回来。"""
+    write_config(tmp_path)
+    instance = await _boot(tmp_path)
+    try:
+        code = await instance.run_cli(["-p", "统计一下"], CancelToken())
+        assert code == 0
+        channel = dict(instance.channels)["cli"]
+        console = channel._console  # noqa: SLF001 - 断言渲染结果需要它
+        assert console.rendered == ["好的。"]
+        assert console.last_state is StreamState.FINAL
+    finally:
+        await instance.stop()
+
+
+async def test_history_lands_in_the_instance_sessions_directory(tmp_path: Path) -> None:
+    """`D17` 点名的那个坑：没把 `dir` 交下去，会话会写进插件私有目录。"""
+    write_config(tmp_path)
+    instance = await _boot(tmp_path)
+    try:
+        await instance.run_cli(["-p", "记住这句话"], CancelToken())
+    finally:
+        await instance.stop()
+    key = SessionKey(channel_id="cli", conversation_id="local")
+    history, _ = instance.layout.session_paths(key.storage_id())
+    assert history.exists(), "会话历史必须落在实例的 sessions/ 目录"
+
+
+async def test_stopping_twice_is_safe(tmp_path: Path) -> None:
+    write_config(tmp_path)
+    instance = await _boot(tmp_path)
+    await instance.stop()
+    await instance.stop()
+
+
+def test_grants_come_from_the_manifest() -> None:
+    """`D23` 的权限等于声明集合，如实断言这件事（用户批准是 `D26`）。"""
+    model = next(m for m in BUILTIN_MANIFESTS if m.id == "model-openai")
+    grants = grants_of(model)
+    assert grants.allows_secret("api_key")
+    assert not grants.allows_secret("other")
+    cli = next(m for m in BUILTIN_MANIFESTS if m.id == "cli-entry")
+    assert grants_of(cli).kinds == frozenset()
+
+
+def test_the_fake_model_manifest_keeps_the_real_shape() -> None:
+    """本套用例只换模型这一项——换多了它就退化成 `tests/kernel/` 的重复。"""
+    real = {manifest.id for manifest in BUILTIN_MANIFESTS}
+    assert {manifest.id for manifest in TEST_MANIFESTS} == real
+    fake = next(m for m in TEST_MANIFESTS if m.id == "model-openai")
+    assert fake.setup.startswith("tests.")
+    assert FAKE_MODEL_ID == "fake-model"

@@ -130,7 +130,7 @@ def to_load_request(
 async def wire_capabilities(
     *,
     manifests: Sequence[PluginManifest] = BUILTIN_MANIFESTS,
-    context_for: Callable[[ProviderId], PluginContext],
+    context_for: Callable[[PluginManifest], PluginContext],
     provider_for: Callable[[PluginManifest], ProviderId] = builtin_provider,
     resolve_setup: Callable[[str], SetupFn] = import_setup,
     disabled: Mapping[ProviderId, str] | None = None,
@@ -138,9 +138,13 @@ async def wire_capabilities(
 ) -> Wiring:
     """注册全部 manifest 声明的能力 → 解析覆盖 → 冻结，返回装配产物。
 
-    `manifests` 默认取 `BUILTIN_MANIFESTS`（`D16` 时为空元组，那正是 `EDG-101` 要求可用的
-    形状）。`context_for` 必填：`D16` 还没有生产级 `PluginContext`（那是 `D26`），
-    给一个默认值等于邀请别人把无权限的桩子带进生产。
+    `manifests` 默认取 `BUILTIN_MANIFESTS`。`context_for` 必填：`D16` 时还没有生产级
+    `PluginContext`，给一个默认值等于邀请别人把无权限的桩子带进生产；`D23` 之后它是
+    `runtime/plugin_context.py` 的那一个。
+
+    **`context_for` 按 manifest 而不是按 `ProviderId` 索引**（`D23` 改）：全部内建共用
+    一个 `Builtin()`，按提供方索引会让七份内建拿到同一个配置块与同一个状态目录——
+    `session-jsonl` 会读到 `model-openai` 的配置。manifest 才是「这是谁」的唯一答案。
 
     `keep` 按配置裁掉本次不生效的能力声明（`TOL-006`，见 `to_load_request()`）。它对
     每一份 manifest 一视同仁——`D21` 的 `tools_shell` 与第三方工具插件走同一条路，不存在
@@ -150,14 +154,20 @@ async def wire_capabilities(
     `Wiring.outcomes`。覆盖冲突不抛，进 `report.failures` 由调用方处置。
     """
     registry = CapabilityRegistry()
-    requests = [
-        to_load_request(manifest, provider_for(manifest), keep=keep) for manifest in manifests
-    ]
+    requests: list[LoadRequest] = []
+    # `LoadRequest` 不带 manifest（`kernel/` 不认识 manifest，`D06` 的约定），因此这里
+    # 自己记一张回查表。按对象身份索引：同一份 manifest 出现两次是调用方的错，不该在
+    # 这里被静默合并成一个。
+    origin: dict[int, PluginManifest] = {}
+    for manifest in manifests:
+        request = to_load_request(manifest, provider_for(manifest), keep=keep)
+        origin[id(request)] = manifest
+        requests.append(request)
 
     def host_for(batch: RegistrationBatch, request: LoadRequest) -> CapabilityHost[PluginContext]:
         host = CapabilityHost(
             batch,
-            context_for(request.provider),
+            context_for(origin[id(request)]),
             declarations=request.declarations,
             critical=request.critical,
         )

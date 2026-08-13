@@ -40,11 +40,11 @@ from .settings import CommandsSettings
 
 __all__ = ["SPECS", "build_handlers"]
 
-#: `/help` 要印出前缀，而前缀是 `kernel/config` 的 `routing.command_prefix`。内建够不着
-#: 它（`R4`），装配根也没有把它交下来的通道——`ctx.config` 只给自己那一块。用默认值渲染，
-#: 与 `kernel/routing/dispatcher.py::DEFAULT_COMMAND_PREFIX` 各写一份，有对照测试。
-#: 改前缀的用户会在 `/help` 里看到默认前缀，这是已知的小偏差，不值得为它扩配置块。
-DEFAULT_PREFIX = "/"
+#: 一个命令体：拿 ctx、这次调用与本内建的设置，交出要展示的文本。
+#: 设置进签名是 `D23` 加的——`/help` 要印出**生效的**命令前缀，而那是
+#: `routing.command_prefix`；`R4` 让内建够不着它，因此装配根经配置块把它交下来
+#: （`settings.prefix`）。`D22` 时它是硬编码的默认 `/`，改过前缀的用户会看到错的前缀。
+_Body = Callable[[PluginContext, CommandInvocation, "CommandsSettings"], Awaitable[str]]
 
 SPECS: dict[str, CommandSpec] = {
     "help": CommandSpec(
@@ -95,37 +95,50 @@ def _rejected(error: NucleaError) -> CommandResult:
     return CommandResult(Disposition.REJECTED, content=error.user_message, error=error)
 
 
-async def _help(ctx: PluginContext, invocation: CommandInvocation) -> str:
+async def _help(
+    ctx: PluginContext, invocation: CommandInvocation, settings: CommandsSettings
+) -> str:
     del invocation
-    return render.render_help(ctx.instance.commands(), DEFAULT_PREFIX)
+    return render.render_help(ctx.instance.commands(), settings.prefix)
 
 
-async def _config(ctx: PluginContext, invocation: CommandInvocation) -> str:
-    del invocation
+async def _config(
+    ctx: PluginContext, invocation: CommandInvocation, settings: CommandsSettings
+) -> str:
+    del invocation, settings
     return render.render_config(ctx.instance.config_document())
 
 
-async def _session(ctx: PluginContext, invocation: CommandInvocation) -> str:
+async def _session(
+    ctx: PluginContext, invocation: CommandInvocation, settings: CommandsSettings
+) -> str:
     """当前会话来自**这条消息自己的** `session_key`，而不是某个「当前会话」全局状态。
 
     命令可能来自任意渠道的任意会话，实例级的「当前」在多 session 并发下没有定义
     （`KER-008` 允许同实例多 session 并发）。
     """
+    del settings
     snapshot = await ctx.instance.session_snapshot(invocation.message.session_key())
     return render.render_session(snapshot)
 
 
-async def _plugins(ctx: PluginContext, invocation: CommandInvocation) -> str:
-    del invocation
+async def _plugins(
+    ctx: PluginContext, invocation: CommandInvocation, settings: CommandsSettings
+) -> str:
+    del invocation, settings
     return render.render_plugins(ctx.instance.plugins())
 
 
-async def _capabilities(ctx: PluginContext, invocation: CommandInvocation) -> str:
-    del invocation
+async def _capabilities(
+    ctx: PluginContext, invocation: CommandInvocation, settings: CommandsSettings
+) -> str:
+    del invocation, settings
     return render.render_capabilities(ctx.instance.capabilities())
 
 
-async def _cancel(ctx: PluginContext, invocation: CommandInvocation) -> str:
+async def _cancel(
+    ctx: PluginContext, invocation: CommandInvocation, settings: CommandsSettings
+) -> str:
     """取消一个在跑的 turn。
 
     **不带参数时只列出而不是取消全部**：一次误敲把所有并发 turn 全掐掉是不可撤销的，
@@ -135,6 +148,7 @@ async def _cancel(ctx: PluginContext, invocation: CommandInvocation) -> str:
     `live_turns()` 里当然有它。取消自己既没有意义，也会让这条命令的输出发不出去，
     因此显式拒绝而不是让用户困惑地看着自己的命令消失。
     """
+    del settings
     live = ctx.turns.live_turns()
     if not invocation.args:
         return render.render_turns(live)
@@ -156,7 +170,7 @@ async def _cancel(ctx: PluginContext, invocation: CommandInvocation) -> str:
 
 #: 命令名 -> 执行体。分开写而不是塞进 `SPECS`，是因为 spec 是**数据**（要能被 registry
 #: 统一列出，`CMD-001`），执行体要绑 ctx 与设置。
-_BODIES: dict[str, Callable[[PluginContext, CommandInvocation], Awaitable[str]]] = {
+_BODIES: dict[str, _Body] = {
     "help": _help,
     "config": _config,
     "session": _session,
@@ -172,7 +186,7 @@ class _Handler:
     def __init__(
         self,
         name: str,
-        body: Callable[[PluginContext, CommandInvocation], Awaitable[str]],
+        body: _Body,
         ctx: PluginContext,
         settings: CommandsSettings,
     ) -> None:
@@ -194,7 +208,8 @@ class _Handler:
         """
         try:
             cancel.raise_if_requested()
-            return _handled(await self._body(self._ctx, invocation), self._settings.max_output_chars)
+            content = await self._body(self._ctx, invocation, self._settings)
+            return _handled(content, self._settings.max_output_chars)
         except NucleaError as error:
             return _rejected(error)
         except Exception as error:  # noqa: BLE001 - 折成可诊断结果是本方法的全部职责。

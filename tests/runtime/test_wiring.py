@@ -57,9 +57,10 @@ def manifest(
     )
 
 
-def context_for(provider: object) -> PluginContext:
-    del provider
-    return FakePluginContext()
+def context_for(source: PluginManifest) -> PluginContext:
+    """`D23` 起按 **manifest** 索引：全部内建共用一个 `Builtin()`，按提供方索引会让
+    七份内建拿到同一个配置块。"""
+    return FakePluginContext(source.id)
 
 
 def setup_model(api: object) -> None:
@@ -210,3 +211,23 @@ def test_the_host_conformance_annotation_is_still_there() -> None:
     ]
     assert annotated, "runtime/wiring.py 里必须有一句 `x: NucleaAPI = host` 作为一致性证明"
     assert "cast" not in source, "一致性证明不得用 cast 绕过——那会让类型检查器闭嘴"
+
+
+async def test_each_manifest_gets_its_own_context() -> None:
+    """`D23` 改的那条：`context_for` 按 manifest 索引，因此配置块不会串。
+
+    按 `ProviderId` 索引时这条会失败——内建全是 `Builtin()`，七份 manifest 拿到的是同一个
+    ctx，`session-jsonl` 会读到 `model-openai` 的配置块。
+    """
+    seen: list[str] = []
+
+    def spy(source: PluginManifest) -> PluginContext:
+        seen.append(source.id)
+        return FakePluginContext(source.id)
+
+    first = manifest(plugin_id="alpha")
+    second = manifest(plugin_id="beta")
+    await wire_capabilities(
+        manifests=[first, second], context_for=spy, resolve_setup=resolver()
+    )
+    assert seen == ["alpha", "beta"]

@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D22` 均已完成，下一步 `D23`）
+- 当前阶段：阶段 5 内建能力**已收口**（`D00`–`D23` 均已完成，下一步 `D24`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1136,6 +1136,90 @@
     新层 `Any` 数仍为 0。完整 `tests/legacy` 14 failed / 4808 passed / 30 skipped，
     与 `D21` 完全一致，失败全部落在既有那批网络、子进程时序与 oauth-cli-kit 家族。
 
+- **`D23` 内建 CLI 能力、装配根与 `nm` 入口**（`builtins/cli_entry/` 四个模块约 480 行 +
+  `runtime/{bootstrap,instance,plugin_context}.py` 与 `runtime/cli/` 共约 1250 行 +
+  `embed/__init__.py` + `kernel/config/plugin_blocks.py` +
+  `tests/{runtime,embed,builtins,kernel}/` 共 137 个新用例）：
+  - **本轮拍板的四件事**，逐条记在下面。
+  - **① 插件配置块落成 `plugins.<plugin_id>.{config,secrets}`**（新模块
+    `kernel/config/plugin_blocks.py`）。此前 `SECTION_SPECS` 是一张扁平字段表，**没有任何
+    地方放插件配置**，而六个内建全都要读 `ctx.config`。形状照技术方案 §6.7 的字面表述落地；
+    `disable` / `search_paths` 是保留键，不能当插件 id（叫这两个名字的插件被显式拒绝而不是
+    静默当成保留键）。`plugins` 小节因此是**唯一**对未知键让路的小节——那些键是插件 id，
+    别处一个字都没松。逐字段校验留给 `D25` 阶段 A 的 `config_schema`，本轮只保证形状。
+  - **② 凭据是 `config` 的兄弟键 `secrets`，不在 `config` 里面**。`D19` 已定死凭据不进
+    插件配置块（`model-openai` 的 `config_schema` 里根本没有 `api_key`），而 §6.7 又要求
+    secret 只以 `${VAR}` 引用形式出现——两条合起来的唯一落点就是同级的 `secrets`。
+    `ctx.secret(name)` = 取 `plugins.<id>.secrets.<name>` 的字面量 → `resolve_text()`。
+    **`CFG-003` 因此仍是结构性成立的**：配置树自始至终只有引用，`/config` 与
+    `nm config show` 没有别的东西可泄漏。未授权 → `PERMISSION_DENIED`，授权了但没配或变量
+    没导出 → `CONFIG_SECRET_MISSING`（`D19` 依赖这个区分把「改权限」和「补配置」分开）。
+  - **③ `builtins/cli_entry/` 一份 manifest 声明两条能力**：`CLI_ENTRY:stdio` 与
+    `CHANNEL:cli`。`CliEntry.run()` 只拿得到 `ctx`，而 `PluginContext` 没有「提交一条消息」
+    的成员——**不再为此扩一次 `PluginContext`**（`D22` 刚扩过）。把 CLI 的输入做成 Channel
+    之后，装配根的 Channel 泵天然把它接上了，`MSG-007`「不得有绕过 `InboundMessage` 的
+    专用路径」与开发方案那条「用 `ChannelContract` 验证」的验收同时成立（`CliChannel` 直接
+    继承那个契约基类）。入口与 Channel 共用一个 `CliConsole`，那是它们唯一的耦合点：
+    入口拥有进程（决定退出码），Channel 拥有消息路径。
+  - **④ 生产级 `PluginContext` 落在 `runtime/plugin_context.py`**（`R5`，与 `wiring.py` /
+    `introspection.py` 同一条理由）。`D26` 才做权限模型，因此这里**如实**写着：`granted`
+    等于 manifest 声明的集合；未声明的访问器抛 `PERMISSION_DENIED`（那条语义是真的），
+    已声明的 `fs`/`net`/`shell` 抛 `CAPABILITY_MISSING` 并指向 `D26`——六个内建一个都不用
+    它们。给它们一个能跑但没有守卫的实现才是真的危险。`instance` / `turns` 经一个可变
+    持有者 `PluginRuntime` 交下来：它们要等 registry 冻结与 orchestrator 装好才存在，而
+    ctx 必须在 `setup()` **之前**就交给插件。
+  - **`wire_capabilities(context_for=...)` 改成按 manifest 索引**（原来是按 `ProviderId`）。
+    这是本轮改到 `D16` 表面的唯一一处，理由是硬的：**全部内建共用一个 `Builtin()`**，
+    按提供方索引会让七份内建拿到同一个配置块与同一个状态目录——`session-jsonl` 会读到
+    `model-openai` 的配置。有一条 `test_each_manifest_gets_its_own_context` 钉住它。
+  - **内建的配置块由装配根合成**：派生默认值（`session-jsonl` 的 `dir`、`tools_fs` /
+    `tools_shell` 的 `workspace`、`commands-core` 的 `prefix`、`cli-entry` 的 `instance_id`）
+    **加上**用户写的那份，用户显式写过的键压过派生值。`D17`–`D22` 逐个点名的那几个坑
+    （会话写进插件私有目录、文件工具在没人预期的目录里读写、`/help` 印出错的前缀）在这里
+    一次性兑现，各有一条用例。
+  - **`commands-core` 的 `prefix` 顺手补上了**（`D22` 记的那条已知偏差）：命令体的签名
+    多一个 `settings` 参数，`/help` 因此印出**生效的** `routing.command_prefix`。
+    `DEFAULT_PREFIX` 仍与 `dispatcher.DEFAULT_COMMAND_PREFIX` 各写一份。
+  - **`EDG-108` 在装配根落地两次**：`plugins.disable` 含 CLI 提供方时**拒绝启动**并说明
+    原因；覆盖 CLI 的提供方没交出实现时，用同一批 manifest **再装一次**、但只让内建提供
+    CLI 入口（半装好的 registry 已经冻结，打补丁比重来更容易出错）。后者有一条真的注入
+    「声明了 CLI 却一项都不注册」的插件的用例。
+  - **被拒的 turn 也要有回音**：去重命中或队列拒绝时 `TurnReceipt.admitted=False`，
+    orchestrator 不发终态出站消息（那条 turn 从未开始），Channel 泵因此**自己合成**一条
+    `stream_state=FAILED` 的 `OutboundMessage`——否则 CLI 会永远等一个不会到来的终态。
+    合成的仍是 `OutboundMessage`，不是绕过契约的旁路。
+  - **两次 `Ctrl-C` 的实际语义**（§10.3）：第一次在有 turn 在跑时取消那些 turn、会话继续；
+    没有 turn 在跑时它就是「退出」。退出路径先跑 `stop()` 释放实例锁再 `os._exit`——读
+    stdin 的工作线程阻塞在 `readline()` 上，没有可移植的唤醒方式，假装能唤醒它只会让退出
+    路径多一个不成立的假设。信号处理用 `signal.signal` 而不是 `loop.add_signal_handler`
+    （后者 Windows 上没有实现，两个平台各写一条会让「按下去之后发生什么」有两套答案）。
+  - **`EDG-501` 的后半句至此有了唯一的调用点**：配置解析失败时
+    `write_config_error(layout.config_error_log_path(today), error)`，原文件一个字节不改，
+    两条各有一个用例。**JSONL sink 只能在配置加载之后接上**（它的开关在配置里），在此
+    之前的事件只进内存环——这是配置与日志开关之间不可消除的先后关系。
+  - **`nm` 有了三个真子命令**：`run`（装配 + 交互/单次执行）、`config show [--origins]
+    [--json]`、`session list|show`。后两个**不取实例锁**（看一眼配置不该与正在跑的实例
+    互斥），`nm session` 只装 `SESSION_STORE` 那一条能力——一条只读诊断不该因为模型凭据
+    没导出而失败，但它仍走同一条注册路径，插件覆盖了会话存储时它看到的就是插件那一份。
+  - **`embed/` 是真薄门面**：`open_instance()` / `run()` / `EmbeddedAgent`，一行 turn 逻辑
+    都没有。`submit()` 走的是 `orchestrator.handle()`，与 CLI 完全同一个入口；嵌入式有
+    自己的 `channel_id`（脚本里的问答不和终端里的搅进同一段历史）。`R5` 只允许 `embed/`
+    import `contracts/` 与 `runtime/`，因此 `TurnReceipt` 与 `PluginManifest` 由
+    `runtime/{instance,bootstrap}.py` 各转发一次——比让门面收 `object` 诚实。
+  - **踩到并修掉的两个真问题**：① `CliConsole` 的输入队列原本有界（`maxsize=1`），
+    `close()` 在「还有一条没被消费」时抛 `QueueFull`——那是关闭路径上最不需要的一种失败
+    （测试先发现）；② Windows 中文控制台是 GBK，默认提示符 `»` 与模型输出里的 emoji 会让
+    `sys.stdout.write` 抛 `UnicodeEncodeError`，把一次正常回答变成 traceback。提示符改成
+    ASCII，写出口加一层降级（转义而不是失败），各有一条用例。
+  - 验收：新层九个测试目录共 **1924 个用例全绿**（`D22` 收口时 1822）；`D23` 新增模块语句
+    覆盖率 **91%**（`runtime/wiring.py` 100%、`plugin_context.py` 96%、`bootstrap.py` 96%、
+    `cli_entry/` 90–100%、`embed/` 100%；缺口集中在 `nm run` 的信号与硬退出路径——那条路
+    会 `os._exit`，在测试进程里跑到那一步会把 pytest 打死，`_Interrupts` 因此单独测）。
+    `ruff check`（src + plugins + tests）、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `legacy_debt --check` 未变、`check_startup_cost --check` OK（`import nucleamind` 仍
+    0.65 ms、只拉入 1 个模块——子命令一律延迟导入）；新层 `Any` 数仍为 0。
+    真实 `nm --version` / `nm config show` / `nm session list` 在开发机上跑通。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -1172,10 +1256,15 @@
   `/plugins` `/capabilities` `/cancel`），`D21` 留下的「五个命令够不到自己的数据」由
   **扩 `PluginContext`**（新增 `ctx.instance` / `ctx.turns`，类型是 `contracts` 的
   `InstanceView` / `TurnControl`）解决，第三方插件从此也能写 `/status` 这类命令。
+  `D23` 已完成，内建 CLI 能力 `builtins/cli_entry/`（`CLI_ENTRY:stdio` + `CHANNEL:cli`
+  两条能力）、装配根 `runtime/{bootstrap,instance,plugin_context}.py`、`nm` 的三个真子命令
+  与嵌入式门面 `embed/` 一并落地，`plugins.<id>.{config,secrets}` 补上了配置层最后一个
+  缺口，**阶段 5 收口**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
-  `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
-  `model_openai/`、`tools_fs/`、`tools_shell/` 与 `commands_core/`（`D23` 追加
-  `cli_entry/`），`runtime/` 有 `wiring.py` 与 `introspection.py`；`embed/` 仍是空骨架。
+  `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
+  `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
+  `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
+  `bootstrap.py`、`instance.py` 与 `cli/`；`embed/` 已落地薄门面。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1223,20 +1312,42 @@
 
 ## 下一步工作
 
-1. **`D23` 装配根接线**：把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步），
-   并落地 `builtins/cli_entry/`——§8.2 的内建六件套已齐、`D22` 的最小命令集也已齐，
-   阶段 5 只剩 CLI 入口这一项。
-   **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
-   `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
-   注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
-   自建注册通道。先继承 `sdk.testing` 的对应契约基类再写自己的用例。
-   `D17` 的 `builtins/session_jsonl/`（要写盘的那种）、`D18` 的 `builtins/context_basic/`
-   （纯内存、零权限的那种）、`D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）、
-   `D20` 的 `builtins/tools_fs/`（一份 manifest 里多条能力声明、且能按配置少注册几条的
-   那种）、`D21` 的 `builtins/tools_shell/`（起子进程、要管取消与副作用未知的那种）
-   与 `D22` 的 `builtins/commands_core/`（要读实例自身状态的那种）
-   是这个形态的六个样例，照着写即可。
-2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
+1. **`D24` 首次运行体验与开箱可用验收 ★**（阶段 6 的里程碑）：`kernel/config/bootstrap.py`
+   生成最小 `config.json`（`EDG-506`、`BAS-006`）、`tests/e2e/test_out_of_box.py`、
+   `check_startup_cost.py` 接入 CI。**缝已经留好**：`schema.SECTION_SPECS` 与
+   `schema.defaults()` 是字段的唯一真相来源，生成模板要从它派生；要落盘一份配置先过
+   `prepare_for_write()`（`kernel/config/` 自身仍一个字节都不写）。
+   模板里至少要有 `model.name` 与 `plugins.model-openai.secrets.api_key = "${OPENAI_API_KEY}"`
+   ——`D23` 之后缺这两样的启动错误已经能指到具体字段（`/model/name` 与
+   `/plugins/model-openai/secrets/api_key`），`D24` 要做的是让用户一次都不必看到它们。
+2. 命名待对齐：技术方案 §4.2 叫 `scaffold.py`，开发方案 `D24` 那行叫 `bootstrap.py`；
+   注意 `runtime/bootstrap.py` 已经被 `D23` 占了，两者不是一回事。
+
+`D23` 留下的、`D24`–`D27` 必须用到的事实：
+
+- **`plugins.<id>` 是插件配置的落点**，值形如 `{"config": {...}, "secrets": {...}}`。
+  `disable` / `search_paths` 是保留键。**`plugins` 小节是全项目唯一对未知键让路的小节**
+  （那些键是插件 id），校验在 `kernel/config/plugin_blocks.py`，别在 `schema.py` 里另开
+  一张表。逐字段校验（manifest 的 `config_schema`）是 `D25` 阶段 A 的活，现在还没人做。
+- **`ctx.secret()` 已经接到 `resolve_text()` 上**（`runtime/plugin_context.py`）。`D26`
+  要做的是在 `grants_of(manifest)` 之前再叠一层**用户批准**（`permissions.json`）——形状
+  不必改，只是构造 `PluginGrants` 的人多问一句。`fs` / `net` / `shell` 三个访问器目前抛
+  `CAPABILITY_MISSING` 并指向 `D26`，那不是遗漏，是「没有守卫就不给门面」。
+- **`wire_capabilities(context_for=...)` 按 manifest 索引**，不是按 `ProviderId`。`D27` 加
+  外部插件时照抄这条：内建全是 `Builtin()`，按提供方索引会让配置块串到一起。
+- **`AgentInstance.stop()` 会取消 ctx 派生的任务与事件桥任务**（`EDG-104`/`EDG-105` 的
+  当前形态）。`D27` 落地插件生命周期时，`plugin_stop_timeout_ms` 的等待要加在这里，
+  而不是另起一套任务表。
+- **`ToolExecutor.orphans` 仍然没有调用方**（`D14` 留的那条）：实例停止时应当报告它。
+  `AgentInstance.stop()` 是它唯一合理的落点，`D24` 或 `D26` 顺手接上即可。
+- **`Diagnostics.plugins_source` 仍是默认的空元组**：`nm plugins` / `/plugins` 因此列不出
+  任何东西，那是对的——现在确实一个外部插件都没有。`D25`–`D27` 落地后在
+  `runtime/bootstrap.py` 里给它传一个真实现，**不要**再写第二套查询。
+- **`nm plugins` / `nm capabilities` 还没有**（`D29`）。`runtime/cli/commands/` 里加一个
+  模块即可，数据源是 `AgentInstance.diagnostics`，与会话内的 `/plugins` 共用。
+- **Windows 上有两条已知的平台差异**：控制台编码不是 UTF-8（输出遇到编不出来的字符会
+  降级成转义，提示符因此只用 ASCII）；`tools_shell` 的 `shell` 配置项不生效（`D21`）。
+  两条都如实写在各自的 docstring 里。
 
 `D22` 留下的、`D23`/`D26` 必须用到的事实：
 
@@ -1691,8 +1802,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅
-D23– ⬜（尚未开始）
+D22 ✅  D23 ✅
+D24– ⬜（尚未开始）
 
 ## 本目录文档分类
 
