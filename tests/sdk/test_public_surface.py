@@ -48,9 +48,11 @@ SDK_TESTING_PUBLIC_NAMES: Final[tuple[str, ...]] = (
     "ContextProviderContract",
     "EchoTool",
     "FakeCliEntry",
+    "FakeInstanceView",
     "FakeMemoryProvider",
     "FakeModelProvider",
     "FakePluginContext",
+    "FakeTurnControl",
     "InMemorySessionStore",
     "ManualCancel",
     "ModelProviderContract",
@@ -85,7 +87,7 @@ API_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
     NucleaAPI: frozenset({"ctx", *REGISTRATION_METHODS.values()}),
     PluginContext: frozenset(
         {"plugin_id", "config", "state_dir", "logger", "events", "spawn_task", "fs", "net",
-         "shell", "secret"}
+         "shell", "secret", "instance", "turns"}
     ),
     FileAccess: frozenset({"read_text", "write_text", "list_dir"}),
     HttpAccess: frozenset({"request"}),
@@ -195,6 +197,10 @@ def test_every_api_method_documents_its_exception_contract() -> None:
         "PluginContext.fs",
         "PluginContext.net",
         "PluginContext.shell",
+        # `D22`：只读诊断视图与 turn 控制面。它们不是资源访问器，属性访问不做权限判定，
+        # 因此连 `PERMISSION_DENIED` 都没有——异常约定写在各自方法上（`contracts/protocols.py`）。
+        "PluginContext.instance",
+        "PluginContext.turns",
     }
     missing = [
         f"{protocol.__name__}.{name}"

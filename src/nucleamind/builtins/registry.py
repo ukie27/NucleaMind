@@ -26,6 +26,7 @@ from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
 
 __all__ = [
     "BUILTIN_MANIFESTS",
+    "COMMANDS_CORE",
     "CONTEXT_BASIC",
     "MODEL_OPENAI",
     "SESSION_JSONL",
@@ -377,11 +378,60 @@ TOOLS_SHELL: Final = PluginManifest(
     critical=False,
 )
 
-#: 全部内建能力的 manifest。`D22` 逐个追加（commands_core / cli_entry）。
+#: `D22` 内建命令集（技术方案 §8.1）。
+#:
+#: `critical=False`：没有斜杠命令的 Agent 仍然能对话——这与「没有模型」「没有会话存储」
+#: 不是一回事。一份写错的 `disable` 应当让这一项加载失败并留下诊断，而不是把整个实例
+#: 拽下水。
+#:
+#: **一条权限也不声明**。六个命令的数据全部来自 `ctx.instance` / `ctx.turns`，而那两个
+#: 不是资源访问器：只读诊断与事件流是可观测性，与 `ctx.events` 同一档（`sdk/api.py`）。
+#: 本内建不读盘、不出网、不起子进程。
+#:
+#: **六条声明必须与 `commands_core.COMMAND_NAMES` 逐一对应**，由测试对照。被 `disable`
+#: 关掉的命令**不会**被注册，因此装配根必须用同一份配置过滤这里的声明
+#: （`runtime/wiring.py` 的 `keep` + `commands_core.enabled_command_names()`）——否则
+#: `CapabilityHost.finish()` 会以 `PLUGIN_LOAD_FAILED` 拒绝加载，而那个报错是对的。
+COMMANDS_CORE: Final = PluginManifest(
+    id="commands-core",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind.builtins.commands_core:setup",
+    capabilities=(
+        CapabilityDecl(kind=CapabilityKind.COMMAND, name="help"),
+        CapabilityDecl(kind=CapabilityKind.COMMAND, name="config"),
+        CapabilityDecl(kind=CapabilityKind.COMMAND, name="session"),
+        CapabilityDecl(kind=CapabilityKind.COMMAND, name="plugins"),
+        CapabilityDecl(kind=CapabilityKind.COMMAND, name="capabilities"),
+        CapabilityDecl(kind=CapabilityKind.COMMAND, name="cancel"),
+    ),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "disable": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "要关掉的命令名。被关掉的命令不会注册，因此也不出现在 "
+                "/help 里。表外的名字会被拒绝。",
+            },
+            "max_output_chars": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 16384,
+                "description": "单条命令输出的字符上限，超出即截断并标注。",
+            },
+        },
+        "additionalProperties": False,
+    },
+    critical=False,
+)
+
+#: 全部内建能力的 manifest。`D23` 追加 cli_entry。
 BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (
     SESSION_JSONL,
     CONTEXT_BASIC,
     MODEL_OPENAI,
     TOOLS_FS,
     TOOLS_SHELL,
+    COMMANDS_CORE,
 )

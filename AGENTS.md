@@ -26,10 +26,12 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D17` 已落地内建 Session（`builtins/session_jsonl/`），`D18` 已落地内建 Context
   （`builtins/context_basic/`），`D19` 已落地内建 Model（`builtins/model_openai/`），
   `D20` 已落地内建文件工具（`builtins/tools_fs/`），`D21` 已落地内建 shell 工具
-  （`builtins/tools_shell/`，§8.2 冻结清单六件套至此交齐），**阶段 5 进行中**，下一步 `D22`。
+  （`builtins/tools_shell/`，§8.2 冻结清单六件套至此交齐），`D22` 已落地内建命令集
+  （`builtins/commands_core/` + `runtime/introspection.py`，并为此扩了 `PluginContext`），
+  **阶段 5 进行中**，下一步 `D23`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
-  `runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，`kernel/` 有 `registry/`、`turn/`、
-  `config/`、`observability/`、`routing/` 与 `plugins/`。
+  `runtime/` 有 `wiring.py` 与 `introspection.py`，`embed/` 仍是空骨架，`kernel/` 有
+  `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -61,8 +63,8 @@ webui/                     # 前端源码（TypeScript）
 
 `contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面，
 `kernel/registry/` 已落地；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
-`model_openai/`、`tools_fs/` 与 `tools_shell/`，
-`runtime/` 有 `wiring.py`，`embed/` 仍是空骨架，按开发方案逐个填充。
+`model_openai/`、`tools_fs/`、`tools_shell/` 与 `commands_core/`，
+`runtime/` 有 `wiring.py` 与 `introspection.py`，`embed/` 仍是空骨架，按开发方案逐个填充。
 **新代码直接写在最终位置**，不要放临时目录。
 
 契约层已冻结、后续模块必须复用而不是另起炉灶的三样东西：
@@ -80,6 +82,17 @@ webui/                     # 前端源码（TypeScript）
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
 写内建能力或插件时，先继承 `sdk.testing` 的 5 个契约测试基类。
+
+**`D22` 给 `PluginContext` 加了 `instance` 与 `turns`**（类型是 `contracts` 的
+`InstanceView` / `TurnControl`，`sdk.__all__` 因此一个字都没变）。它们是插件读取实例自身
+状态、取消在跑 turn 的**唯一**通道——`/plugins`、`/capabilities` 这类命令本来就该是插件
+能写的东西，把它们做成 `runtime/` 特权就是在给「内建是特殊的」找借口（`BAS-005`）。
+两个门面**不需要权限声明**（只读可观测性不是资源访问，与 `ctx.events` 同一档），
+分成两个 Protocol 是因为一个是只读、一个是控制动作，`D26` 可以分别授予。
+生产实现在 `runtime/introspection.py`，一致性靠返回类型标注静态证明（`wiring.py` 的先例）。
+往 `PluginContext` 加成员要同时改**两处**快照：`tests/contracts/test_protocols.py`
+（`SUPPORT_PROTOCOLS` 现在 3 条，`CAPABILITY_PROTOCOLS` 仍恒为 9）与
+`tests/sdk/test_public_surface.py`（`API_PROTOCOLS` + 只读属性豁免名单）。
 
 `kernel/registry/` 是**全项目冲突语义的唯一来源**：能力冲突、覆盖与遮蔽的判定只在
 `resolution.py` 里，注册点一律不判冲突（`EDG-102`：覆盖永不由加载顺序决定）。注册必须走
@@ -277,6 +290,15 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   （都是 `ceil(len/3)`），由一条逐字符对照测试钉住。自报偏小会让请求真的超出模型窗口，
   偏大则白丢内容。运维配置的自定义指令是 `TrustLevel.OPERATOR` 而不是 `SYSTEM`，
   它因此进不了 system 消息位置——那是 `CMD-005` 的分级，不是可以顺手改掉的实现细节。
+- **命令的数据只从 `ctx.instance` / `ctx.turns` 来**（`D22`）：`commands_core` 的六个命令
+  没有一条走特权通道，`/help` 因此能列出自己，第三方也能写 `/status`。`handle()` 的
+  「约定不抛」只在 `_Handler.handle` 一处实现——`NucleaError` 原样带出，其余异常折成
+  `KERNEL_INVARIANT_VIOLATED` 且**只放类型名不放异常消息**（第三方命令的异常文本可能带着
+  凭据）。`operator_only` 与参数个数由 dispatcher 前置校验，命令自己**不要**再抄一遍；
+  带自由文本的命令要声明 `repeated=True` 的尾参，否则会被按「参数过多」拒掉。
+  **`/cancel` 显式拒绝取消自己所在的 turn**（它正持有 session 槽位，取消自己会让输出发不
+  出去），不带参数时只列出而不是取消全部。`/config` 的脱敏是**结构性**成立的（配置树只有
+  `${VAR}` 字面量），`redact()` + `scrub()` 是纵深防御而不是唯一防线。
 
 ## 开发命令
 

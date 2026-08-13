@@ -273,6 +273,7 @@ src/nucleamind/
 │
 ├── runtime/                   # 第 5 层：组装根。唯一可同时 import kernel 与 builtins
 │   ├── wiring.py              # 依赖装配：registry ← builtins + plugins
+│   ├── introspection.py       # InstanceView / TurnControl 的生产实现（D22）
 │   ├── bootstrap.py           # 启动序列（§10.1 的 10 步）
 │   ├── instance.py            # AgentInstance：就绪 / 运行 / 停止
 │   └── cli/                   # nm 可执行程序
@@ -1221,6 +1222,24 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 | Context | `builtins/context_basic/` | 系统指令 + 历史 + 按 token 预算的尾部保留裁剪 |
 | 基础工具 | `builtins/tools_fs/`、`tools_shell/` | 6 个工具，复用 nanobot 已验证的路径守卫与沙箱 |
 | 命令 | `builtins/commands_core/` | `/help` `/config` `/session` `/plugins` `/capabilities` `/cancel` |
+
+`D22` 落地时对「命令」一行的细化（实现在 `builtins/commands_core/`）：
+
+- **六个命令里有五个的数据在 `kernel/` 里，而 `R4` 禁止 `builtins/` 够到它**。解法是给
+  `PluginContext` 加 `instance` 与 `turns` 两个成员，类型 `InstanceView` / `TurnControl`
+  落在 `contracts/protocols.py`（kernel 侧结构化满足，`R2` 禁止 `kernel/` import `sdk/`，
+  与 `CliEntry`、`SecretStr` 同一条理由）。**不选「由 `runtime/` 特权注册」**：
+  `/plugins`、`/capabilities` 这类命令本来就该是第三方插件能写的东西，特权注册会让
+  `BAS-005` 在这一项上破例，`/help` 还列不出自己。
+- **两个 Protocol 而不是一个七成员门面**：`InstanceView` 是只读可观测性，`TurnControl` 是
+  控制动作，`D26` 落地权限模型后应当可以分别授予。两者都进 `SUPPORT_PROTOCOLS`
+  （与 `CancelSignal` 同档），**`CapabilityKind` 与 `CAPABILITY_PROTOCOLS` 仍恒为 9**。
+- **`capabilities()` / `plugins()` 返回 JSON**：`ResolutionReport` 与 `PluginStatus` 在
+  `kernel/` 里、契约层够不着，而两者本来就以 JSON 为发布形态（`NFR-502`，各有
+  `to_json()`）。在契约层复刻它们的字段只会多出一份必然漂移的定义。
+- **`config_document()` 是全项目唯一越过 `CFG-002` 的成员**（`ctx.config` 只给自己那一块），
+  因为 `/config` 的职责就是显示整份配置。明文凭据结构性地不在那份文档里（`D11`：配置树
+  自始至终持有 `${VAR}` 字面量）。
 
 **内建 Model Provider 选 OpenAI 兼容协议**，依据：覆盖面最广（OpenAI、Azure、
 本地 vLLM/Ollama/LM Studio、多数中转服务都兼容），使 `BAS-001` 的「配置一份凭据」

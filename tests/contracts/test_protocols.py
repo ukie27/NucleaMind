@@ -16,6 +16,7 @@ from typing import Final
 import pytest
 
 from nucleamind.contracts import (
+    CancelReason,
     CancelSignal,
     Channel,
     ChunkKind,
@@ -23,6 +24,7 @@ from nucleamind.contracts import (
     CommandHandler,
     CommandInvocation,
     CommandResult,
+    CommandSpec,
     ContextFragment,
     ContextProvider,
     Correlation,
@@ -32,6 +34,7 @@ from nucleamind.contracts import (
     HookHandler,
     HookOutcome,
     InboundMessage,
+    InstanceView,
     MemoryProvider,
     ModelChunk,
     ModelInfo,
@@ -47,11 +50,15 @@ from nucleamind.contracts import (
     ToolHandler,
     ToolInvocation,
     ToolResult,
+    TurnControl,
+    TurnId,
 )
 from nucleamind.contracts.tool import SideEffect
 
 #: 公开表面快照：Protocol -> 成员名集合。新增或删除方法必须同步改这里（`NFR-104`）。
-#: `CancelSignal` 单列在 `SUPPORT_PROTOCOLS`：它是取消语义的支撑类型，不是可注册能力。
+#: `CancelSignal` / `InstanceView` / `TurnControl` 单列在 `SUPPORT_PROTOCOLS`：它们是
+#: 支撑类型（取消语义、实例只读视图、turn 控制面），**不是可注册能力**——
+#: `CAPABILITY_PROTOCOLS` 必须恒为 9，与 `CapabilityKind` 的 9 个取值一一对应。
 CAPABILITY_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
     ModelProvider: frozenset({"describe", "complete", "stream"}),
     ToolHandler: frozenset({"execute"}),
@@ -66,6 +73,10 @@ CAPABILITY_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
 
 SUPPORT_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
     CancelSignal: frozenset({"requested", "raise_if_requested"}),
+    InstanceView: frozenset(
+        {"commands", "capabilities", "plugins", "config_document", "session_snapshot"}
+    ),
+    TurnControl: frozenset({"live_turns", "cancel_turn"}),
 }
 
 ALL_PROTOCOLS: Final[dict[type, frozenset[str]]] = {**CAPABILITY_PROTOCOLS, **SUPPORT_PROTOCOLS}
@@ -271,6 +282,31 @@ class FakeCliEntry:
         return 0
 
 
+class FakeInstanceView:
+    def commands(self) -> tuple[CommandSpec, ...]:
+        return ()
+
+    def capabilities(self) -> Mapping[str, object]:
+        return {}
+
+    def plugins(self) -> tuple[Mapping[str, object], ...]:
+        return ()
+
+    def config_document(self) -> Mapping[str, object]:
+        return {}
+
+    async def session_snapshot(self, key: SessionKey) -> SessionSnapshot:
+        return SessionSnapshot(session_key=key)
+
+
+class FakeTurnControl:
+    def live_turns(self) -> tuple[TurnId, ...]:
+        return ()
+
+    def cancel_turn(self, turn_id: TurnId, reason: CancelReason = CancelReason.USER) -> bool:
+        return False
+
+
 FAKES: Final[list[tuple[type, object]]] = [
     (CancelSignal, FakeCancel()),
     (ModelProvider, FakeModelProvider()),
@@ -282,6 +318,8 @@ FAKES: Final[list[tuple[type, object]]] = [
     (CommandHandler, FakeCommandHandler()),
     (HookHandler, FakeHookHandler()),
     (CliEntry, FakeCliEntry()),
+    (InstanceView, FakeInstanceView()),
+    (TurnControl, FakeTurnControl()),
 ]
 
 

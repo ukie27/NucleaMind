@@ -24,7 +24,9 @@ from logging import Logger, getLogger
 from pathlib import Path
 
 from nucleamind.contracts import (
+    CancelReason,
     CancelSignal,
+    CommandSpec,
     ContextFragment,
     Correlation,
     ErrorCode,
@@ -38,20 +40,24 @@ from nucleamind.contracts import (
     PermissionKind,
     RiskLevel,
     SecretStr,
+    SessionKey,
     SessionSnapshot,
     SideEffect,
     ToolInvocation,
     ToolResult,
     ToolSpec,
     TrustLevel,
+    TurnId,
 )
 
 __all__ = [
     "ECHO_SPEC",
     "EchoTool",
     "FakeCliEntry",
+    "FakeInstanceView",
     "FakeMemoryProvider",
     "FakePluginContext",
+    "FakeTurnControl",
     "NullChannel",
     "RecordingEventSubscriber",
     "StaticContextProvider",
@@ -252,6 +258,81 @@ class RecordingEventSubscriber:
             self.subscriptions.append((event, handler))
 
 
+class FakeInstanceView:
+    """最小合规 `InstanceView`（`D22`）：五份数据都由构造参数直接给出。
+
+    刻意**不**内建任何默认内容：一个自带三条假命令的视图会让 `/help` 的测试在什么都没
+    注册时也「看起来对」。空实例的正确形态就是空——`EDG-101` 要求那也是可用的。
+    """
+
+    def __init__(
+        self,
+        *,
+        commands: Sequence[CommandSpec] = (),
+        capabilities: Mapping[str, JsonValue] | None = None,
+        plugins: Sequence[Mapping[str, JsonValue]] = (),
+        config_document: Mapping[str, JsonValue] | None = None,
+        snapshots: Mapping[str, SessionSnapshot] | None = None,
+    ) -> None:
+        self._commands = tuple(commands)
+        self._capabilities = dict(capabilities or {})
+        self._plugins = tuple(plugins)
+        self._config = dict(config_document or {})
+        #: 按 `storage_id()` 索引——那是已发布的编码契约，让 Fake 也走一遍它。
+        self._snapshots = dict(snapshots or {})
+
+    def commands(self) -> tuple[CommandSpec, ...]:
+        return self._commands
+
+    def set_commands(self, commands: Sequence[CommandSpec]) -> None:
+        """事后填入命令清单。
+
+        **不是便利方法，是在模拟真实的时序**：命令索引要等全部插件注册完才建得出来，而
+        `PluginContext` 必须在 `setup()` **之前**就交给插件。生产实现因此持有一个 callable
+        （`runtime/introspection.py::KernelInstanceView.commands_source`）；测试里装配完再
+        填一次是同一件事的最小形态。
+        """
+        self._commands = tuple(commands)
+
+    def capabilities(self) -> Mapping[str, JsonValue]:
+        return dict(self._capabilities)
+
+    def plugins(self) -> tuple[Mapping[str, JsonValue], ...]:
+        return self._plugins
+
+    def config_document(self) -> Mapping[str, JsonValue]:
+        return dict(self._config)
+
+    async def session_snapshot(self, key: SessionKey) -> SessionSnapshot:
+        """不存在的会话返回**空快照**而不是抛错，与 `SessionStore.load()` 一致。"""
+        existing = self._snapshots.get(key.storage_id())
+        return existing if existing is not None else SessionSnapshot(session_key=key)
+
+
+class FakeTurnControl:
+    """最小合规 `TurnControl`（`D22`）：记下每次取消请求，供断言。
+
+    `cancel_turn()` 对未知 `turn_id` 返回 `False` 而**不抛**——「已经结束了」与「失败了」
+    对用户是同一个好结果，对诊断不是。请求仍然记进 `requested`：`/cancel` 是否真的把
+    请求发出去了，与目标当时在不在跑是两件事。
+    """
+
+    def __init__(self, live: Sequence[TurnId] = ()) -> None:
+        self._live = list(live)
+        #: 按顺序记录 `(turn_id, reason)`，包括打在已结束 turn 上的那些。
+        self.requested: list[tuple[TurnId, CancelReason]] = []
+
+    def live_turns(self) -> tuple[TurnId, ...]:
+        return tuple(self._live)
+
+    def cancel_turn(self, turn_id: TurnId, reason: CancelReason = CancelReason.USER) -> bool:
+        self.requested.append((turn_id, reason))
+        if turn_id not in self._live:
+            return False
+        self._live.remove(turn_id)
+        return True
+
+
 class FakePluginContext:
     """最小合规 `PluginContext`，权限语义是**真的**（`D26` 之前的行为基准）。
 
@@ -269,6 +350,8 @@ class FakePluginContext:
         state_dir: Path | None = None,
         granted: frozenset[PermissionKind] = frozenset(),
         secrets: Mapping[str, str] | None = None,
+        instance: FakeInstanceView | None = None,
+        turns: FakeTurnControl | None = None,
     ) -> None:
         self._plugin_id = plugin_id
         self._config = dict(config or {})
@@ -276,6 +359,10 @@ class FakePluginContext:
         self._granted = granted
         self._secrets = dict(secrets or {})
         self._events = RecordingEventSubscriber()
+        #: `D22`：诊断视图与 turn 控制面。**不需要权限**（与 `events` 同一档：只读的
+        #: 可观测性不是资源访问），因此默认就给一个空的而不是留 `None` 让属性访问炸掉。
+        self._instance = instance if instance is not None else FakeInstanceView()
+        self._turns = turns if turns is not None else FakeTurnControl()
         #: 经 `spawn_task()` 登记过的任务名，按顺序。不真的起协程——「谁的任务」可判定
         #: 才是这个 API 存在的理由，而那件事记下名字就够断言了。
         self.tasks: list[str] = []
@@ -299,6 +386,14 @@ class FakePluginContext:
     @property
     def events(self) -> RecordingEventSubscriber:
         return self._events
+
+    @property
+    def instance(self) -> FakeInstanceView:
+        return self._instance
+
+    @property
+    def turns(self) -> FakeTurnControl:
+        return self._turns
 
     def spawn_task(self, coro: object, *, name: str) -> None:
         del coro

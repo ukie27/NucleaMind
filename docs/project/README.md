@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-13
-- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D21` 均已完成，下一步 `D22`）
+- 当前阶段：阶段 5 内建能力**进行中**（`D00`–`D22` 均已完成，下一步 `D23`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1069,6 +1069,73 @@
     `check_startup_cost --check` OK（`import nucleamind` 仍 0.71 ms、只拉入 1 个模块）；
     新层 `Any` 数仍为 0。**技术方案 §8.2 的冻结清单六件套至此交齐。**
 
+- **`D22` 内建命令：`commands_core`**（`builtins/commands_core/` 五个模块约 560 行 +
+  `builtins/registry.py` 的第六条 manifest + `runtime/introspection.py` +
+  `contracts/protocols.py` 与 `sdk/api.py` 各扩一处 + `tests/builtins/test_commands_core.py`
+  49 个用例）：
+  - **本轮唯一需要拍板的事是 `D21` 留下的那条：六个命令有五个够不到自己需要的数据**
+    （`/help` 要 registry、`/capabilities` 与 `/plugins` 要诊断、`/config` 要完整配置、
+    `/cancel` 要 orchestrator），而 `R4` 挡着 `builtins → kernel`，`CommandInvocation` 与
+    `PluginContext` 两条路都够不到。四条出路里**取的是「扩 `PluginContext`」**：
+    `/plugins`、`/capabilities` 这类命令**本来就该是第三方插件能写的东西**，而其余三条
+    （由 `runtime/` 特权注册 / 快照塞进 `ctx.config` / 改注册载荷形状）都在给「内建是特殊的」
+    找借口——`BAS-005` 会在这一项上破例，`/help` 还列不出自己。
+  - **新增两个 support Protocol 而不是一个七成员门面**（`contracts/protocols.py`）：
+    `InstanceView`（`commands` / `capabilities` / `plugins` / `config_document` /
+    `session_snapshot`）与 `TurnControl`（`live_turns` / `cancel_turn`）。分开是因为一个是
+    只读可观测性、一个是**控制动作**——`D26` 落地权限模型后，「能看」与「能取消别人的 turn」
+    应当可以分别授予，合并就没有这条分界线了。它们落在 `contracts/` 而不是 `sdk/`：
+    kernel 侧的实现要结构化满足它们，而 `R2` 禁止 `kernel/` import `sdk/`（与 `D05` 下沉
+    `CliEntry`、`D11` 下沉 `SecretStr` 同一条理由）。
+  - **`CAPABILITY_PROTOCOLS` 仍是 9**：新增的两个进 `SUPPORT_PROTOCOLS`（与 `CancelSignal`
+    同一档），它们不是可注册能力，`CapabilityKind` 一个取值都没多。**`sdk.__all__` 一个字
+    都没改**——契约类型不从 `sdk` 转发（`R4`：插件直接 import `contracts`），因此这次动
+    冻结表面的代价被压到两处快照：`test_protocols.py::SUPPORT_PROTOCOLS`（1 → 3）与
+    `test_public_surface.py::API_PROTOCOLS[PluginContext]`（10 → 12）。
+  - **`capabilities()` / `plugins()` 返回 JSON 而不是 kernel 类型**：`ResolutionReport` 与
+    `PluginStatus` 都在 `kernel/` 里、契约层够不着，而这两样**本来就以 JSON 为发布形态**
+    （`NFR-502` 要求报告可序列化，两者各有 `to_json()`）。在契约层复刻一遍它们的字段只会
+    多出一份必然漂移的定义。其余三个成员用的 `CommandSpec` / `SessionKey` /
+    `SessionSnapshot` 全在 `contracts/` 里，因此**是强类型的**。
+  - **生产实现在 `runtime/introspection.py`**（`R5` 的落点，与 `wiring.py` 同一条理由：
+    只有 `runtime/` 同时看得见 kernel 与 sdk）。一致性同样**靠类型标注静态证明**——
+    `build_instance_view()` / `build_turn_control()` 的返回类型就写成 `InstanceView` /
+    `TurnControl`，basedpyright 严格模式下不成立即报错；测试验不了（`**/tests` 被排除在
+    类型检查外），`isinstance` 也验不了（`runtime_checkable` 只查属性存在性）。
+  - **命令索引是惰性取的**（`commands_source` 是 callable），与
+    `Diagnostics.capabilities_source` 同一条理由：索引要等全部插件注册完才建得出来，而
+    `PluginContext` 必须在 `setup()` **之前**就交给插件。**这条是测试先发现的**——
+    第一版 `FakeInstanceView` 在构造时收命令清单，`/help` 于是永远是空的；`set_commands()`
+    是那个时序的最小形态。
+  - **`/config` 的脱敏是结构性成立的**：`D11` 定死配置树自始至终持有 `${VAR}` 字面量、
+    明文只在 `SecretMap` 里，因此那份文档「没有别的东西可泄漏」。仍然过一道 `redact()` +
+    `scrub()` 作纵深防御，并有一条把明文**硬塞进**文档的哨兵用例。它是
+    **`operator_only=True`** 的：配置不含明文凭据，但仍然是「实例怎么装的」。
+  - **`/cancel` 取消不了自己所在的 turn**：这条命令正持有 session 槽位在跑，
+    `live_turns()` 里当然有它；取消自己既没有意义，也会让这条命令的输出发不出去，因此
+    **显式拒绝**而不是让用户困惑地看着自己的命令消失。**不带参数时只列出而不是取消全部**
+    ——一次误敲把所有并发 turn 全掐掉不可撤销，而列出来再敲一次只多一次往返。
+  - **`handle()` 的「约定不抛」只实现一次**（`_Handler.handle` 的统一出口，与 `D20` 的
+    `base.FsTool` 同一种做法）。`NucleaError` 原样带出（实现方给的诊断比 Kernel 能编的更准），
+    其余异常折成 `KERNEL_INVARIANT_VIOLATED` 且**只放类型名不放异常消息**——第三方命令的
+    异常文本可能带着凭据（`D13` 的先例，有哨兵用例）。捕 `Exception` 不捕 `BaseException`。
+  - **`critical=False`、一条权限也不声明**（数据全部来自 `ctx.instance` / `ctx.turns`，
+    那两个不是资源访问器，与 `ctx.events` 同一档）。**单命令禁用直接复用 `D20` 的 `keep`
+    那条路**（`enabled_command_names` + `wire_capabilities`），没有发明第二套机制；有一条
+    「忘了传 `keep` 就被 `PLUGIN_LOAD_FAILED` 挡下」的用例。**未新增 `ErrorCode`**，
+    **未碰 `kernel/`**。
+  - **`/help` 的前缀用默认值渲染**：前缀是 `kernel/config` 的 `routing.command_prefix`，
+    而内建够不着它、装配根也没有交下来的通道（`ctx.config` 只给自己那一块）。改过前缀的
+    用户会在 `/help` 里看到默认前缀——**这是已知的小偏差**，不值得为它扩配置块，`D23`
+    接线时可以顺手把它经配置块交下来。
+  - 验收：`tests/builtins`(465) 全绿，`builtins/commands_core/` 语句覆盖率 **99%**
+    （未覆盖的 1 行是 `_rows` 的防御性非序列化分支）；新层八个测试目录共 **1822 个用例
+    全绿**（`D21` 收口时 1767）。`ruff check`（src + plugins + tests）、`basedpyright`
+    （新层 0 报错，legacy 仍是既有 4 个）、`legacy_debt --check` 未变、
+    `check_startup_cost --check` OK（`import nucleamind` 仍 0.68 ms、只拉入 1 个模块）；
+    新层 `Any` 数仍为 0。完整 `tests/legacy` 14 failed / 4808 passed / 30 skipped，
+    与 `D21` 完全一致，失败全部落在既有那批网络、子进程时序与 oauth-cli-kit 家族。
+
 ## 正在进行
 
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -1101,10 +1168,14 @@
   `D21` 已完成，内建 shell 工具 `builtins/tools_shell/` 落地（`shell.exec`、
   「终止信号 → 宽限期 → 强杀」三步取消、宽限期用尽标 `SideEffect.UNKNOWN`、
   子进程环境白名单），**§8.2 冻结清单六件套至此交齐**。
+  `D22` 已完成，内建命令集 `builtins/commands_core/` 落地（`/help` `/config` `/session`
+  `/plugins` `/capabilities` `/cancel`），`D21` 留下的「五个命令够不到自己的数据」由
+  **扩 `PluginContext`**（新增 `ctx.instance` / `ctx.turns`，类型是 `contracts` 的
+  `InstanceView` / `TurnControl`）解决，第三方插件从此也能写 `/status` 这类命令。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py`、`session_jsonl/`、`context_basic/`、
-  `model_openai/`、`tools_fs/` 与 `tools_shell/`（`D22` 追加 `commands_core/`），
-  `runtime/` 有 `wiring.py`；`embed/` 仍是空骨架。
+  `model_openai/`、`tools_fs/`、`tools_shell/` 与 `commands_core/`（`D23` 追加
+  `cli_entry/`），`runtime/` 有 `wiring.py` 与 `introspection.py`；`embed/` 仍是空骨架。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1152,8 +1223,9 @@
 
 ## 下一步工作
 
-1. 继续阶段 5 的其余内建能力：`D22` commands_core（`D19`–`D21` 已完成，
-   技术方案 §8.2 的内建工具六件套已交齐）。
+1. **`D23` 装配根接线**：把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步），
+   并落地 `builtins/cli_entry/`——§8.2 的内建六件套已齐、`D22` 的最小命令集也已齐，
+   阶段 5 只剩 CLI 入口这一项。
    **每个内建能力的落地形态已经定死**：写一份 `PluginManifest` 追加进
    `builtins/registry.py::BUILTIN_MANIFESTS`，再写一个 `setup(api)` 用 `api.register_*`
    注册——没有别的路，`tests/architecture/test_builtin_no_privilege.py` 会当场拦下任何
@@ -1161,37 +1233,36 @@
    `D17` 的 `builtins/session_jsonl/`（要写盘的那种）、`D18` 的 `builtins/context_basic/`
    （纯内存、零权限的那种）、`D19` 的 `builtins/model_openai/`（要出网 + 用凭据的那种）、
    `D20` 的 `builtins/tools_fs/`（一份 manifest 里多条能力声明、且能按配置少注册几条的
-   那种）与 `D21` 的 `builtins/tools_shell/`（起子进程、要管取消与副作用未知的那种）
-   是这个形态的五个样例，照着写即可。
+   那种）、`D21` 的 `builtins/tools_shell/`（起子进程、要管取消与副作用未知的那种）
+   与 `D22` 的 `builtins/commands_core/`（要读实例自身状态的那种）
+   是这个形态的六个样例，照着写即可。
 2. `D23` 装配根接线时把 `runtime/wiring.py` 扩成完整 bootstrap（§10.1 的 10 步）。
 
-`D22` 开工前必须先拍板的一件事（`D21` 收口时发现，尚未有结论）：
+`D22` 留下的、`D23`/`D26` 必须用到的事实：
 
-- **`commands_core` 的六个命令有五个够不到自己需要的数据，而 `R4` 挡着**。逐条看：
-  `/help` 要列出全部已注册命令（在 registry）、`/capabilities` 与 `/plugins` 要
-  `Diagnostics` / `ResolutionReport`（在 `kernel/observability/`）、`/config` 要**完整**
-  配置文档（`ctx.config` 按 `CFG-002` 只给自己那一块）、`/cancel` 要
-  `TurnOrchestrator.cancel()`（在 `kernel/turn/`）。只有 `/session` 勉强能靠注入的
-  `SessionStore` 解决。而 `CommandInvocation` 只带 `name` / `args` / `raw_text` /
-  `message` / `correlation`，`PluginContext` 只有
-  `config` / `state_dir` / `logger` / `events` / `spawn_task` / `fs` / `net` / `shell` /
-  `secret` / `plugin_id`——**两条路都够不到**。
-- 这不是 `D22` 实现时能顺手绕过去的细节，它决定 `commands_core` 长什么样。看得见的四条路，
-  各有各的代价，**不要在写代码时随手选一条**：
-  1. **扩 `PluginContext`**（加一个只读诊断门面 + 一个取消动作）。最正统，但那是**冻结的
-     SDK 表面**，要走 `NFR-103` 的评审闸门并改 `tests/sdk/test_public_surface.py` 的字面量
-     快照。好处是第三方插件也能写 `/status` 这类命令——那本来就是插件该有的能力。
-  2. **`commands_core` 不进 `builtins/`，由 `runtime/` 直接注册**。`R5` 允许 `runtime/`
-     同时看见 kernel 与 sdk，闭包一注入就完事。代价是它不再是「普通 manifest + `setup`」，
-     `BAS-005`「内建不享受特权」在这一项上破例，`/help` 也就列不出自己。
-  3. **装配根把快照塞进 `ctx.config`**。`/capabilities` 勉强可行（`ResolutionReport.to_json()`
-     本来就是 JSON），但 `/cancel` 是**动作**不是数据，`/config` 的内容会随时变，
-     静态快照给不出。半条路，不能覆盖六个命令。
-  4. **命令能力多一个注册形态**（`RegisteredCommand` 带一个 kernel 侧注入的依赖包）。
-     改的是 `D13`/`D14` 定死的四个注册载荷形状之一，牵连面比看起来大。
-- **倾向 1**，理由是 `/plugins`、`/capabilities` 这类命令本来就该是插件能写的东西，
-  而前三条都在给「内建是特殊的」找借口。但它动冻结表面，**必须先评审再动手**，
-  这正是 `D22` 该单独讨论的那 15 分钟。
+- **`D23` 必须给 `commands_core` 装上 `ctx.instance` 与 `ctx.turns` 的生产实现**，
+  两个 builder 都在 `runtime/introspection.py`：
+  `build_instance_view(commands_source=…, diagnostics=…, config_source=…, sessions=…)` 与
+  `build_turn_control(orchestrator)`。**`commands_source` 与 `config_source` 必须是
+  callable 而不是快照**——命令索引要等全部插件注册完才建得出来，而 `PluginContext` 必须在
+  `setup()` **之前**就交给插件，传一份当时还不存在的索引是不可能的。漏传的后果是 `/help`
+  永远显示「当前没有可用的命令」而**不报任何错**（`FakeInstanceView` 上已经踩过一次，
+  `set_commands()` 就是那个时序的最小形态）。
+- **`/help` 里的命令前缀目前是硬编码的默认 `/`**（`commands_core/commands.py::DEFAULT_PREFIX`，
+  与 `kernel/routing/dispatcher.py::DEFAULT_COMMAND_PREFIX` 各写一份）。改过
+  `routing.command_prefix` 的用户会在 `/help` 里看到错的前缀。`D23` 接线时可以把它经
+  `commands-core` 的配置块交下来——那是这条偏差的正确落点，**不要让内建去读 routing 小节**
+  （`ctx.config` 按 `CFG-002` 只给自己那一块）。
+- **`InstanceView.config_document()` 是全项目唯一越过 `CFG-002` 的地方**。`D23` 传给它的
+  应当是 `LoadedConfig.to_json()` 那棵**持有 `${VAR}` 字面量**的树，不要传解析过 secret 的
+  版本——`/config` 的脱敏是靠这条结构性保证成立的，`redact()` + `scrub()` 只是纵深防御。
+- **`ctx.instance` / `ctx.turns` 不需要权限声明**，与 `ctx.events` 同一档（只读可观测性不是
+  资源访问）。`D26` 落地权限模型时若要给它们加门，`TurnControl` 是该先加的那个——取消别人的
+  turn 是控制动作，这正是它与 `InstanceView` 分成两个 Protocol 而不是一个七成员门面的理由。
+- **`SUPPORT_PROTOCOLS` 现在是 3 条**（`tests/contracts/test_protocols.py`），
+  `CAPABILITY_PROTOCOLS` 仍恒为 9——新增的两个不是可注册能力。往 `PluginContext` 加成员要
+  同时改 `test_public_surface.py::API_PROTOCOLS` 与那里的只读属性豁免名单，两处都是
+  `NFR-103` 的评审闸门。
 
 `D21` 留下的、`D22`/`D23`/`D26` 必须用到的事实：
 
@@ -1620,7 +1691,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22– ⬜（尚未开始）
+D22 ✅
+D23– ⬜（尚未开始）
 
 ## 本目录文档分类
 

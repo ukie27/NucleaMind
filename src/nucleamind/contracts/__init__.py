@@ -120,10 +120,12 @@ from .protocols import (  # noqa: E402
     CommandHandler,
     ContextProvider,
     HookHandler,
+    InstanceView,
     MemoryProvider,
     ModelProvider,
     SessionStore,
     ToolHandler,
+    TurnControl,
 )
 from .session import (  # noqa: E402
     SESSION_SCHEMA_VERSION,
@@ -190,6 +192,7 @@ __all__ = [
     "HookOutcome",
     "InboundMessage",
     "InstanceId",
+    "InstanceView",
     "JsonSchema",
     "JsonValue",
     "MemoryProvider",
@@ -227,6 +230,7 @@ __all__ = [
     "ToolResult",
     "ToolSpec",
     "TrustLevel",
+    "TurnControl",
     "TurnId",
     "TurnOutcome",
     "TurnStatus",

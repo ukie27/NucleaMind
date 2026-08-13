@@ -2,8 +2,8 @@
 
 职责：声明 9 个能力 Protocol（`ModelProvider` / `ToolHandler` / `ContextProvider` /
 `SessionStore` / `MemoryProvider` / `Channel` / `CommandHandler` / `HookHandler` /
-`CliEntry`）与支撑用的只读 `CancelSignal`，并在每个方法的 docstring 上固定写明
-**异常约定**与**取消语义**。
+`CliEntry`）与三个支撑用的只读/动作面（`CancelSignal` / `InstanceView` / `TurnControl`），
+并在每个方法的 docstring 上固定写明**异常约定**与**取消语义**。
 不负责：提供任何实现、决定调用顺序与重试、执行超时——实现在 `builtins/` 与 `plugins/`，
 调度在 `kernel/`；本模块只有签名，函数体一律是 docstring + `...`。
 
@@ -22,16 +22,19 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .capability import HookContext, HookOutcome
-from .command import CommandInvocation, CommandResult
+from .command import CommandInvocation, CommandResult, CommandSpec
 from .context import ContextFragment, FragmentScope
-from .ids import Correlation, SessionKey
+from .ids import Correlation, SessionKey, TurnId
 from .message import InboundMessage, OutboundMessage
 from .model import ModelChunk, ModelInfo, ModelRequest, ModelResponse
-from .session import SessionMessage, SessionSnapshot
+from .session import CancelReason, SessionMessage, SessionSnapshot
 from .tool import ToolInvocation, ToolResult
+
+if TYPE_CHECKING:  # pragma: no cover - 仅为注解，运行时不导入，避免与包根成环。
+    from . import JsonValue
 
 __all__ = [
     "CancelSignal",
@@ -40,10 +43,12 @@ __all__ = [
     "CommandHandler",
     "ContextProvider",
     "HookHandler",
+    "InstanceView",
     "MemoryProvider",
     "ModelProvider",
     "SessionStore",
     "ToolHandler",
+    "TurnControl",
 ]
 
 
@@ -65,6 +70,121 @@ class CancelSignal(Protocol):
         """已请求取消则抛 `NucleaError(CANCELLED_BY_USER | CANCELLED_BY_BUDGET)`。
 
         **异常约定**：只抛 `CANCELLED` 类的 `NucleaError`，不抛其他类型。
+        """
+        ...
+
+
+@runtime_checkable
+class InstanceView(Protocol):
+    """实例的只读视图（`D22`，需求 `PLG-006`、`NFR-502`、`CMD-001`）。
+
+    存在的理由：`/help`、`/capabilities`、`/plugins`、`/config`、`/session` 这五个命令
+    要回答的都是「这个实例现在是什么样」，而 `R4` 禁止 `builtins/` 与 `plugins/` import
+    `kernel/`——数据在 `kernel/registry` 与 `kernel/observability` 里，命令够不着。
+    没有这个门面，`commands_core` 就只能由 `runtime/` 特权注册，`BAS-005`「内建能力不
+    享受特权」当场破例，第三方也永远写不了 `/status` 这类命令。
+
+    它落在 `contracts/` 而不是 `sdk/`：kernel 侧的实现要结构化满足它，而 `R2` 禁止
+    `kernel/` import `sdk/`——与 `CliEntry`（`D05`）、`SecretStr`（`D11`）同一条理由。
+
+    **只读，且只读一份快照**。这里没有任何改状态的方法：改配置是 `nm config`、
+    启停插件是 `nm plugins`，两者都在进程外。命令能做的只有把现状讲给用户听。
+
+    `capabilities()` 与 `plugins()` 返回 JSON 而不是 kernel 类型，是因为
+    `ResolutionReport` 与 `PluginStatus` 都在 `kernel/` 里、契约层够不着；而这两样
+    **本来就以 JSON 为发布形态**（`NFR-502` 要求报告可序列化，两者各有 `to_json()`）。
+    在契约层复刻一遍它们的字段只会多出一份必然漂移的定义。其余三个成员用的类型全在
+    `contracts/` 里，因此是强类型的。
+    """
+
+    def commands(self) -> tuple[CommandSpec, ...]:
+        """全部已注册命令的声明，按命令名排序去重（`CMD-001`）。
+
+        排序是契约的一部分：`/help` 的输出不该随注册顺序漂移。
+
+        **异常约定**：不抛。命令索引在启动期就已建好（`CMD-002` 的冲突也在那时报出），
+        这里只是读它。
+        **取消语义**：同步纯查询，不接受取消信号。
+        """
+        ...
+
+    def capabilities(self) -> Mapping[str, JsonValue]:
+        """覆盖解析报告的 JSON 形态：`active` / `shadowed` / `disabled` / `failures`。
+
+        每一项都标明由内建还是哪个插件提供（`PLG-006`）——这正是 `/capabilities` 要显示
+        的东西，也是 `nm capabilities`（`D29`）的同一份数据源。
+
+        **异常约定**：不抛；报告本身可能含 `failures`，那是数据不是异常。
+        **取消语义**：同步纯查询，不接受取消信号。
+        """
+        ...
+
+    def plugins(self) -> tuple[Mapping[str, JsonValue], ...]:
+        """每个插件的诊断视图（状态、版本、已注册能力、失败原因与阶段）的 JSON 形态。
+
+        没有任何外部插件时返回空元组——**「没有插件」与「查不到」是两个结论**，
+        前者是 `EDG-101` 明确要求可用的形状。
+
+        **异常约定**：不抛。
+        **取消语义**：同步纯查询，不接受取消信号。
+        """
+        ...
+
+    def config_document(self) -> Mapping[str, JsonValue]:
+        """**完整**的生效配置文档，供 `/config` 渲染。
+
+        这是本门面唯一越过 `CFG-002`（`ctx.config` 只给自己那一块）的地方，因为
+        `/config` 的职责就是显示整份配置。**明文不会在这里**：`D11` 定死配置树自始至终
+        持有 `${VAR}` 字面量、解析出的明文只在 `SecretMap` 里，因此这份文档
+        「没有别的东西可泄漏」——脱敏是结构性成立的，不是靠调用方记得过滤。
+
+        **异常约定**：不抛。
+        **取消语义**：同步纯查询，不接受取消信号。
+        """
+        ...
+
+    async def session_snapshot(self, key: SessionKey) -> SessionSnapshot:
+        """读一个会话的当前快照，供 `/session` 显示条数与压缩水位。
+
+        刻意只给快照而不是整个 `SessionStore`：后者带着 `delete()` 与 `compact()`，
+        而 `/session` 一个都不需要。**门面的宽度应当等于用途的宽度。**
+
+        **异常约定**：会话不存在时返回空快照而不是抛错（与 `SessionStore.load()` 一致，
+        「没有历史」是正常状态）；存储损坏抛 `PERSISTENCE_RECORD_CORRUPT`。
+        **取消语义**：不接受取消——一次快照读取是原子的，中途放弃只会让调用方拿到
+        一个既不完整也不失败的结果。
+        """
+        ...
+
+
+@runtime_checkable
+class TurnControl(Protocol):
+    """在跑 turn 的观测与取消（`D22`，技术方案 §10.3）。
+
+    与 `InstanceView` 分开而不是合成一个七成员门面：一个是只读可观测性、一个是**控制
+    动作**。`D26` 落地权限模型后，「能看」与「能取消别人的 turn」应当可以分别授予，
+    合并成一个门面就没有这个分界线了。
+    """
+
+    def live_turns(self) -> tuple[TurnId, ...]:
+        """当前在跑的 turn。
+
+        **异常约定**：不抛。
+        **取消语义**：同步纯查询，不接受取消信号。
+        """
+        ...
+
+    def cancel_turn(self, turn_id: TurnId, reason: CancelReason = CancelReason.USER) -> bool:
+        """请求取消一个在跑的 turn，返回它当时是否还在跑。
+
+        `False` 意味着「已经结束了」而不是「失败了」——这两者对用户是同一个好结果，
+        但对诊断不是。幂等：重复请求时第一次的 `reason` 胜出（`EDG-206`）。
+
+        **注意这是请求而不是保证**：取消经 `CancelToken` 在检查点生效，好让 turn 有机会
+        保存已产生的内容再退出（技术方案 §6.4）。方法返回时目标 turn 通常还没停下。
+
+        **异常约定**：不抛；未知 `turn_id` 返回 `False`。
+        **取消语义**：这**是**取消入口本身，不接受取消信号。
         """
         ...
 

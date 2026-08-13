@@ -10,6 +10,9 @@
 `SecretStr` 在 `D11` 迁到了 `contracts/errors.py`（`kernel/config/secrets.py` 要产出它，
 而 `R2` 禁止 `kernel/` import `sdk/`），因此它不在 `sdk.__all__` 里：契约类型不从 `sdk`
 转发，插件按 `R4` 直接 `from nucleamind.contracts import SecretStr`。
+`D22` 的 `InstanceView` / `TurnControl` 同理——它们是 `ctx.instance` / `ctx.turns` 的类型，
+落在 `contracts/protocols.py`（kernel 侧的实现要结构化满足它们），因此 `sdk.__all__`
+一个字都没变。
 
 三件必须在这一层说清楚的事：
 
@@ -41,6 +44,7 @@ from nucleamind.contracts import (
     EventName,
     HookHandler,
     HookName,
+    InstanceView,
     JsonValue,
     MemoryProvider,
     ModelProvider,
@@ -49,6 +53,7 @@ from nucleamind.contracts import (
     SessionStore,
     ToolHandler,
     ToolSpec,
+    TurnControl,
 )
 
 __all__ = [
@@ -266,6 +271,32 @@ class PluginContext(Protocol):
         **异常约定**：未声明或未授权抛 `PERMISSION_DENIED`；已授权但配置里没有该值抛
         `CONFIG_SECRET_MISSING`——两者必须可区分，否则用户不知道该去改权限还是去补配置。
         返回值默认渲染为掩码，明文需 `reveal()`。
+        """
+        ...
+
+    @property
+    def instance(self) -> InstanceView:
+        """实例的只读视图：已注册命令、能力解析报告、插件状态、完整配置、会话快照。
+
+        `D22` 加入。存在的理由是 `/help`、`/capabilities`、`/plugins`、`/config`、
+        `/session` 要回答的都是「这个实例现在是什么样」，而那些数据在 `kernel/` 里，
+        `R4` 禁止 `builtins/` 与 `plugins/` 够到它。没有这条通道，`commands_core` 就只能
+        由 `runtime/` 特权注册——`BAS-005`「内建能力不享受特权」当场破例，而第三方也就
+        永远写不了 `/status` 这类命令。**这类命令本来就该是插件能写的东西。**
+
+        它**不是**资源访问器，因此不需要权限声明也不会抛 `PERMISSION_DENIED`：事件流与
+        诊断是只读的可观测性，与 `events` 同一档（见 `EventSubscriber` 的说明）。
+        `config_document()` 是唯一越过 `CFG-002` 的成员，但明文凭据结构性地不在那份文档里
+        （`D11`：配置树自始至终持有 `${VAR}` 字面量）。
+        """
+        ...
+
+    @property
+    def turns(self) -> TurnControl:
+        """在跑 turn 的观测与取消（`/cancel` 的落点，技术方案 §10.3）。
+
+        与 `instance` 分开而不是合成一个门面：一个是只读可观测性，一个是**控制动作**。
+        `D26` 落地权限模型后，「能看」与「能取消别人的 turn」应当可以分别授予。
         """
         ...
 
