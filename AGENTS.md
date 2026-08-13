@@ -36,11 +36,14 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/plugins/discovery.py` + `runtime/inventory.py` + `plugins.enabled`），
   `D26` 已落地权限门面与生产级 `PluginContext`
   （`kernel/plugins/{permissions,permission_codec}.py` + `runtime/access/` +
-  `nm permissions`），**阶段 7 推进中**，下一步 `D27`。
+  `nm permissions`），`D27` 已落地两阶段加载与事务性注册
+  （`kernel/plugins/loader.py` + `runtime/plugin_plan.py`，外部插件与内建合并进同一次
+  `wire_capabilities()`），**阶段 7 推进中**，下一步 `D28`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
-  `first_run.py`、`inventory.py`、`instance.py`、`access/` 与 `cli/`，`embed/` 已落地薄门面，
-  `kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与 `plugins/`。
+  `first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、`access/` 与 `cli/`，
+  `embed/` 已落地薄门面，`kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、
+  `routing/` 与 `plugins/`。
   `nm init` / `nm run` / `nm config show` / `nm session` / `nm permissions` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
@@ -145,8 +148,9 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   当前输入仍超预算就抛 `INPUT_TOO_LARGE`，**不要**伪装成「压缩过了」。
 - **`ToolInvoker.invoke` 必须在 `timeout_ms + grace` 内返回**且约定不抛。超时后不要
   `task.cancel()`——请求子令牌取消、等宽限期，仍不回来就登记孤儿并写
-  `TIMEOUT_TOOL_CANCEL` + `side_effect=UNKNOWN`。`jsonschema` 只在 `invoker._compile()`
-  一处接触，惰性 import。
+  `TIMEOUT_TOOL_CANCEL` + `side_effect=UNKNOWN`。`jsonschema` 在 turn 这条路上只在
+  `invoker._compile()` 一处接触，惰性 import（全项目另一处是 `D27` 的
+  `kernel/plugins/loader._compile()`，同样惰性）。
 
 `kernel/config/`（`D10`、`D11`）是实例布局、分层配置、实例锁与 `${VAR}` 凭据引用的唯一
 来源。写代码前记住六条：
@@ -235,7 +239,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `getaddrinfo` 的**目标**、回环放行。别改成拦 `socket.socket` 的构造——Windows 的
   `ProactorEventLoop` 用 `socketpair()` 做 self-pipe，那样只会证明事件循环起不来。
 
-`kernel/plugins/`（`D16`、`D25`）是能力注册与插件发现的唯一通道。写内建或插件前记住六条：
+`kernel/plugins/`（`D16`、`D25`、`D27`）是能力注册、插件发现与加载计划的唯一通道。
+写内建或插件前记住九条：
 
 - **`CapabilityHost` 是唯一的 `NucleaAPI` 实现**，内建与外部插件共用它（`SDK-007`、
   `BAS-005`）。它不继承 `NucleaAPI`（`R2` 禁止 `kernel/` import `sdk/`），一致性由
@@ -253,6 +258,19 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   目录名 / `.py` 文件名），启用判定发生在 `read_candidate()` 之前。因此 entry point 的
   name 必须等于 manifest 的 `id`，对不上即失败；未启用候选的 `version` 是空串。
   `plugins.enabled` 是外部插件的总开关，`plugins.disable`（按提供方，对内建也有效）压过它。
+- **阶段 A 的分界线与发现完全相同**（`D27`）：排序与校验的**机制**在 `loader.py`
+  （它只认识 `(id, dependencies, critical)` 与一份 JSON Schema），**manifest 判定**在
+  `runtime/plugin_plan.py`。加一种机制改前者，加一条判定改后者。A6 权限不在这两处——
+  `runtime/bootstrap.py::approve()` 仍是唯一调用点。
+- **加载顺序只有一个来源**：`plan_load_order()` 的 `LoadPlan.order`（同层按 id 字典序，
+  依赖可指向内建）。它保证「被依赖者先 `setup`」，**不决定谁覆盖谁**（`EDG-102`）。
+  `D28` 的停止顺序取它的逆序，不要另算一遍。三种落榜理由要分得开：`missing` / `cycle`
+  （整条环，`PLG-003`）/ `blocked_by`。
+- **`state_version` 变化即拒绝加载，升与降都是**：P0 没有迁移机制，静默改写版本号或让
+  插件带着为另一个版本写的状态跑，都是拿用户数据赌一把（`EDG-503` 要的是保住旧状态）。
+  标记文件 `.nucleamind-state.json` **只在状态目录已存在时**才读写——不为一个从未写盘的
+  插件建目录。`jsonschema` 在这里是全项目第二个接触点（另一处 `turn/invoker._compile`），
+  两处都惰性 import。
 
 `kernel/plugins/permissions.py` + `runtime/access/`（`D26`）是权限的唯一来源。六条：
 

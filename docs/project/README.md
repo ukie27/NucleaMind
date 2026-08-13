@@ -1480,12 +1480,16 @@
   扩权需显式）与三个受守卫的资源门面（`runtime/access/`：workspace 双重校验、读写分离的
   文件门面、SSRF 守卫、受限子进程）落地，`ctx.fs` / `ctx.net` / `ctx.shell` 从「抛
   `CAPABILITY_MISSING` 指向 D26」变成真身，`nm permissions` 成为「用户显式扩权」的落点。
+  `D27` 已完成，两阶段加载落地（`kernel/plugins/loader.py` 的依赖拓扑 / `config_schema`
+  校验 / `state_version`，`runtime/plugin_plan.py` 的 manifest 判定与加载计划，装配根把
+  内建与外部插件合并进**同一次** `wire_capabilities()`），外部插件从此真的跑得起来，
+  阶段 A 的七步至此交齐。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
   `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
-  `bootstrap.py`、`first_run.py`、`inventory.py`、`instance.py` 与 `cli/`；
-  `embed/` 已落地薄门面。
+  `bootstrap.py`、`first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、
+  `access/` 与 `cli/`；`embed/` 已落地薄门面。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1533,14 +1537,47 @@
 
 ## 下一步工作
 
-1. **`D27` 两阶段加载**（阶段 7 第三步）：`D25` 已经把 `PluginInventory.discovered` 摆好了——那就是
-   加载计划的输入。外部 loader 是 `builtin_loader.load_into()` 的**同级调用方**
-   （`SDK-007`），经 `runtime/wiring.py` 的 `to_load_request()` 翻译，**不要**写第二条
-   注册路径。阶段 A 还欠 A4 依赖拓扑、A5 `config_schema` 逐字段校验、A6 权限授权、
-   A7 `state_version`。**A6 权限授权现在有落点了**：`PermissionLedger.decide()` 在
-   `runtime/bootstrap.approve()` 一处被调用，外部插件走同一条路，不要写第二条。
+1. **`D28` 插件生命周期**（阶段 7 第五步）：状态机
+   `DISCOVERED → VALIDATED → LOADED → STARTED → STOPPING → STOPPED`、停止顺序 = 启动
+   拓扑序的逆序（`PLG-005`）、停止超时 5000 ms 后放弃等待继续停其余（`EDG-104`）、禁用后
+   清理全部痕迹（`EDG-105`）。**启动拓扑序现在有唯一来源了**：`plan_load_order()` 的
+   `LoadPlan.order`，`D28` 的停止顺序直接取它的逆序，不要另算一遍。
 2. `nm plugins` / `nm capabilities`（`D29`）仍然没有；数据源已经齐了
-   （`AgentInstance.diagnostics`），与会话内的 `/plugins` 共用。
+   （`AgentInstance.diagnostics`，`/plugins` 现在同时列得出发现阶段与校验阶段的失败），
+   与会话内的 `/plugins` 共用。
+
+`D27` 留下的、`D28`–`D30` 必须用到的事实：
+
+- **阶段 A 的七步现在分布在三处**，加东西前先认这条分界线：A1/A2/A3 在
+  `runtime/inventory.py`（`D25`），A4/A5/A7 的**机制**在 `kernel/plugins/loader.py`、
+  **manifest 判定**在 `runtime/plugin_plan.py`（`D27`），A6 在
+  `runtime/bootstrap.py::approve()`（`D26`）。加一种排序或校验机制改 kernel 那份，
+  加一条 manifest 判定改 runtime 那份——与 `discovery` / `inventory` 完全相同的分界线。
+- **外部插件与内建共用一次 `wire_capabilities()`**（`SDK-007`）：同一个 manifest 序列、
+  同一个 `context_for`、同一个 `keep`，唯一的差别是 `provider_for` 交出 `Builtin()` 还是
+  `Plugin(<id>)`。内建在前、外部按拓扑序在后，但**顺序不决定覆盖**（`EDG-102`）。
+  想给插件加一条「特殊的」注册路径之前，先读 `builtin_loader.py` 的模块 docstring。
+- **加载顺序的唯一来源是 `LoadPlan.order`**。`plan_load_order()` 同层按 id 字典序，
+  因此同一份配置每次得到同一个顺序；依赖可以指向内建（经 `provided` 交进去）。
+- **阶段 A 落榜的三种理由分得开**：依赖缺失（`detail.missing`）、成环
+  （`detail.cycle` 是整条环，`PLG-003`）、级联（`detail.blocked_by`）。别把它们并成
+  一句「依赖有问题」——三者的补救动作分别是装插件、改 manifest、先修另一个插件。
+- **`state_version` 变化即拒绝加载，升与降都是**（`kernel/plugins/loader.py`）：P0 没有
+  状态迁移机制，两个方向都是拿用户数据赌一把，而 `EDG-503` 要的是「升级失败保住旧状态」。
+  标记文件是 `<instance>/plugins/<id>/.nucleamind-state.json`，**只在状态目录已经存在时**
+  才读写——不为一个从未写盘的插件建目录（与 `ctx.state_dir` 的惰性创建同一条约定）。
+  `D28` 做迁移函数时，放宽的是这一处判定，不是再加一条并行路径。
+- **`jsonschema` 现在有两个接触点**：`kernel/turn/invoker._compile()` 与
+  `kernel/plugins/loader._compile()`，**两处都惰性 import**（`NFR-405` 的冷启动预算）。
+  加第三处之前先想清楚它会不会落在 `nm config show` 那类只读路径上。
+- **`/plugins` 的「已发现」= 真的会被加载的那一批**：阶段 A 落榜的插件由
+  `plan_plugins()` 从 `discovered` 移进 `failures`（`PluginState.FAILED`，
+  `failed_phase="discovery"`），因此 `D29` 渲染时不需要再区分是哪个阶段落的榜。
+- **`nm session` 也会加载外部会话存储插件**了（`open_session_store`）：它仍然只取声明了
+  `SESSION_STORE` 的 manifest、仍然不取实例锁、仍然不写 `permissions.json`。
+- **冷启动实测已与 `README` 早先记录的 480 ms 不同**（本机 ~900 ms，`import` 约 550 ms）。
+  这与 `D27` 无关——在 `D27` 之前的 HEAD 上实测 ~990 ms，同一台机器。`NFR-405` 的这一项
+  按原文只告警不失败，真要压下去仍然是「让 `model-openai` 的 httpx 延迟到第一次请求」。
 
 `D26` 留下的、`D27`–`D30` 必须用到的事实：
 
@@ -2090,8 +2127,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅  D24 ✅  D25 ✅
-D26– ⬜（尚未开始）
+D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅
+D28– ⬜（尚未开始）
 
 ## 本目录文档分类
 

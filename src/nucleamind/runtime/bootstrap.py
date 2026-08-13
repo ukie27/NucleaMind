@@ -1,9 +1,9 @@
 """启动序列：从「实例在哪」到一个可以接受输入的 `AgentInstance`（技术方案 §10.1）。
 
-职责：按 §10.1 的十步装配一个实例——取锁、加载配置、挑选内建清单、注册能力、解析覆盖、
-校验必需能力、装出 `OrchestratorDeps` 与两个门面。
-不负责：跑它（`instance.py`）、解析 argv（`runtime/cli/`）、加载外部插件（`D27`；
-`D25` 的发现只到「候选与 manifest 校验」为止，产出接在诊断上）、生成首次运行的配置（`D24`）。
+职责：按 §10.1 的十步装配一个实例——取锁、加载配置、挑选内建清单、发现并规划外部插件、
+注册能力、解析覆盖、校验必需能力、装出 `OrchestratorDeps` 与两个门面。
+不负责：跑它（`instance.py`）、解析 argv（`runtime/cli/`）、阶段 A 的三项判定
+（`plugin_plan.py` + `kernel/plugins/loader.py`）、生成首次运行的配置（`D24`）。
 
 **内建的配置块由这里合成**（`CFG-002` 的另一面）：`R4` 禁止 `builtins/` 够到 `kernel/`，
 因此「会话写哪个目录」「workspace 的根在哪」「命令前缀是什么」只能由装配根经
@@ -28,6 +28,7 @@ from pathlib import Path
 from nucleamind.builtins import cli_entry, commands_core, session_jsonl, tools_fs, tools_shell
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS
 from nucleamind.contracts import (
+    Builtin,
     CapabilityKind,
     CliEntry,
     ErrorCode,
@@ -38,6 +39,9 @@ from nucleamind.contracts import (
     ModelProvider,
     NucleaError,
     OutboundMessage,
+    Plugin,
+    PluginId,
+    ProviderId,
     SessionStore,
 )
 from nucleamind.kernel.config import (
@@ -86,8 +90,9 @@ from nucleamind.sdk import CapabilityDecl, PluginContext, PluginManifest
 
 from .instance import AgentInstance, Closer
 from .introspection import build_instance_view, build_turn_control
-from .inventory import PluginInventory, build_inventory
+from .inventory import PluginInventory
 from .plugin_context import PluginRuntime, RuntimePluginContext, build_plugin_context
+from .plugin_plan import ExternalPlan, discover_plugins, plan_plugins
 from .wiring import Wiring, wire_capabilities
 
 #: `PluginManifest` 从这里再导出一次：`embed/` 只能 import `contracts/` 与 `runtime/`
@@ -216,43 +221,27 @@ def approve(
     return decision
 
 
-def _discover_plugins(
-    config: NucleaConfig, layout: InstanceLayout, bus: EventBus
-) -> PluginInventory:
-    """§10.1 步骤 3b：发现外部插件并把结果发成事件（`D25`）。
+def _plan_external(
+    inventory: PluginInventory,
+    config: NucleaConfig,
+    layout: InstanceLayout,
+    workspace: Path,
+    bus: EventBus,
+    builtins: Sequence[PluginManifest],
+) -> tuple[ExternalPlan, PluginInventory]:
+    """把阶段 A 需要的两个「只有装配根知道」的东西交给 `plugin_plan.plan_plugins()`。
 
-    **只发现、不加载**：`plugins.enabled` 之外的候选连 manifest 都不会被读，因此未启用的
-    插件不产生任何导入开销（`NFR-401`、`DST-002`）。真正的两阶段加载是 `D27`。
-
-    搜索路径按实例目录解析相对路径——用户在 `config.json` 里写 `"./my-plugins"` 时，
-    「相对谁」的唯一合理答案是那份配置所在的目录，而不是 `nm` 的当前工作目录。
+    校验用的配置块与 `setup()` 拿到的是**同一份**（都走 `config_block_for`）——校验一份、
+    执行另一份等于没校验。状态目录同样只有布局说得出（`R4` 挡着插件自己够到它）。
     """
-    inventory = build_inventory(
-        enabled=config.plugins.enabled,
-        disabled=config.plugins.disable,
-        search_paths=[
-            path if (path := Path(raw)).is_absolute() else layout.root / raw
-            for raw in config.plugins.search_paths
-        ],
+    derived = builtin_config_blocks(config, layout, workspace)
+    return plan_plugins(
+        inventory,
+        bus,
+        config_for=lambda manifest: config_block_for(manifest, config, derived),
+        state_dir_for=lambda plugin_id: layout.plugins_dir / plugin_id,
+        provided=[manifest.id for manifest in builtins],
     )
-    for item in inventory.discovered:
-        bus.publish(
-            EventName.PLUGIN_DISCOVERED,
-            # 载荷的第一个键与内建那次发布同名（`_wire` 里的 `plugin`）：同一个事件名
-            # 出现两种形状，按事件回放的诊断就要为它写两个分支。
-            payload={
-                "plugin": item.manifest.id,
-                "version": item.manifest.version,
-                "source": item.candidate.kind.value,
-            },
-        )
-    for failure in inventory.failures:
-        bus.publish(
-            EventName.PLUGIN_FAILED,
-            payload={"plugin": failure.plugin_id, "phase": "discovery"},
-            error=failure.error,
-        )
-    return inventory
 
 
 def _select_manifests(
@@ -364,10 +353,21 @@ async def _wire(
     ledger: PermissionLedger,
     *,
     builtin_cli_only: bool = False,
+    external_ids: Collection[str] = (),
 ) -> Wiring:
-    """跑一次注册。`builtin_cli_only=True` 时只让内建提供 CLI 入口（`EDG-108` 的回落）。"""
+    """跑一次注册。`builtin_cli_only=True` 时只让内建提供 CLI 入口（`EDG-108` 的回落）。
+
+    **内建与外部插件在这里没有第二条路**（`SDK-007`）：同一个 `manifests` 序列、同一个
+    `context_for`、同一个 `keep`，唯一的差别是 `provider_for` 交出 `Builtin()` 还是
+    `Plugin(<id>)`。外部插件排在内建之后，但那不决定谁覆盖谁（`EDG-102`）。
+    """
     derived = builtin_config_blocks(config, layout, workspace)
     keep = capability_filter(config, derived)
+    external = set(external_ids)
+
+    def provider_for(manifest: PluginManifest) -> ProviderId:
+        """外部插件以自己的 id 为提供方身份（`priority` 基准值 100，内建是 0）。"""
+        return Plugin(PluginId(manifest.id)) if manifest.id in external else Builtin()
 
     def keep_with_cli(manifest: PluginManifest, decl: CapabilityDecl) -> bool:
         if (
@@ -400,7 +400,12 @@ async def _wire(
         bus.publish(EventName.PLUGIN_DISCOVERED, payload={"plugin": manifest.id})
         return ctx
 
-    return await wire_capabilities(manifests=manifests, context_for=context_for, keep=keep_with_cli)
+    return await wire_capabilities(
+        manifests=manifests,
+        context_for=context_for,
+        provider_for=provider_for,
+        keep=keep_with_cli,
+    )
 
 
 async def bootstrap(
@@ -462,29 +467,46 @@ async def _bootstrap_locked(
     # 3 内建清单（跳过被禁用项，CLI 入口除外）
     selected = _select_manifests(manifests, config)
 
-    # 3b 外部插件发现（`D25`）。**只发现、不加载**：加载是 `D27`。产出接到诊断上，
-    # `/plugins` 与 `nm plugins` 因此列得出候选、跳过原因与失败。
-    inventory = _discover_plugins(config, layout, bus)
+    # 3b 外部插件发现（`D25`）：未列入 `plugins.enabled` 的候选连 manifest 都不读。
+    inventory = discover_plugins(config, layout, bus)
+    # 3c 阶段 A 的剩余三步与拓扑排序（`D27`）。产出接到诊断上，`/plugins` 因此列得出
+    # 候选、跳过原因与两个阶段的失败。
+    plan, inventory = _plan_external(
+        inventory, config, layout, loaded.workspace_root, bus, selected
+    )
+    external_ids = [manifest.id for manifest in plan.manifests]
+    # 内建在前、外部插件按拓扑序在后。顺序只保证「被依赖者先 setup」，覆盖由 manifest 的
+    # `overrides` 决定（`EDG-102`）。
+    all_manifests = (*selected, *plan.manifests)
 
-    # 4–7 注册 → 解析覆盖 → 冻结。外部插件的发现是 `D25`/`D27`；这条路径两者共用。
+    # 4–7 注册 → 解析覆盖 → 冻结。内建与外部插件共用这一条路径（`SDK-007`）。
     runtime = PluginRuntime()
     contexts: list[RuntimePluginContext] = []
     # 权限账本：`permissions.json` 的批准叠在 manifest 声明之前（`D26`）。读不懂那份文件
     # 是**启动失败**而不是「当成空账本」——后者等于一次静默的全部重新授予。
     ledger = PermissionLedger.load(layout.permissions_path)
     wiring = await _wire(
-        selected, config, layout, loaded.workspace_root, bus, runtime, env, contexts, ledger
+        all_manifests,
+        config,
+        layout,
+        loaded.workspace_root,
+        bus,
+        runtime,
+        env,
+        contexts,
+        ledger,
+        external_ids=external_ids,
     )
     if cli_entry_from(wiring.registry) is None and any(
         decl.kind is CapabilityKind.CLI_ENTRY
-        for manifest in selected
+        for manifest in all_manifests
         for decl in manifest.capabilities
     ):
         # `EDG-108`/`BAS-010`：覆盖 CLI 的提供方没交出实现，强制回落到内建实现。
         # 重装一次而不是打补丁——半装好的 registry 已经冻结，改它比重来更容易出错。
         contexts.clear()
         wiring = await _wire(
-            selected,
+            all_manifests,
             config,
             layout,
             loaded.workspace_root,
@@ -494,6 +516,7 @@ async def _bootstrap_locked(
             contexts,
             ledger,
             builtin_cli_only=True,
+            external_ids=external_ids,
         )
     # 账本只在真的变了时落盘（`save()` 自己判 `dirty`）。写在注册之后：`setup()` 抛异常
     # 时那个提供方的授权记录同样值得留下——下一次启动它不该被当成首次而重新全授。
@@ -682,14 +705,30 @@ async def open_session_store(
         instance_dir=instance_dir, instance=instance, env=env, home=home
     )
     loaded = _load_config_or_report(layout, env=env, overrides=None, home=home)
+    builtins = _select_manifests(manifests, loaded.config)
     selected = tuple(
         manifest
-        for manifest in _select_manifests(manifests, loaded.config)
+        for manifest in builtins
         if any(decl.kind is CapabilityKind.SESSION_STORE for decl in manifest.capabilities)
     )
     bus = EventBus(InstanceId(layout.root.name))
+    # 外部插件走同一条路（`D27`）：覆盖了会话存储的插件，`nm session` 看到的就是它那一份。
+    # 同样只取声明了 `SESSION_STORE` 的那些——一条只读命令不该因为「模型还没配」而失败。
+    plan, _ = _plan_external(
+        discover_plugins(loaded.config, layout, bus),
+        loaded.config,
+        layout,
+        loaded.workspace_root,
+        bus,
+        builtins,
+    )
+    external = tuple(
+        manifest
+        for manifest in plan.manifests
+        if any(decl.kind is CapabilityKind.SESSION_STORE for decl in manifest.capabilities)
+    )
     wiring = await _wire(
-        selected,
+        (*selected, *external),
         loaded.config,
         layout,
         loaded.workspace_root,
@@ -701,6 +740,7 @@ async def open_session_store(
         # 正在跑的实例抢同一个文件。判定照做（会话存储插件的授权语义不能两套），
         # 但这个账本从头到尾没人调 `save()`。
         PermissionLedger.load(layout.permissions_path),
+        external_ids=[manifest.id for manifest in external],
     )
     wiring.report.raise_if_failed()
     return loaded, _require_sessions(wiring.registry)
