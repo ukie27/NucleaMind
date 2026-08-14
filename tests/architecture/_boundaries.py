@@ -11,7 +11,7 @@
     R3  sdk/        只 import contracts/
     R4  builtins/ 与外部插件  只能 import sdk/ 与 contracts/
     R5  只有 runtime/ 可同时 import kernel/ 与 builtins/（唯一组装根）
-    R6  新层一律禁止 import legacy/，唯一例外是 runtime/legacy_entry.py
+    R6  新层一律禁止 import legacy/（D31 删掉 `nm legacy` 之后无例外）
 """
 
 from __future__ import annotations
@@ -26,9 +26,6 @@ PACKAGE = "nucleamind"
 
 #: 全部依赖规则编号。每条都必须有一个反向用例（见 `test_guard_integrity.py`）。
 RULES: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6")
-
-#: `R6` 的唯一精确白名单，相对 `src/`。D31 随 `nm legacy` 一并删除本条目。
-LEGACY_ENTRY_WHITELIST = "nucleamind/runtime/legacy_entry.py"
 
 #: 各层允许 import 的内部层。键是源层，值是允许的目标层集合（含自身）。
 _ALLOWED_TARGETS: dict[str, frozenset[str]] = {
@@ -126,10 +123,7 @@ def _classify(
         return ("R4", f"插件只能 import sdk/ 与 contracts/，不得 import {target_layer}/")
 
     if target_layer == LEGACY_LAYER:
-        return (
-            "R6",
-            "新层禁止 import legacy/；唯一例外是 runtime/legacy_entry.py",
-        )
+        return ("R6", "新层禁止 import legacy/；D31 之后没有例外")
 
     if target_layer in _ALLOWED_TARGETS[source_layer]:
         return None
@@ -169,7 +163,6 @@ def _check_module(
         layer for name, _ in imports if (layer := _layer_of(name)) is not None
     )
     relative = rel(path, root=repo_root)
-    is_legacy_entry = relative.startswith("src/") and relative[4:] == LEGACY_ENTRY_WHITELIST
 
     violations: list[Violation] = []
     seen: set[tuple[str, int]] = set()
@@ -177,8 +170,6 @@ def _check_module(
         target_layer = _layer_of(imported)
         if target_layer is None:
             continue
-        if target_layer == LEGACY_LAYER and is_legacy_entry:
-            continue  # R6 的唯一精确白名单
         verdict = _classify(
             source_layer=source_layer,
             target_layer=target_layer,
@@ -248,7 +239,6 @@ def legacy_importers(*, src_dir: Path, repo_root: Path) -> list[str]:
 
 __all__ = [
     "IGNORED_DIRS",
-    "LEGACY_ENTRY_WHITELIST",
     "RULES",
     "Violation",
     "collect_violations",

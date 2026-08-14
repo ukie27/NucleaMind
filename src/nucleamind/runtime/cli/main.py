@@ -30,13 +30,13 @@ _USAGE: Final = """用法：nm <命令> [参数...]
 命令：
   init               生成最小可用配置（首次运行；不覆盖已有 config.json）
   run [-p 提示词]    启动实例并进入交互式会话（或跑单次执行）
+  serve [--port N]   无头模式：启动已启用的 Channel 能力并常驻
   config show        打印生效配置与每个值的来源
   session list       列出本实例的会话
   session show <id>  打印一个会话的摘要
   permissions ...    查看与修改插件权限（list / grant / revoke / forget）
   plugins ...        列出插件、启用 / 禁用 / 移除 / 清理状态目录
   capabilities       打印覆盖解析报告（生效 / 被覆盖 / 已禁用 / 冲突）
-  legacy <参数...>   迁移期的遗留 CLI（随 legacy/agent/ 一并删除）
 
 选项：
   --instance <名字>      选实例（默认 default）
@@ -108,12 +108,6 @@ def app(argv: list[str] | None = None) -> int:
     if args[0] in ("-V", "--version"):
         sys.stdout.write(f"nucleamind {resolve_version()}\n")
         return 0
-    if args[0] == "legacy":
-        # 迁移期唯一的遗留入口。延迟导入：不让遗留依赖进入 `nm --version` 路径。
-        from nucleamind.runtime.legacy_entry import run_legacy
-
-        return run_legacy(args[1:])
-
     try:
         options = parse_options(args[1:])
     except NucleaError as error:
@@ -126,6 +120,10 @@ def app(argv: list[str] | None = None) -> int:
         from .commands.run import run_command
 
         return _guard(lambda: run_command(options))
+    if command == "serve":
+        from .commands.serve import serve_command
+
+        return _guard(lambda: serve_command(options))
     if command == "init":
         from .commands.init import init_command
 

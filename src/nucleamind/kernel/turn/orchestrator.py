@@ -348,6 +348,10 @@ class TurnOrchestrator:
                         "iteration": event.iteration,
                         "stop_reason": event.response.stop_reason.value,
                         "tool_calls": len(event.response.tool_calls),
+                        # 用量的唯一公开出口（`TurnOutcome` / `TurnReceipt` 都不带它）。
+                        # 复数键名让脱敏的整词规则原样放行（`D02`）。
+                        "input_tokens": event.response.usage.input_tokens,
+                        "output_tokens": event.response.usage.output_tokens,
                     },
                 )
                 # 这一轮的正文已由响应对象权威记过一次，分片账本清零；剩下的就是

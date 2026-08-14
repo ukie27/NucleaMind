@@ -1,0 +1,142 @@
+"""官方插件 `openai-api`：把实例接到一个 OpenAI 兼容的 HTTP 接口上（开发方案 `D31`）。
+
+职责：声明一条 `CHANNEL` 能力，起一个只有三个端点的 HTTP 服务
+（`POST /v1/chat/completions`、`GET /v1/models`、`GET /health`），并把请求翻译成
+`InboundMessage`、把 `OutboundMessage` 翻译成 OpenAI 的响应体或 SSE 分片。
+不负责：执行 turn、管理会话历史、渲染终端（那三件分别是 `kernel/turn/`、
+会话存储能力与 `cli-entry` 的事）。
+
+**它是一个 Channel 而不是一条捷径**（`MSG-007`）。这条设计不是形式主义：出站增量只经
+`OrchestratorDeps.deliver` 按 `channel_id` 路由回注册过的 Channel，因此**流式响应只有
+Channel 拿得到**——`AgentInstance.submit()` 要等整条 turn 跑完才返回 `TurnReceipt`，
+用它做不出 SSE。`cli-entry` 在 `D23` 已经走过同一条路。
+
+**它取代的是被 `D31` 删掉的 `legacy/api/server.py`**，但不是移植：旧实现读的是
+`AgentLoop._last_usage` 这个私有属性、并且把整段请求历史当输入。这里两条都不做——
+历史归会话存储，用量走事件总线。
+
+**已知的诚实边界**，都在 docstring 与 README 里写着而不是留给用户发现：
+
+- **同一 Channel 的 turn 是串行的**。装配根的 Channel 泵是
+  `async for message in channel.receive(): await orchestrator.handle(message)`——
+  它要等这一条跑完才取下一条。因此两个并发客户端会排队，即使它们的 conversation
+  不同。这是本插件相对 `legacy/api/server.py` 的一处**能力回退**，修它要动
+  `runtime/instance.py` 的泵并重新回答 `EDG-202` 的严格 FIFO 断言，不是本轮的事。
+- **五种权限里没有「监听端口」这一种**（`fs:read` / `fs:write` / `net` / `shell` /
+  `secret`，其中 `net` 判的是**出站**）。因此本插件除 `secret` 外一条权限都声明不出来，
+  而它确实会绑一个端口。这是权限模型当前的一个空档，如实记在这里，不擅自扩它。
+- **应用级权限不是进程隔离**（`sdk/api.py` 的原话）。能连上这个端点的调用方就能驱动
+  实例上的全部工具，包括 `shell.exec`。默认只绑回环，且绑非回环地址时**必须**配
+  `api_key`，否则 `setup()` 直接以 `CONFIG_INVALID` 拒绝。
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from nucleamind.contracts import (
+    CapabilityKind,
+    ErrorCode,
+    NucleaError,
+    PermissionKind,
+)
+from nucleamind.sdk import (
+    CapabilityDecl,
+    NucleaAPI,
+    PermissionDecl,
+    PluginContext,
+    PluginManifest,
+)
+
+from .channel import ApiChannel
+from .hub import SessionHub
+from .settings import ApiSettings, resolve_settings
+from .usage import UsageTracker
+
+__all__ = [
+    "CAPABILITY_NAME",
+    "MANIFEST",
+    "SECRET_NAME",
+    "ApiChannel",
+    "ApiSettings",
+    "SessionHub",
+    "UsageTracker",
+    "resolve_settings",
+    "setup",
+]
+
+#: 本插件提供的 Channel 能力名。
+CAPABILITY_NAME: Final = "openai"
+
+#: 可选的 Bearer 凭据在插件配置块里的键名（`plugins.openai-api.secrets.api_key`）。
+#: 固定成常量而不是可配置——`PermissionDecl.target` 写的就是这个名字，做成可配置会让
+#: 那条声明变成一句谎话（`D19` 的先例）。
+SECRET_NAME: Final = "api_key"
+
+MANIFEST: Final = PluginManifest(
+    id="openai-api",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="nucleamind_plugin_openai_api:setup",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
+    # 只声明 secret。**不声明 `net`**：那条权限判的是出站请求，而本插件只监听——
+    # 声明一条用不上的权限会让「这个插件到底要什么」变模糊（`D21` 的先例）。
+    permissions=(
+        PermissionDecl(
+            kind=PermissionKind.SECRET,
+            target=SECRET_NAME,
+            reason="校验 HTTP 请求的 Bearer 凭据；不配就是不开鉴权（只允许回环）。",
+        ),
+    ),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "host": {"type": "string"},
+            # `0` 是合法的：内核分配一个空闲端口，真实端口由 `ApiChannel.bound_port`
+            # 报出来。测试与「随便给我一个空闲端口」的部署都用它。
+            "port": {"type": "integer", "minimum": 0, "maximum": 65535},
+            "model": {"type": "string"},
+            "conversation": {"type": "string"},
+            "channel_id": {"type": "string"},
+            "instance_id": {"type": "string"},
+            "show_reasoning": {"type": "boolean"},
+            "request_timeout_ms": {"type": "integer", "minimum": 1000},
+        },
+        "additionalProperties": False,
+    },
+)
+
+
+def setup(api: NucleaAPI) -> None:
+    """注册 Channel。配置在这里校验一次，不拖到第一次请求（`D18` 的先例）。"""
+    settings = resolve_settings(api.ctx)
+    secret = _optional_secret(api.ctx)
+    if settings.requires_auth and secret is None:
+        raise NucleaError(
+            ErrorCode.CONFIG_INVALID,
+            "绑定非回环地址的 OpenAI 兼容接口必须配置 api_key。",
+            detail={
+                "pointer": f"/plugins/{MANIFEST.id}/config/host",
+                "host": settings.host,
+                "fix": f"在 /plugins/{MANIFEST.id}/secrets/{SECRET_NAME} 配一个 ${{VAR}} 引用，"
+                "或把 host 改回 127.0.0.1。",
+            },
+        )
+    hub = SessionHub(settings, ctx=api.ctx)
+    hub.usage.subscribe(api.ctx.events)
+    api.register_channel(CAPABILITY_NAME, ApiChannel(hub, api_key=secret))
+
+
+def _optional_secret(ctx: PluginContext) -> str | None:
+    """取 Bearer 凭据。**没配不是错误**——回环上的本地实例不强制鉴权。
+
+    `ctx.secret()` 在「授权了但没配」时抛 `CONFIG_SECRET_MISSING`（`D23` 定的语义），
+    那正是「用户没打算开鉴权」的形状，因此折成 `None`。其余错误（例如
+    `PERMISSION_DENIED`）原样抛出——那是真的配错了。
+    """
+    try:
+        return ctx.secret(SECRET_NAME).reveal()
+    except NucleaError as exc:
+        if exc.code is ErrorCode.CONFIG_SECRET_MISSING:
+            return None
+        raise
