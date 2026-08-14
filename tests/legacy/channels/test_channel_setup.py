@@ -15,7 +15,6 @@ from nucleamind.legacy.channels.registry import channel_default_enabled, discove
 
 EXPECTED_CHANNELS = {
     "dingtalk",
-    "discord",
     "email",
     "feishu",
     "matrix",
@@ -67,15 +66,21 @@ def test_matrix_setup_requires_one_complete_login_method() -> None:
 
 
 def test_channel_setup_spec_separates_writable_and_snapshot_fields() -> None:
+    """两侧各取一个：只读快照 vs 可写路由字段。
+
+    `D33` 把 discord 迁成了官方插件并删掉了它的 legacy 实现，因此可写的那一侧改用
+    whatsapp——它的 `allowFrom` 同样在 `route_field_types` 里而不在 `snapshot_fields` 里，
+    这条断言要验的对比因此一个字都没变。
+    """
     matrix = channel_setup_spec("matrix")
-    discord = channel_setup_spec("discord")
+    whatsapp = channel_setup_spec("whatsapp")
 
     assert matrix is not None
-    assert discord is not None
+    assert whatsapp is not None
     assert "allowFrom" not in matrix.route_field_types
     assert "allowFrom" in matrix.snapshot_fields
-    assert "allowFrom" in discord.route_field_types
-    assert "allowFrom" not in discord.snapshot_fields
+    assert "allowFrom" in whatsapp.route_field_types
+    assert "allowFrom" not in whatsapp.snapshot_fields
 
 
 def test_webui_forms_have_writable_mattermost_and_whatsapp_contracts() -> None:

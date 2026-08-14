@@ -1,9 +1,10 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-14（`D32` 收口）
-- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D32` 均已完成；`D32` 交付了
-  M5 迁移顺序的第 1 项——Anthropic 原生 Model Provider 插件；
-  下一步按技术方案 §13 M5 继续：Memory / 扩展 Tool / Channel / Cron / WebUI）
+- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D33` 均已完成；`D32` 交付了 M5 的
+  第 1 项 Anthropic Model Provider，`D33` 交付了第 4 项 Channel 的第一个——Discord，
+  并顺带放开了 Channel 泵的串行限制；
+  下一步按技术方案 §13 M5 继续：Memory / 扩展 Tool / 其余 Channel / Cron / WebUI）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1683,6 +1684,82 @@
     与官方插件 `openai-api` 同一类情况（它单独跑有 22 条）。本轮没有改 `include` 范围。
 
 
+- **`D33` Channel 泵扇出 + 官方 Discord 插件 ★**（两个可分别回退的 commit：
+  `kernel/routing/fanout.py` + `runtime/instance.py` 接线 ≈ 300 行 / 20 个新用例；
+  `plugins/nucleamind-plugin-discord/` 八个模块约 1600 行 / 106 个用例 +
+  删除 `legacy/channels/discord/` 2363 行）：
+  - **Half A 修掉了 `D31` 明确推迟、四处文档如实记着的那条能力回退**：泵的 `await` 原来
+    在 `async for` 里面，一条 Channel 同时只跑一条 turn、跨会话也串行。对 HTTP 接口它是
+    排队，对聊天 Channel 它是「一个用户的慢 turn 卡住同一个 bot 上所有人」。
+  - **① 按 conversation 扇出，不是每条消息 `create_task`。** 后者在 CPython 上其实也能
+    保住 FIFO（ready 队列是 FIFO，且 `submit()` 在第一个 `await` 之前就同步入队），
+    但那正是 `session_lock.py` 的 docstring 明文拒绝依赖的那类实现细节——项目已经为
+    「不依赖 `Lock` 的唤醒顺序」付过一次钱，在泵这一层反过来依赖它就是把刚拆掉的东西
+    装回去。**有界队列 + 一个 worker** 是同一份设计的延伸。
+  - **② `EDG-202` 逐字成立而不是「大概成立」**：`InboundMessage.session_key(scope)` 的
+    `scope` 是实例级常量、一条 Channel 上 `channel_id` 也是常量，因此
+    `conversation_id ↔ SessionKey` 是**双射**，「每 conversation 一个 worker」与
+    「每 session 一个 worker」是同一句话。已有的单写者不变量用例一个字未改地继续通过。
+  - **③ `openai-api` 插件代码零改动**：`SessionHub` 的「同一 conversation 最老等待者」
+    关联依赖同 conversation 内串行，而扇出保住了它（`_waiting` 是按 conversation 索引的
+    deque，两条并发 turn 永远不碰同一个）。**但那五处「能力回退」的文档全部变成了假话，
+    同 commit 改掉**，并在 `hub.py` 补了一段「为什么这条关联在新并发模型下仍成立」的
+    书面证明——下一个人不必重新推一遍。
+  - **④ 两个上界不与 scheduler 的 `queue_max_size` 串联**：lane 串行意味着同 session 在
+    scheduler 里至多一个来自泵的等待者，因此 lane 队列是 Channel 流量**唯一生效**的界，
+    没有 `D28` 那个「等了多久取决于两个数的最小值」的陷阱。`channel_queue_max_size` 取
+    与 `queue_max_size` 相同的 32，让用户可见的积压容量一个字没变。
+  - **⑤ lane 队列空即退出，没有 idle TTL**（`SessionScheduler._discard_if_idle` 的同一条
+    判据）：`lanes()` 恒等于此刻有活儿的 conversation 数，没有后台计时器也没有泄漏。
+    再发明一个「空闲 N 秒回收」就是第二套机制加第二个要调的数。
+  - **⑥ 新增 `instance.input_dropped` 而不是复用 `turn.rejected`**：被扇出拒掉的消息
+    **从未进过 orchestrator**，而 turn 事件只有那一个发布点，给它发一条会在事件流里凭空
+    造一条 orchestrator 没见过的 turn（`OBS-002` 的按序重放随之作废）。背压是实例级现象，
+    落 INSTANCE 族。`EventName` 快照 32 → 33 条。**`Channel.deliver` 因此可能被并发调用**
+    （同 conversation 内仍不会），已写进契约 docstring。
+  - **Half B 的 Discord 插件是第一个 Channel 插件，后续十几个照它写。**
+    切分的支点是 `gateway.py`——**唯一** import `discord` 的模块，其余全是纯函数或对
+    `Platform` / `Reactions` 两个 Protocol 编程，因此 106 个用例里只有一条需要碰 SDK
+    （而且是验「没装它时说什么」）。legacy 的测试第 11 行是 `pytest.importorskip`，
+    CI 没装依赖时 52 个用例静默全跳。
+  - **不移植的四样，各有理由**：配对码流程（它服务的审批界面 `D31` 已随 WebUI 后端删除，
+    新层的等价物是 `allow_from` + TOFU；**代价如实写进 README**：陌生人 DM 从「收到配对码」
+    变成「被静默忽略」）、Discord 原生 slash command（命令只有 `routing/dispatcher` 一个
+    来源，再注册一套会让「命令有几个来源」变成两个答案）、`ChannelSetupSpec` 与 WebUI 向导、
+    发送重试（legacy 也没有，不发明一套）。
+  - **新增 `operators` 配置键**：legacy 没有这个概念（它的 `allow_from` 就是全部权限），
+    而契约要求 `Sender.is_operator` 由 Channel 在边界决定。默认空 = 无人是 operator，
+    `/config` 这类命令因此默认不可用——那是安全的一侧。
+  - **时长配置统一 `*_ms`**：legacy 的 `working_emoji_delay: 2.0` 与
+    `_STREAM_EDIT_INTERVAL = 0.8` 数值一字不改，只换单位与命名。留一个秒制字段会让它
+    成为新层配置里唯一的例外。
+  - **thread 天然是独立会话**：`conversation_id` 取频道 id，而 thread 有自己的 id，因此
+    `SessionKey` 已经表达完了，不需要 legacy 那个自造的 session key。
+    **入站附件不下载**（契约只存引用，CDN 给直链），本插件因此一条 `fs:*` 权限都不需要。
+  - **写这批用例时踩到并修掉的三个真问题**：① 契约在构造时就拒绝空正文的 `FINAL`
+    （只有 `CANCELLED`/`FAILED` 允许空），因此「终态回退到累积文本」那条路只有中断/失败
+    才走得到——而那恰好是最需要它的时候；② 注入的 `sleep` 替身**必须真的让出事件循环**，
+    否则 `_type_loop` 的 `while True` 会饿死事件循环（整套用例挂住了一次）；
+    ③ 开发环境里 `discord.py` 是装着的（legacy channel 的依赖），验「没装」要用
+    `monkeypatch.setitem(sys.modules, "discord", None)`。
+  - **两条如实记着的边界**：① **五种权限里没有「连接一个聊天平台」这一种**——`net` 判的是
+    经 `ctx.net` 门面的出站请求，而 `discord.py` 自己开连接，因此本插件除两条 `secret` 外
+    声明不出任何权限而它确实会连出去（与 `openai-api` 那条「没有『监听端口』」并列）；
+    ② **出站 workspace 附件传不出去**（`FileAccess` 没有 `read_bytes`），发一条文本标记而
+    不是假装发过——今天新层也没有任何地方产出带附件的出站消息。
+  - **`kernel/config/schema.py` 又撞上 500 行上限**，把诊断视图 `to_json` 拆到
+    `document.py`（`D13` → `fields.py`、`D24` → 六个 `*_at()`、`D28` → `defaults.py` 之后
+    同一条规则的第四次应用：先挪走「只是把已有结构换个形状」的派生物，不动字段表）。
+  - **`ruff` 的 `per-file-ignores` 补了插件测试树**：`TRY` 等阈值原本只豁免顶层 `tests/`，
+    而插件是独立发行包、测试树不在那底下。理由与既有那条完全相同（阈值针对产品代码，
+    不针对夹具），`anthropic` 插件只是碰巧没有 `raise` 才没暴露它。
+  - 验收：插件自测 106 个用例、`tests/kernel/test_fanout.py` 16 个、
+    `tests/runtime/test_instance.py` 新增 4 条（含「两个会话互不阻塞」与 `EDG-202` 的逐字
+    断言）。`ruff check`、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `legacy_debt --check`（基线已下调）、`check_startup_cost --check` 全通过。
+    **legacy 债务 224 文件 / 76136 行 → 218 / 73773**，其中 `channels/` 从 47762 降到 45399。
+
+
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
@@ -1765,6 +1842,9 @@
   三条 `backend="anthropic"` 的 `ProviderSpec` 与 9 个 legacy 测试文件，
   并把 `anthropic` 从根 `pyproject.toml` 的依赖里摘掉，**技术方案 §13 M5 的五步法
   第一次完整走通、阶段三 P1 开工**。
+  `D33` 已完成，Channel 泵的按 conversation 扇出（`kernel/routing/fanout.py`）与第一个
+  Channel 插件 `plugins/nucleamind-plugin-discord/` 一并落地，同 PR 删掉
+  `legacy/channels/discord/`；`D31` 推迟的「Channel 泵的并发」至此兑现。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1818,13 +1898,14 @@
 
 ## 下一步工作
 
-1. **`D33+` 继续能力插件化**（阶段三 P1）：按技术方案 §13 M5 的顺序与五步法逐个立项
-   （Memory / 扩展 Tool / Channel / Cron / WebUI），每个模块独立编号、独立验收。
-   `D32` 已经交了第 1 项（额外 Model Provider），并把五步法在本仓库跑通了一遍——
+1. **`D34+` 继续能力插件化**（阶段三 P1）：按技术方案 §13 M5 的顺序与五步法逐个立项
+   （Memory / 扩展 Tool / 其余 Channel / Cron / WebUI），每个模块独立编号、独立验收。
+   `D32` 交了第 1 项（额外 Model Provider）、`D33` 交了第 4 项的第一个（Discord），
+   五步法在本仓库已经跑通两遍——
    **照它的形状写**：a 步复用 `tests/legacy/` 里既有的行为用例当基线（不为一个要删掉的
    实现再写一遍），b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
-   剩下的迁移源是 `legacy/channels/`（47762 行）与 `legacy/providers/` 的其余部分
-   （13202 行）。每迁完一个模块，同 PR 内删除 `legacy/` 对应目录与其 `tests/legacy/` 用例
+   剩下的迁移源是 `legacy/channels/` 的其余 14 个（45399 行，**照 `discord` 那个插件的
+   形状写**）与 `legacy/providers/` 的其余部分（13202 行）。每迁完一个模块，同 PR 内删除 `legacy/` 对应目录与其 `tests/legacy/` 用例
    ——`legacy/` 债务指标不下降即视为该模块未完成。`legacy/` 清空后删除该目录、
    `R6` 守卫与 `scripts/legacy_debt.py`。
 2. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
@@ -1837,7 +1918,34 @@
    - **WebUI**：`D31` 删掉了它的后端（`legacy/webui/` + gateway + websocket 通道），
      前端源码 `webui/` 仍在树里但没有服务端可连。
 
-`D32` 留下的、`D33+` 必须用到的事实：
+`D33` 留下的、`D34+` 必须用到的事实：
+
+- **Channel 泵按 conversation 扇出**（`kernel/routing/fanout.py`）：同 conversation 严格
+  按到达顺序串行、跨 conversation 并发。因此 **`Channel.deliver()` 可能被并发调用**，
+  按 conversation 分片的状态（流式缓冲那类）不需要加锁，跨 conversation 的共享状态需要。
+  两个上界在 `routing.channel_concurrency`（64）/ `channel_queue_max_size`（32）。
+- **写第二个 Channel 插件时照 `discord` 的形状切**：一个模块独占平台 SDK
+  （`gateway.py`），其余全是纯函数或对自定义 Protocol 编程。收益是可测性——
+  106 个用例里只有一条需要碰 SDK。**不要**用 `pytest.importorskip` 把整棵测试树
+  绑在一个可选依赖上（legacy 就是那样，CI 没装依赖时用例静默全跳）。
+- **`EDG-304` 的标记文本现在有三份**（`cli_entry/console.py`、`plugins/…-discord/
+  outbound.py`，以及将来每个 Channel 一份），逐字相同。`R4` 够不着彼此，因此各写一份 +
+  一条字面量对照测试——两处不一致时「被中断」在不同 Channel 上会读起来不一样。
+- **`Sender.is_operator` 由 Channel 在边界决定**，Kernel 不猜。每个 Channel 插件都要回答
+  「这个平台上谁是 operator」；`discord` 的答案是一个 `operators: string[]` 配置键，
+  默认空。照抄它，**不要**把「能用 bot」与「能看实例怎么装的」并成一件事（`CMD-005`）。
+- **`Channel.deliver` 的契约 docstring 与 `EDG-204` 有一处未解决的矛盾**：前者写「投递失败
+  抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有 try/except，真抛会把一次成功的 turn
+  变成失败。三个现存实现（`cli_entry` / `openai-api` / `discord`）都选了不抛。要解决它
+  就要补 `channel.delivery_failed` 事件，那是独立一项。
+- **`kernel/config/schema.py` 又贴着 500 行**（本轮 483）。再加字段之前先想清楚该挪走什么：
+  已经挪出去的是 `fields.py`（校验积木）、`defaults.py`（镜像常量）、`json_schema.py` 与
+  `document.py`（两个派生视图）。**字段表本身不动**。
+- **`ruff` 的 `per-file-ignores` 现在覆盖 `plugins/*/tests/**`**：插件是独立发行包，
+  测试树不在顶层 `tests/` 下，但适用同一条理由。写新插件的测试时不必再为 `TRY003`
+  把每条断言消息提成常量。
+
+`D32` 留下的、`D34+` 必须用到的事实：
 
 - **M5 五步法在本仓库的实际形态**：a 步**不新写基线**——`tests/legacy/` 里既有的用例就是
   行为说明书（`D07` 的 `tests/baseline/` 已随 `D31` 删除，不为一个要删掉的实现再写一遍）；

@@ -177,8 +177,11 @@ max-complexity = 12
 # 而不是靠给历史代码打满告警。D31 删除 legacy/ 时一并删除本条。
 "src/nucleamind/legacy/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
 # 一次性/运维脚本与测试：可读性阈值针对产品代码，不针对夹具与断言辅助。
+# 插件是独立发行包，它们的测试树不在顶层 `tests/` 下，但适用同一条理由（`D33`）。
 "scripts/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
 "tests/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
+"plugins/*/tests/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
+"examples/plugins/*/tests/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
 
 [tool.basedpyright]
 include = ["src/nucleamind"]

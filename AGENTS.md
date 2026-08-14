@@ -54,9 +54,11 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `plugins/nucleamind-plugin-anthropic/`（Anthropic 原生 Messages API 的 `MODEL` 能力，
   raw httpx，与内建 `model-openai` 并存），同 PR 删掉
   `legacy/providers/anthropic_provider.py` 及三条 `backend="anthropic"` 的 `ProviderSpec`，
-  并把 `anthropic` 从根 `pyproject.toml` 的依赖里摘掉；**阶段三 P1 开工**，
-  下一步按技术方案 §13 M5 的顺序继续（Memory / 扩展 Tool / Channel / Cron / WebUI）。
-  遗留实现的**剩余部分**位于 `src/nucleamind/legacy/`（224 文件 / 76136 行），
+  并把 `anthropic` 从根 `pyproject.toml` 的依赖里摘掉；`D33` 已落地 M5 的第 4 项——
+  **放开 Channel 泵的串行限制**（`kernel/routing/fanout.py` 的按 conversation 扇出）
+  与官方插件 `plugins/nucleamind-plugin-discord/`，同 PR 删掉 `legacy/channels/discord/`；
+  下一步按技术方案 §13 M5 的顺序继续（Memory / 扩展 Tool / 其余 Channel / Cron / WebUI）。
+  遗留实现的**剩余部分**位于 `src/nucleamind/legacy/`（218 文件 / 73773 行），
   自 `D31` 起**没有任何入口能启动它**——它只是 `D32+` 的在树迁移源；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
@@ -85,7 +87,7 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 ├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
 ├── embed/                 # 第 5 层：嵌入式 Python SDK
 └── legacy/                # 隔离区：nanobot 遗留代码，只出不进；D31 之后已无入口可启动
-plugins/                   # 一等公民：官方插件，各自独立发行（openai-api、anthropic）
+plugins/                   # 一等公民：官方插件（openai-api、anthropic、discord）
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
@@ -356,6 +358,33 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   因此两条背压路径在 Channel 侧长得一模一样。**`Channel.deliver` 因此可能被并发调用**
   （同 conversation 内仍不会），这条已写进 `contracts/protocols.py`。
 
+`plugins/nucleamind-plugin-discord/`（`D33`，第一个 Channel 插件，**后续十几个照它写**）六条：
+
+- **`gateway.py` 是唯一 import `discord` 的模块**，其余全是纯函数或对 `Platform` /
+  `Reactions` 两个 Protocol 编程。这不是洁癖，是测试计划的支点：**106 个用例里只有一条
+  需要碰 SDK**（而且是验「没装它时说什么」）。legacy 的做法是在测试文件第 11 行写
+  `pytest.importorskip("discord")`——CI 没装依赖时 52 个用例静默全跳。**下一个 Channel
+  插件从第一天就按这个形状切。**
+- **平台 SDK 对象在 `to_raw()` 之后就不存在了**（`MSG-004`）。判定与归一化只认识本插件
+  自己的 `RawInbound` frozen dataclass；`Any` 只出现在 `gateway.py` 与那两个回调签名上，
+  每一处都带 `# boundary:`。
+- **入站判定顺序本身是行为**：自环 → 系统消息 → `allow_from` → `allow_channels` →
+  群聊 @ 门控 → 归一化，写在 `normalize.py` 的 docstring 里。**只丢自己账号的消息，
+  不丢其它 bot 的**（上游 issue #3217，有一条用例名里写着它）——改成
+  `if author.bot: return` 会静默毁掉多 bot 编排。
+- **thread 天然是独立会话**：`conversation_id` 取频道 id 而 thread 有自己的 id，因此
+  `SessionKey(channel_id, conversation_id)` 已经把它表达完了，不需要 legacy 那个自造的
+  `f"{name}:{parent}:thread:{id}"`。**入站附件不下载**（契约只存引用，Discord CDN 给
+  直链），本插件因此一条 `fs:*` 权限都不需要。
+- **`EDG-304` 的标记是文本且与 `cli_entry.TERMINAL_MARKERS` 逐字相同**：文本能逐字节
+  断言、复制粘贴不会丢，而两处同一句话意味着「被中断」在所有 Channel 上读起来一样。
+  标记与半截答案在**同一条消息**里，分开发会让半截答案孤零零留着看起来像完整回答。
+- **`stream.py` 与 `indicators.py` 都注入时钟**，用例不真的等 0.8s / 2.0s。写替身时注意
+  **注入的 `sleep` 必须真的让出事件循环**——`_type_loop` 是 `while True` + `await sleep`，
+  一个不让出的替身会把它变成饿死事件循环的死循环（本轮的用例就是这么挂住过一次）。
+  **只在终态清指示器**（`channel._TERMINAL` 三个状态，`DELTA` 不在其中）：legacy
+  `runtime.py:479` 那条坑的新家在 `channel.py`，而不是 `indicators.py` 自己猜。
+
 `plugins/nucleamind-plugin-anthropic/`（`D32`，M5 五步法的第一次完整应用）六条：
 
 - **迁移不是移植。** 旧实现有四张按模型名版本号 gating 的表
@@ -529,12 +558,13 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m pytest tests/kernel/test_engine.py::test_function -v
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
-# 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic）：经 entry point 被发现，
+# 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic + D33 的 discord）：
 # 因此必须真的装进环境才跑得起来。tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-discord
 
 # legacy/ 债务指标（只允许下降）
 .venv\Scripts\python.exe scripts/legacy_debt.py
@@ -590,10 +620,11 @@ nm serve
   Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类（`base.py`），含图像生成与音频转录。
   **`D32` 已取走 Anthropic 那一份**（`anthropic_provider.py` 与三条 `backend="anthropic"`
   的 `ProviderSpec` 已删除），其余仍是后续 Model 插件化的来源。
-- **Channels**（`legacy/channels/`，47807 行）：Telegram、Discord、Slack、Feishu、
+- **Channels**（`legacy/channels/`，45399 行）：Telegram、Slack、Feishu、
   Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、Mattermost。
   `manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
-  **`D32+` Channel 插件化的主要来源。**
+  **`D33` 已取走 Discord**（`plugins/nucleamind-plugin-discord/`），其余仍是 Channel
+  插件化的来源——**照 discord 那个插件的形状写**。
 - **Message Bus**（`legacy/bus/`）、**Session**（`legacy/session/`）、
   **Cron**（`legacy/cron/`）、**Command Router**（`legacy/command/`）、
   **Config**（`legacy/config/`）、**Utils**（`legacy/utils/`）、
@@ -610,6 +641,7 @@ nm serve
 - **嵌入式 Python SDK**：`src/nucleamind/embed/`（`open_instance()` / `run()`）
 - **OpenAI 兼容 HTTP API**：官方插件 `plugins/nucleamind-plugin-openai-api/` + `nm serve`
 - **Anthropic 原生模型**：官方插件 `plugins/nucleamind-plugin-anthropic/`（一条 `MODEL` 能力）
+- **Discord bot**：官方插件 `plugins/nucleamind-plugin-discord/` + `nm serve`
 
 ## 架构约束与改造方向
 

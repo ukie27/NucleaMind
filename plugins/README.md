@@ -22,12 +22,14 @@ import 兄弟模块，依赖规则 `R4` 就成了空话。官方插件与第三�
 | --- | --- | --- | --- |
 | `nucleamind-plugin-openai-api/` | `openai-api` | `CHANNEL:openai` —— OpenAI 兼容 HTTP 接口（`/v1/chat/completions`、`/v1/models`），配合 `nm serve` 常驻 | `D31` |
 | `nucleamind-plugin-anthropic/` | `anthropic` | `MODEL:anthropic` —— Anthropic 原生 Messages API，与内建 `model-openai` 并存 | `D32` |
+| `nucleamind-plugin-discord/` | `discord` | `CHANNEL:discord` —— Discord bot，配合 `nm serve` 常驻 | `D33` |
 
 **它们必须真的装进环境才会被发现**（entry point 没有第二条路）：
 
 ```bash
 pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 pip install --no-deps -e plugins/nucleamind-plugin-anthropic
+pip install --no-deps -e plugins/nucleamind-plugin-discord
 ```
 
 装上不等于启用——`plugins.enabled` 是唯一闸门，改完要重启实例。
