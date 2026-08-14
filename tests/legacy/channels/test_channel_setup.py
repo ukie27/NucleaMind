@@ -27,7 +27,6 @@ EXPECTED_CHANNELS = {
     "signal",
     "slack",
     "telegram",
-    "websocket",
     "wecom",
     "weixin",
     "whatsapp",
@@ -273,11 +272,16 @@ def test_channel_default_enabled_uses_package_manifest(monkeypatch) -> None:
     assert channel_default_enabled("missing") is False
 
 
-def test_websocket_manifest_declares_the_only_default_enabled_channel() -> None:
+def test_no_channel_is_default_enabled() -> None:
+    """`D31` 删掉 websocket 通道（它是 WebUI 的传输层）之后没有默认启用的通道了。
+
+    这条断言从「只有 websocket 默认启用」翻成「一个都没有」：默认启用一个通道就等于
+    默认开一个监听端口，而那件事现在由 `nm serve` 与显式启用的 Channel 插件决定。
+    """
     enabled = {
         name
         for name in EXPECTED_CHANNELS
         if (plugin := load_channel_package(name)) is not None and plugin.default_enabled
     }
 
-    assert enabled == {"websocket"}
+    assert enabled == set()

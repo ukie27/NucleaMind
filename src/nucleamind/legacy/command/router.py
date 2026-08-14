@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from nucleamind.legacy.bus.events import OutboundMessage
 
 if TYPE_CHECKING:
-    from nucleamind.legacy.agent.loop import AgentLoop
     from nucleamind.legacy.bus.events import InboundMessage
     from nucleamind.legacy.session.manager import Session
     from nucleamind.legacy.utils.llm_runtime import LLMRuntime
@@ -48,7 +47,8 @@ class CommandContext:
     key: str
     raw: str
     args: str = ""
-    loop: AgentLoop = field(kw_only=True)
+    #: 原本是 `agent.loop.AgentLoop`，随 `D31` 一并删除；隔离区里不造替身。
+    loop: Any = field(kw_only=True)
     runtime: LLMRuntime | None = None
     is_user_turn: bool = False
     turn_scopes: list[AbstractContextManager[Any]] = field(default_factory=list)

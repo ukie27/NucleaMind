@@ -8,7 +8,7 @@ continuation is allowed and, when it is, queue the next turn directly.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, TypeAlias
 
 from loguru import logger
 
@@ -18,8 +18,8 @@ from nucleamind.legacy.session.goal_state import (
     sustained_goal_turn,
 )
 
-if TYPE_CHECKING:
-    from nucleamind.legacy.agent.loop import TurnContext
+#: 原本是 `agent.loop.TurnContext`，随 `D31` 一并删除。
+TurnContext: TypeAlias = Any
 
 INTERNAL_CONTINUATION_META = "_internal_continuation"
 INTERNAL_CONTINUATION_KIND_META = "_internal_continuation_kind"

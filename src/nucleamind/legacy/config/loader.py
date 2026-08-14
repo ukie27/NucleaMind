@@ -12,7 +12,6 @@ from pydantic_settings import SettingsError
 from nucleamind.legacy.config.errors import ConfigIssue, ConfigLoadError, validation_issues
 from nucleamind.legacy.config.schema import (
     Config,
-    _resolve_tool_config_refs,  # pyright: ignore[reportPrivateUsage]
 )
 from nucleamind.legacy.utils.helpers import (
     _write_text_atomic,  # pyright: ignore[reportPrivateUsage]
@@ -20,7 +19,6 @@ from nucleamind.legacy.utils.helpers import (
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
-_schema_refs_ready = False
 
 
 def _as_config_object(value: object) -> dict[str, Any] | None:
@@ -51,11 +49,6 @@ def load_config(config_path: Path | None = None) -> Config:
     Returns:
         Loaded configuration object.
     """
-    global _schema_refs_ready
-    if not _schema_refs_ready:
-        _resolve_tool_config_refs()
-        _schema_refs_ready = True
-
     path = config_path or get_config_path()
 
     if not path.exists():

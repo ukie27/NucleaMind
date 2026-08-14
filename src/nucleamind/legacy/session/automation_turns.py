@@ -56,9 +56,9 @@ def automation_history_overrides_for_spec(
 def _automation_specs() -> tuple[AutomationTurnSpec, ...]:
     # Source modules import the generic helpers above, so keep spec loading lazy.
     from nucleamind.legacy.cron.session_turns import CRON_AUTOMATION_SPEC
-    from nucleamind.legacy.triggers.local_session_turns import LOCAL_TRIGGER_AUTOMATION_SPEC
 
-    return (CRON_AUTOMATION_SPEC, LOCAL_TRIGGER_AUTOMATION_SPEC)
+    # `D31` 删掉 `triggers/` 之后只剩 cron 这一种自动化 turn。
+    return (CRON_AUTOMATION_SPEC,)
 
 
 def automation_history_overrides(

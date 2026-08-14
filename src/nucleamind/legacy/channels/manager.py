@@ -43,7 +43,6 @@ from nucleamind.legacy.utils.restart import (
 if TYPE_CHECKING:
     from nucleamind.legacy.cron.service import CronService
     from nucleamind.legacy.session.manager import SessionManager
-    from nucleamind.legacy.triggers.local_store import LocalTriggerStore
 
 
 def _default_webui_dist() -> Path | None:
@@ -93,7 +92,8 @@ class ChannelManager:
         *,
         session_manager: "SessionManager | None" = None,
         cron_service: CronService | None = None,
-        local_trigger_store: LocalTriggerStore | None = None,
+        # 原本是 `triggers.local_store.LocalTriggerStore`，随 `D31` 一并删除。
+        local_trigger_store: Any | None = None,
         webui_runtime_model_name: Callable[[], str | None] | None = None,
         webui_cron_pending_job_ids: Callable[[str], set[str]] | None = None,
         webui_local_trigger_pending_ids: Callable[[str], set[str]] | None = None,
@@ -155,35 +155,9 @@ class ChannelManager:
         *,
         runtime_name: str | None = None,
     ) -> BaseChannel:
+        # `D31` 删掉了 websocket 通道与 webui 后端（它们是 WebUI 的传输层与服务端），
+        # 因此这里不再有需要额外装配的通道。参数留着是给下一个需要它的通道用的。
         kwargs: dict[str, Any] = {}
-        if cls.name == "websocket":
-            from nucleamind.legacy.channels.websocket.runtime import WebSocketConfig
-            from nucleamind.legacy.webui.gateway_services import build_gateway_services
-
-            parsed = WebSocketConfig.model_validate(section)
-            static_path = _default_webui_dist() if self._webui_static_dist else None
-            workspace = Path(self.config.workspace_path)
-            gateway = build_gateway_services(
-                config=parsed,
-                bus=self.bus,
-                session_manager=self._session_manager,
-                static_dist_path=static_path,
-                workspace_path=workspace,
-                default_restrict_to_workspace=self.config.tools.restrict_to_workspace,
-                disabled_skills=set(self.config.agents.defaults.disabled_skills),
-                runtime_model_name=self._webui_runtime_model_name,
-                runtime_surface=self._webui_runtime_surface,
-                runtime_capabilities_overrides=self._webui_runtime_capabilities,
-                cron_service=self._cron_service,
-                local_trigger_store=self._local_trigger_store,
-                cron_pending_job_ids=self._webui_cron_pending_job_ids,
-                local_trigger_pending_ids=self._webui_local_trigger_pending_ids,
-                channel_feature_action=self.apply_channel_feature_action,
-                channel_runtime_status=self.get_status,
-                skill_state_action=self._webui_skill_state_action,
-                logger=logger,
-            )
-            kwargs["gateway"] = gateway
         channel = cls(section, self.bus, **kwargs)
         if runtime_name and runtime_name != channel.name:
             channel.name = runtime_name

@@ -83,8 +83,6 @@ class TestIsDispatchableCommand:
     [
         ("/status", False),
         ("/history 5", False),
-        ("/goal", False),
-        ("/goal migrate the database", True),
         ("regular prompt", True),
     ],
 )

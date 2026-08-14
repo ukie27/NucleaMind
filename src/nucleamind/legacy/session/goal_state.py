@@ -119,7 +119,7 @@ def runner_wall_llm_timeout_s(
     metadata: Mapping[str, Any] | None = None,
     message_metadata: Mapping[str, Any] | None = None,
 ) -> float | None:
-    """Wall-clock cap for :class:`~nucleamind.legacy.agent.runner.AgentRunner` when streaming an LLM.
+    """Wall-clock cap for the legacy agent runner when streaming an LLM.
 
     Returns ``0.0`` to disable ``asyncio.wait_for`` around the request when this is a
     sustained-goal turn; ``None`` means use ``NANOBOT_LLM_TIMEOUT_S``. Pass in-memory

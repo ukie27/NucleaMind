@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,14 +10,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from nucleamind.legacy.config.timezone import detect_system_timezone
 from nucleamind.legacy.config_base import Base
 from nucleamind.legacy.cron.types import CronSchedule
-
-if TYPE_CHECKING:
-    from nucleamind.legacy.agent.tools.cli_apps import CliAppsToolConfig
-    from nucleamind.legacy.agent.tools.filesystem import FileToolsConfig
-    from nucleamind.legacy.agent.tools.image_generation import ImageGenerationToolConfig
-    from nucleamind.legacy.agent.tools.self import MyToolConfig
-    from nucleamind.legacy.agent.tools.shell import ExecToolConfig
-    from nucleamind.legacy.agent.tools.web import WebToolsConfig
 
 
 class ChannelsConfig(Base):
@@ -393,19 +385,11 @@ def _lazy_default(module_path: str, class_name: str) -> Any:
 class ToolsConfig(Base):
     """Tools configuration.
 
-    Field types for tool-specific sub-configs are resolved via model_rebuild()
-    at the bottom of this file so tool config classes can stay next to their
-    tool implementations.
+    `D31` 删掉 `legacy/agent/tools/` 之后，六个按工具切分的子配置
+    （web / exec / file / cli_apps / my / image_generation）随实现一并移除，
+    这里只剩下与工具实现无关的策略开关。
     """
 
-    web: WebToolsConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.web", "WebToolsConfig"))
-    exec: ExecToolConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.shell", "ExecToolConfig"))
-    file: FileToolsConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.filesystem", "FileToolsConfig"))
-    cli_apps: CliAppsToolConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.cli_apps", "CliAppsToolConfig"))
-    my: MyToolConfig = Field(default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.self", "MyToolConfig"))
-    image_generation: ImageGenerationToolConfig = Field(
-        default_factory=lambda: _lazy_default("nucleamind.legacy.agent.tools.image_generation", "ImageGenerationToolConfig"),
-    )
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
     webui_allow_local_service_access: bool = Field(
         default=True,
@@ -442,11 +426,6 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("modelPresets", "model_presets"),
         serialization_alias="modelPresets",
     )
-
-    def __init__(self, **values: Any) -> None:
-        if not type(self).__pydantic_complete__:
-            _resolve_tool_config_refs()
-        super().__init__(**values)
 
     @model_validator(mode="after")
     def _validate_model_preset(self) -> "Config":
@@ -659,43 +638,3 @@ class Config(BaseSettings):
         env_prefix="NANOBOT_",
         env_nested_delimiter="__",
     )
-
-
-def _resolve_tool_config_refs() -> None:
-    """Resolve forward references in ToolsConfig by importing tool config classes.
-
-    Must be called after all modules are loaded (breaks circular imports).
-    Re-exports the classes into this module's namespace so existing imports
-    like ``from nucleamind.legacy.config.schema import ExecToolConfig`` continue to work.
-    """
-    import sys
-
-    from nucleamind.legacy.agent.tools.cli_apps import CliAppsToolConfig
-    from nucleamind.legacy.agent.tools.filesystem import FileToolsConfig
-    from nucleamind.legacy.agent.tools.image_generation import ImageGenerationToolConfig
-    from nucleamind.legacy.agent.tools.self import MyToolConfig
-    from nucleamind.legacy.agent.tools.shell import ExecToolConfig
-    from nucleamind.legacy.agent.tools.web import WebFetchConfig, WebSearchConfig, WebToolsConfig
-
-    # Re-export into this module's namespace
-    mod = sys.modules[__name__]
-    mod.ExecToolConfig = ExecToolConfig  # type: ignore[attr-defined]
-    mod.FileToolsConfig = FileToolsConfig  # type: ignore[attr-defined]
-    mod.CliAppsToolConfig = CliAppsToolConfig  # type: ignore[attr-defined]
-    mod.WebToolsConfig = WebToolsConfig  # type: ignore[attr-defined]
-    mod.WebSearchConfig = WebSearchConfig  # type: ignore[attr-defined]
-    mod.WebFetchConfig = WebFetchConfig  # type: ignore[attr-defined]
-    mod.MyToolConfig = MyToolConfig  # type: ignore[attr-defined]
-    mod.ImageGenerationToolConfig = ImageGenerationToolConfig  # type: ignore[attr-defined]
-
-    ToolsConfig.model_rebuild()
-    Config.model_rebuild()
-
-
-# Eagerly resolve when the import chain allows it (no circular deps at this
-# point).  If it fails (first import triggers a cycle), the rebuild will
-# happen lazily when Config/ToolsConfig is first used at runtime.
-try:
-    _resolve_tool_config_refs()
-except ImportError:
-    pass

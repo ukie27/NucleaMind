@@ -9,7 +9,9 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from nucleamind.legacy.webui.metadata import WEBUI_TURN_METADATA_KEY
+#: 原先来自已删除的 `legacy/webui/metadata.py`（`D31`）。它是写进出站消息
+#: metadata 的键名，值本身就是契约的一部分，内联比留一条指向空模块的 import 诚实。
+WEBUI_TURN_METADATA_KEY = "webui_turn_id"
 
 RESTART_NOTIFY_CHANNEL_ENV = "NANOBOT_RESTART_NOTIFY_CHANNEL"
 RESTART_NOTIFY_CHAT_ID_ENV = "NANOBOT_RESTART_NOTIFY_CHAT_ID"

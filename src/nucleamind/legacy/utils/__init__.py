@@ -29,11 +29,9 @@ class _LazyModuleAlias(ModuleType):
         return sorted(set(super().__dir__()) | set(dir(self._load())))
 
 
-_LEGACY_MODULE_ALIASES = {
-    "webui_thread_disk": "nucleamind.legacy.webui.thread_disk",
-    "webui_transcript": "nucleamind.legacy.webui.transcript",
-    "webui_turn_helpers": "nucleamind.legacy.session.webui_turns",
-}
+# `D31` 删掉 webui 后端与 session/webui_turns.py 之后，这张别名表里三条全部
+# 指向不存在的模块，因此清空。保留这张表本身是为了下一个搬家的模块。
+_LEGACY_MODULE_ALIASES: dict[str, str] = {}
 
 for _legacy_name, _target_name in _LEGACY_MODULE_ALIASES.items():
     sys.modules.setdefault(

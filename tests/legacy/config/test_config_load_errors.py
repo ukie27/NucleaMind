@@ -46,7 +46,7 @@ def test_load_config_invalid_json_fails_fast(tmp_path) -> None:
 def test_load_config_invalid_schema_fails_fast(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({"tools": {"exec": {"timeout": -1}}}),
+        json.dumps({"agents": {"defaults": {"sessionTtlMinutes": -1}}}),
         encoding="utf-8",
     )
 
@@ -56,7 +56,7 @@ def test_load_config_invalid_schema_fails_fast(tmp_path) -> None:
     error = exc_info.value
     message = str(error)
     assert error.kind == "invalid_schema"
-    assert "tools.exec.timeout" in message
+    assert "agents.defaults.sessionTtlMinutes" in message
     assert "Must be greater than or equal to 0." in message
     assert "input_value" not in message
     assert "errors.pydantic.dev" not in message
@@ -139,8 +139,8 @@ def test_load_config_error_does_not_trust_custom_validator_message(tmp_path) -> 
     "tools",
     [
         [],
-        {"exec": []},
-        {"my": 1, "myEnabled": True},
+        {"mcpServers": []},
+        {"restrictToWorkspace": 1, "ssrfWhitelist": "not-a-list"},
     ],
 )
 def test_load_config_malformed_legacy_sections_use_structured_error(

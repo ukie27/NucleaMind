@@ -159,16 +159,5 @@ class TestProviderSanitizeEmptyContent:
         json.dumps({"model": "x", "messages": cleaned}).encode("utf-8")
 
 
-class TestBackwardCompatReExport:
-    def test_cli_reexport_points_to_shared_helper(self):
-        """The CLI module continues to expose ``_sanitize_surrogates`` as a
-        thin alias so existing imports (e.g. ``SafeFileHistory`` in the
-        legacy tests) keep working."""
-        from nucleamind.legacy.cli.commands import _sanitize_surrogates as cli_alias
-
-        assert cli_alias is sanitize_surrogates
-        assert cli_alias("hello \ud83e\udd16") == "hello 🤖"
-
-
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

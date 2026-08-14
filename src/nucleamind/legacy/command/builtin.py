@@ -6,7 +6,6 @@ import asyncio
 import os
 import subprocess
 import sys
-import time
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -19,7 +18,6 @@ from nucleamind.legacy.utils.restart import set_restart_notice_to_env
 from nucleamind.legacy.utils.workspace_prompts import initialize_workspace_prompt
 
 if TYPE_CHECKING:
-    from nucleamind.legacy.agent.loop import AgentLoop
     from nucleamind.legacy.session.manager import Session
     from nucleamind.legacy.utils.gitstore import CommitInfo
 
@@ -101,51 +99,6 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Print the last N persisted conversation messages.",
         "history",
         "[n]",
-        accepts_args=True,
-    ),
-    BuiltinCommandSpec(
-        "/goal",
-        "Start long-running goal",
-        "Tell the agent to treat the request as a long-running goal.",
-        "activity",
-        "<goal>",
-        lifecycle="agent_turn_with_args",
-        accepts_args=True,
-    ),
-    BuiltinCommandSpec(
-        "/trigger",
-        "Create named local trigger",
-        "Create a named CLI trigger bound to this chat session.",
-        "zap",
-        "<name>",
-        accepts_args=True,
-    ),
-    BuiltinCommandSpec(
-        "/dream",
-        "Run Dream",
-        "Manually trigger memory consolidation.",
-        "sparkles",
-    ),
-    BuiltinCommandSpec(
-        "/dream-log",
-        "Show Dream log",
-        "Show what the last Dream consolidation changed.",
-        "book-open",
-        accepts_args=True,
-    ),
-    BuiltinCommandSpec(
-        "/dream-restore",
-        "Restore memory",
-        "Revert memory to a previous Dream snapshot.",
-        "undo-2",
-        accepts_args=True,
-    ),
-    BuiltinCommandSpec(
-        "/dream-prompt",
-        "Dream memory",
-        "Tell Dream how to organize this workspace's memory.",
-        "file-text",
-        "[init]",
         accepts_args=True,
     ),
     BuiltinCommandSpec(
@@ -329,7 +282,7 @@ def _format_preset_names(names: list[str]) -> str:
     return ", ".join(f"`{name}`" for name in names) if names else "(none configured)"
 
 
-def _model_preset_names(loop: AgentLoop) -> list[str]:
+def _model_preset_names(loop: Any) -> list[str]:
     names = set(loop.model_presets)
     names.add("default")
     return ["default", *sorted(name for name in names if name != "default")]
@@ -339,7 +292,7 @@ def _command_error_message(exc: Exception) -> str:
     return str(exc.args[0]) if isinstance(exc, KeyError) and exc.args else str(exc)
 
 
-def _model_command_status(loop: AgentLoop, session: Session) -> str:
+def _model_command_status(loop: Any, session: Session) -> str:
     names = _model_preset_names(loop)
     try:
         runtime = loop.runtime_for_session(session, recover_removed=False)
@@ -411,136 +364,6 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
         chat_id=ctx.msg.chat_id,
         content="\n".join(lines),
         metadata=metadata,
-    )
-
-
-async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
-    """Manually trigger a Dream consolidation run."""
-    import time
-
-    loop = ctx.loop
-    msg = ctx.msg
-
-    async def _run_dream():
-        from nucleamind.legacy.agent.memory import DreamRunProgress, MemoryStore
-
-        dream_session_key = MemoryStore.dream_session_key
-        build_dream_commit_message = MemoryStore.build_dream_commit_message
-        prune_dream_sessions = MemoryStore.prune_dream_sessions
-
-        store = loop.context.memory
-        progress = DreamRunProgress()
-        content = ""
-        resp = None
-        diff_body = ""
-        t0 = time.monotonic()
-        try:
-            result = store.build_dream_prompt()
-            if result is None:
-                await loop.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content=_format_dream_no_input_message(),
-                    metadata={"render_as": "text"},
-                ))
-                return
-            prompt, last_cursor = result
-            key = dream_session_key()
-            dream_runtime = loop.dream_runtime()
-            resp = await loop.process_direct(
-                prompt,
-                session_key=key,
-                ephemeral=True,
-                tools=store.build_dream_tools(),
-                on_progress=progress,
-                runtime=dream_runtime,
-            )
-            elapsed = time.monotonic() - t0
-            # The real file delta grounds the audit record; clean completion
-            # decides whether this history batch has finished processing.
-            diff_body = store.dream_content_diff()
-            completed = MemoryStore.dream_run_completed(
-                resp,
-                had_tool_errors=progress.had_tool_errors,
-            )
-            if completed:
-                store.set_last_dream_cursor(last_cursor)
-                if diff_body:
-                    content = f"Dream completed in {elapsed:.1f}s."
-                else:
-                    content = f"Dream completed in {elapsed:.1f}s; no memory changes."
-            else:
-                content = (
-                    f"Dream did not complete after {elapsed:.1f}s; "
-                    "memory cursor was not advanced."
-                )
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            content = f"Dream failed after {elapsed:.1f}s: {e}"
-        finally:
-            from nucleamind.legacy.webui.token_usage import record_response_token_usage
-
-            record_response_token_usage(
-                resp,
-                source="dream",
-                timezone_name=getattr(loop.context, "timezone", None),
-            )
-            if store.git.is_initialized():
-                commit_msg = build_dream_commit_message("dream: manual run", diff_body)
-                sha = store.git.auto_commit(commit_msg)
-                if sha:
-                    content += f" (commit {sha})"
-            store.compact_history()
-            prune_dream_sessions(loop.sessions.sessions_dir)
-        await loop.bus.publish_outbound(OutboundMessage(
-            channel=msg.channel, chat_id=msg.chat_id, content=content,
-        ))
-
-    asyncio.create_task(_run_dream())
-    return OutboundMessage(
-        channel=msg.channel, chat_id=msg.chat_id, content="Dreaming...",
-    )
-
-
-async def cmd_dream_prompt(ctx: CommandContext) -> OutboundMessage:
-    """Show or set up the workspace Dream memory instructions."""
-    store = ctx.loop.context.memory
-    path = store.dream_prompt_file
-    display_path = path.relative_to(store.workspace).as_posix()
-    args = ctx.args.strip().lower()
-
-    if args == "init":
-        if not initialize_workspace_prompt(path, store.default_dream_prompt()):
-            content = (
-                f"Dream memory instructions already exist at `{display_path}`.\n\n"
-                "Edit that file, or delete/empty it to return to nanobot's default."
-            )
-        else:
-            content = (
-                f"Created Dream memory instructions at `{display_path}`.\n\n"
-                "Edit that file to teach Dream how to organize memory. "
-                "This fully replaces nanobot's default Dream guide for this workspace. "
-                "Delete or empty it to return to nanobot's default."
-            )
-    elif args:
-        content = "Usage: /dream-prompt [init]"
-    elif store.has_dream_prompt_override():
-        content = (
-            "Dream memory instructions: custom for this workspace\n\n"
-            f"- Path: `{display_path}`\n"
-            "- Delete or empty this file to return to nanobot's default."
-        )
-    else:
-        content = (
-            "Dream memory instructions: nanobot default\n\n"
-            f"- Editable file: `{display_path}`\n"
-            "- Run `/dream-prompt init` to create an editable copy."
-        )
-
-    return OutboundMessage(
-        channel=ctx.msg.channel,
-        chat_id=ctx.msg.chat_id,
-        content=content,
-        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
 
@@ -692,120 +515,6 @@ def _format_dream_restore_list(commits: list[CommitInfo]) -> str:
     return "\n".join(lines)
 
 
-async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
-    """Show what the last Dream changed.
-
-    Default: diff of the latest Dream commit versus its parent.
-    With /dream-log <sha>: diff of that specific commit.
-    """
-    store = ctx.loop.consolidator.store
-    git = store.git
-
-    if not git.is_initialized():
-        if store.get_last_dream_cursor() == 0:
-            msg = (
-                "Dream has not run yet. Run `/dream`, or wait for the next scheduled Dream cycle.\n\n"
-                "Use `/dream-prompt` to see or change how Dream organizes memory."
-            )
-        else:
-            msg = "Dream history is not available because memory versioning is not initialized."
-        return OutboundMessage(
-            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content=msg, metadata={"render_as": "text"},
-        )
-
-    args = ctx.args.strip()
-
-    if args:
-        # Show diff of a specific commit
-        sha = args.split()[0]
-        result = git.show_commit_diff(sha)
-        if not result:
-            content = (
-                f"Couldn't find Dream change `{sha}`.\n\n"
-                "Use `/dream-restore` to list recent versions, "
-                "or `/dream-log` to inspect the latest one."
-            )
-        else:
-            commit, diff = result
-            content = _format_dream_log_content(commit, diff, requested_sha=sha)
-    else:
-        # Default: show the latest Dream commit's diff
-        commits = git.log(max_entries=1, message_prefix=_DREAM_COMMIT_PREFIX)
-        result = (
-            git.show_commit_diff(
-                commits[0].sha,
-                max_entries=1,
-                message_prefix=_DREAM_COMMIT_PREFIX,
-            )
-            if commits else None
-        )
-        if result:
-            commit, diff = result
-            content = _format_dream_log_content(commit, diff)
-        else:
-            content = (
-                "Dream memory has no saved versions yet.\n\n"
-                "Use `/dream-prompt` to see or change how Dream organizes memory."
-            )
-
-    return OutboundMessage(
-        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-        content=content, metadata={"render_as": "text"},
-    )
-
-
-async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
-    """Restore memory files from a previous dream commit.
-
-    Usage:
-        /dream-restore          — list recent commits
-        /dream-restore <sha>    — revert a specific commit
-    """
-    store = ctx.loop.consolidator.store
-    git = store.git
-    if not git.is_initialized():
-        return OutboundMessage(
-            channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-            content="Dream history is not available because memory versioning is not initialized.",
-        )
-
-    args = ctx.args.strip()
-    if not args:
-        # Show recent Dream commits for the user to pick
-        commits = git.log(max_entries=10, message_prefix=_DREAM_COMMIT_PREFIX)
-        if not commits:
-            content = "Dream memory has no saved versions to restore yet."
-        else:
-            content = _format_dream_restore_list(commits)
-    else:
-        sha = args.split()[0]
-        result = git.show_commit_diff(sha, message_prefix=_DREAM_COMMIT_PREFIX)
-        if not result:
-            content = (
-                f"Couldn't restore Dream change `{sha}`.\n\n"
-                "Only Dream memory versions can be restored. "
-                "Use `/dream-restore` to list recent versions."
-            )
-        else:
-            changed_files = _format_changed_files(result[1])
-            new_sha = git.revert(sha, message_prefix=_DREAM_COMMIT_PREFIX)
-            if new_sha:
-                content = (
-                    f"Restored Dream memory to the state before `{sha}`.\n\n"
-                    f"- New safety commit: `{new_sha}`\n"
-                    f"- Restored files: {changed_files}\n\n"
-                    f"Use `/dream-log {new_sha}` to inspect the restore diff."
-                )
-            else:
-                content = (
-                    f"Couldn't restore Dream change `{sha}`.\n\n"
-                    "It may be the first saved version with no earlier state to restore."
-                )
-    return OutboundMessage(
-        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
-        content=content, metadata={"render_as": "text"},
-    )
 
 
 _HISTORY_DEFAULT_COUNT = 10
@@ -833,8 +542,6 @@ def _format_history_message(msg: dict[str, Any]) -> str | None:
         return None
     if len(content) > _HISTORY_MAX_CONTENT_CHARS:
         content = content[:_HISTORY_MAX_CONTENT_CHARS] + "…"
-    label = "👤 You" if role == "user" else "🤖 Bot"
-    return f"{label}: {content}"
 
 
 async def cmd_history(ctx: CommandContext) -> OutboundMessage:
@@ -874,48 +581,6 @@ async def cmd_history(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
-    """Mark this turn as an explicit sustained-goal request."""
-    from nucleamind.legacy.agent.goal_permission import goal_mutation_permission
-
-    goal = ctx.args.strip()
-    if not goal:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content="Usage: /goal <long-running task description>",
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-    if ctx.session is None:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content=(
-                "A task is already running for this chat. "
-                "Use `/stop` first, then send `/goal <long-running task description>` again."
-            ),
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-    if not ctx.is_user_turn:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content="Goal mode can only be started by a user `/goal <task>` command.",
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-
-    ctx.turn_scopes.append(goal_mutation_permission(True))
-    ctx.msg.metadata = {
-        **dict(ctx.msg.metadata or {}),
-        "original_command": "/goal",
-        "original_content": ctx.raw,
-        "goal_requested": True,
-        "goal_started_at": time.time(),
-    }
-    ctx.msg.content = ctx.raw
-    return None
-
-
 async def cmd_pairing(ctx: CommandContext) -> OutboundMessage:
     """List, approve, deny or revoke pairing requests."""
     from nucleamind.legacy.pairing import PAIRING_COMMAND_META_KEY, handle_pairing_command
@@ -949,54 +614,6 @@ async def cmd_skill(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-async def cmd_trigger(ctx: CommandContext) -> OutboundMessage:
-    """Create a local trigger bound to the current session."""
-    name = ctx.args.strip()
-    if not name:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content=(
-                "Usage: /trigger <name>\n\n"
-                "Create a named local trigger bound to this chat session."
-            ),
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-
-    from nucleamind.legacy.triggers.local_store import LocalTriggerStore
-
-    loop = ctx.loop
-    store = loop.local_trigger_store
-    if store is None:
-        store = LocalTriggerStore(loop.workspace)
-
-    from nucleamind.legacy.session.keys import UNIFIED_SESSION_KEY
-
-    session_key = (
-        ctx.msg.session_key
-        if ctx.key == UNIFIED_SESSION_KEY
-        else ctx.key
-    )
-    trigger = store.create(
-        name=name,
-        channel=ctx.msg.channel,
-        chat_id=ctx.msg.chat_id,
-        session_key=session_key,
-        sender_id="trigger",
-        origin_metadata=dict(ctx.msg.metadata or {}),
-    )
-    command = f'nanobot trigger {trigger.id} "message"'
-    return OutboundMessage(
-        channel=ctx.msg.channel,
-        chat_id=ctx.msg.chat_id,
-        content=(
-            f"Trigger created: {trigger.name}\n"
-            f"ID: {trigger.id}\n\n"
-            f"Command:\n{command}"
-        ),
-        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-    )
-
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     return OutboundMessage(
@@ -1029,17 +646,6 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/model ", cmd_model)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
-    router.exact("/goal", cmd_goal)
-    router.prefix("/goal ", cmd_goal)
-    router.exact("/trigger", cmd_trigger)
-    router.prefix("/trigger ", cmd_trigger)
-    router.exact("/dream", cmd_dream)
-    router.exact("/dream-log", cmd_dream_log)
-    router.prefix("/dream-log ", cmd_dream_log)
-    router.exact("/dream-restore", cmd_dream_restore)
-    router.prefix("/dream-restore ", cmd_dream_restore)
-    router.exact("/dream-prompt", cmd_dream_prompt)
-    router.prefix("/dream-prompt ", cmd_dream_prompt)
     router.exact("/evaluator-prompt", cmd_evaluator_prompt)
     router.prefix("/evaluator-prompt ", cmd_evaluator_prompt)
     router.exact("/skill", cmd_skill)

@@ -141,8 +141,7 @@ import nucleamind.legacy.channels.validation
 
 unexpected = {
     "nucleamind.legacy.channels.manager",
-    "nucleamind.legacy.channels.websocket",
-    "nucleamind.legacy.webui.gateway_services",
+    "nucleamind.legacy.channels.telegram.runtime",
 } & sys.modules.keys()
 assert not unexpected, sorted(unexpected)
 """

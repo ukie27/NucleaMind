@@ -6,10 +6,11 @@ import json
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import Any, TypeAlias, cast
 
-if TYPE_CHECKING:
-    from nucleamind.legacy.agent.tools.context import RequestContext
+#: `D31` 删掉 `legacy/agent/` 之后这个注解没有实现可指——原本是
+#: `agent.tools.context.RequestContext`。隔离区里不为它造一个替身。
+RequestContext: TypeAlias = Any
 
 RUNTIME_CONTEXT_HISTORY_META = "_runtime_context"
 RUNTIME_CONTEXT_MESSAGE_META = "runtime_context"
