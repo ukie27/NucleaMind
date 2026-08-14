@@ -1,5 +1,8 @@
-"""
-nanobot - A lightweight AI agent framework
+"""nanobot 遗留隔离区的包根（`D31` 之后只剩版本号与两个仍在的再导出）。
+
+`D31` 删掉 `legacy/{agent,cli,webui,gateway,api,sdk}` 与 `nanobot.py` 之后，
+原来那张以 `Nanobot` SDK 门面为主的惰性导出表整体失效——嵌入式调用由
+`nucleamind.embed` 取代（`D23`）。这里只保留仍有实现可指的两个名字。
 """
 
 import tomllib
@@ -9,28 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .agent.tools.context import RequestContext
     from .bus.runtime_events import SessionTurnPersisted
-    from .nanobot import (
-        STREAM_EVENT_REASONING_COMPLETED,
-        STREAM_EVENT_REASONING_DELTA,
-        STREAM_EVENT_RUN_COMPLETED,
-        STREAM_EVENT_RUN_FAILED,
-        STREAM_EVENT_RUN_STARTED,
-        STREAM_EVENT_TEXT_COMPLETED,
-        STREAM_EVENT_TEXT_DELTA,
-        STREAM_EVENT_TOOL_COMPLETED,
-        STREAM_EVENT_TOOL_FAILED,
-        STREAM_EVENT_TOOL_STARTED,
-        STREAM_EVENT_TYPES,
-        Nanobot,
-        RunResult,
-        RunStream,
-        SessionInfo,
-        SessionSnapshot,
-        StreamEvent,
-        StreamEventType,
-    )
     from .runtime_context import RuntimeContextBlock, RuntimeContextProvider
 
 
@@ -55,27 +37,8 @@ __version__ = _resolve_version()
 __logo__ = "🐈"
 
 _LAZY_EXPORTS = {
-    "Nanobot": ".nanobot",
-    "RunStream": ".nanobot",
-    "RunResult": ".nanobot",
-    "RequestContext": ".agent.tools.context",
     "RuntimeContextBlock": ".runtime_context",
     "RuntimeContextProvider": ".runtime_context",
-    "SessionInfo": ".nanobot",
-    "SessionSnapshot": ".nanobot",
-    "STREAM_EVENT_REASONING_COMPLETED": ".nanobot",
-    "STREAM_EVENT_REASONING_DELTA": ".nanobot",
-    "STREAM_EVENT_RUN_COMPLETED": ".nanobot",
-    "STREAM_EVENT_RUN_FAILED": ".nanobot",
-    "STREAM_EVENT_RUN_STARTED": ".nanobot",
-    "STREAM_EVENT_TEXT_COMPLETED": ".nanobot",
-    "STREAM_EVENT_TEXT_DELTA": ".nanobot",
-    "STREAM_EVENT_TOOL_COMPLETED": ".nanobot",
-    "STREAM_EVENT_TOOL_FAILED": ".nanobot",
-    "STREAM_EVENT_TOOL_STARTED": ".nanobot",
-    "STREAM_EVENT_TYPES": ".nanobot",
-    "StreamEvent": ".nanobot",
-    "StreamEventType": ".nanobot",
     "SessionTurnPersisted": ".bus.runtime_events",
 }
 
@@ -92,26 +55,7 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "Nanobot",
-    "RunResult",
-    "RequestContext",
     "RuntimeContextBlock",
     "RuntimeContextProvider",
-    "RunStream",
-    "SessionInfo",
-    "SessionSnapshot",
-    "STREAM_EVENT_REASONING_COMPLETED",
-    "STREAM_EVENT_REASONING_DELTA",
-    "STREAM_EVENT_RUN_COMPLETED",
-    "STREAM_EVENT_RUN_FAILED",
-    "STREAM_EVENT_RUN_STARTED",
-    "STREAM_EVENT_TEXT_COMPLETED",
-    "STREAM_EVENT_TEXT_DELTA",
-    "STREAM_EVENT_TOOL_COMPLETED",
-    "STREAM_EVENT_TOOL_FAILED",
-    "STREAM_EVENT_TOOL_STARTED",
-    "STREAM_EVENT_TYPES",
-    "StreamEvent",
-    "StreamEventType",
     "SessionTurnPersisted",
 ]

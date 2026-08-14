@@ -46,14 +46,19 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D30` 已落地示例插件与 Plugin Runtime 验收（`examples/plugins/` 两个独立发行包 +
   `tests/e2e/{test_plugin_runtime,test_plugin_docs}.py` + `docs/plugin-development.md`，
   并把 `on_disable` 从「留给以后」变成真的判定：`runtime/plugin_disable.py` +
-  registry 的按能力抑制），**阶段 7 收口、需求 §16.2 达成**，下一步 `D31`。
-  遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
+  registry 的按能力抑制），**阶段 7 收口、需求 §16.2 达成**；`D31` 已落地遗留 Agent 路径
+  的删除与替代（删 `legacy/{agent,cli,webui,gateway,api,sdk,triggers}` 与 `nanobot.py`、
+  `nm legacy`、`runtime/legacy_entry.py` 与 `R6` 的唯一白名单例外、`tests/baseline/`；
+  新增官方插件 `plugins/nucleamind-plugin-openai-api/` 与通用无头命令 `nm serve`），
+  **阶段 8 收口**，下一步 `D32+` 能力插件化。
+  遗留实现的**剩余部分**位于 `src/nucleamind/legacy/`（225 文件 / 77040 行），
+  自 `D31` 起**没有任何入口能启动它**——它只是 `D32+` 的在树迁移源；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`access/` 与 `cli/`，
   `embed/` 已落地薄门面，`kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、
   `routing/` 与 `plugins/`。
-  `nm init` / `nm run` / `nm config show` / `nm session` / `nm permissions` /
+  `nm init` / `nm run` / `nm serve` / `nm config show` / `nm session` / `nm permissions` /
   `nm plugins` / `nm capabilities` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
@@ -74,12 +79,11 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 ├── builtins/              # 第 4 层：内建默认能力，与插件同等身份
 ├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
 ├── embed/                 # 第 5 层：嵌入式 Python SDK
-└── legacy/                # 隔离区：nanobot 遗留代码，只出不进
-plugins/                   # 一等公民：官方插件，各自独立发行
+└── legacy/                # 隔离区：nanobot 遗留代码，只出不进；D31 之后已无入口可启动
+plugins/                   # 一等公民：官方插件，各自独立发行（D31 起有 openai-api）
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
-                           # 外加 baseline/：旧实现行为基线，D31 随 legacy/agent/ 一并删除
                            # 外加 integration/（骨架集成，Fake 在能力边界）与
                            # e2e/（开箱可用里程碑，只有传输层是替身）
 deploy/                    # Dockerfile / compose / entrypoint
@@ -235,12 +239,6 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `BaseException`（取消、Ctrl-C）要放行。折出来的错误里**不放异常消息**，只放类型名——
   第三方命令的异常文本可能带着凭据。
 
-`tests/baseline/` 是 `D07` 的一次性设施：它只锁 `legacy/agent/{loop,runner}.py` 的五类
-可观察行为（迭代上限 / 工具失败·超时·参数非法 / 流式聚合 / 调度顺序 / 结果截断），
-供 `D09` 的 Turn Engine 与 `D14` 的 Orchestrator 对照，**`D31` 删 `legacy/agent/` 时一并
-删除**。用法是「换构造、不换断言」——断言改不动说明新旧语义有差异，要给结论而不是放宽断言；
-也不要往里加与那五类无关的测试。
-
 `tests/integration/`（`D15`）是骨架集成验收，写进去或改到它之前记住四条：
 
 - **Fake 只在能力边界上**（模型 / 会话存储 / 工具 / Context Provider / 命令 handler），
@@ -303,6 +301,34 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   「注销能力」**不在运行期**——registry 解析后只读（`NFR-403`）且首版不热更新（§10.4），
   被禁用的提供方在下一次启动时连 `setup()` 都不跑。别为了让一条测试好写而给冻结的
   registry 开一个 `unregister()`：已经被 `ToolExecutor` 取走的实现体它也收不回来。
+
+`plugins/nucleamind-plugin-openai-api/` + `nm serve`（`D31`）是遗留 OpenAI 接口的替代，六条：
+
+- **HTTP 服务是一条 `CHANNEL` 能力，不是 `instance.submit()` 的包装**。这条是硬的：
+  出站增量只经 `OrchestratorDeps.deliver` 按 `channel_id` 路由回**注册过的** Channel，
+  而 `submit()` 要等整条 turn 跑完才返回 `TurnReceipt`——用它做不出 SSE。想加第二个网络
+  接口就照这条路走，别去给装配根开一个「投递回调」的口子。
+- **它落在 `plugins/` 而不是 `builtins/`**：§7.3 的内建默认能力集不该因为一次清理而变长，
+  而 `plugins.enabled` 天然就是「默认不开一个监听端口」的闸门——不需要给 `CHANNEL`
+  再加一层 `keep` 过滤。开发方案原本就写着 `api/server.py` 在 `D32+` 迁为插件，
+  这里直接落到终局形态。
+- **`nm serve` 是通用无头模式**（bootstrap → `start()` → 等信号 → `stop()`），
+  不把进程交给 CLI 入口。`D32+` 的 Telegram / Discord Channel 插件用的是同一条命令，
+  不要为某个插件写第二条。它的 `Ctrl-C` 只有一档（没有阻塞在 `readline()` 的线程），
+  因此不需要 `nm run` 那个 `os._exit`。
+- **用量的唯一公开出口是 `model.response_received` 的载荷**（`D31` 给
+  `kernel/turn/orchestrator.py` 那**唯一**的发布点补了 `input_tokens` / `output_tokens`）。
+  `TurnOutcome` 与 `TurnReceipt` 都不带它，旧实现读的是 `AgentLoop._last_usage` 这个私有
+  属性。报出来的是**整条 turn 之和**（含工具往返），拿不到时**省略 `usage` 字段而不是报零**。
+- **不支持的东西显式拒绝，采样参数接受并忽略**。`system` 消息、客户端 `tools`、多模态
+  content 部件一律 400——静默丢掉它们会让客户端相信自己设了一个没生效的东西；而
+  `temperature` / `max_tokens` 这类归模型配置与 `TurnLimits` 管，为它们报错会让现成客户端
+  全都不可用。**只提交最后一条 user 消息**，历史归会话存储。
+- **两条如实记着的边界**：① 同一 Channel 的 turn **是串行的**（装配根的泵要等上一条跑完
+  才取下一条），并发客户端会排队，这是相对旧实现的能力回退，修它要动
+  `runtime/instance.py` 并重新回答 `EDG-202` 的严格 FIFO 断言；② 五种权限里**没有
+  「监听端口」**这一种（`net` 判的是出站），因此这个插件声明不出与它实际行为对应的权限。
+  默认只绑回环，绑非回环地址时没配 `api_key` 直接以 `CONFIG_INVALID` 拒绝启动。
 
 `runtime/plugin_disable.py` + `examples/plugins/`（`D30`）是插件体系的收口，五条：
 
@@ -446,13 +472,14 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 
 ```bash
 # Python：单测 / lint
-.venv\Scripts\python.exe -m pytest tests/legacy/test_openai_api.py::test_function -v
+.venv\Scripts\python.exe -m pytest tests/kernel/test_engine.py::test_function -v
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
-# 示例插件（D30）：经 entry point 被发现，因此必须真的装进环境才跑得起来。
-# tests/e2e/test_plugin_runtime.py 与 examples/plugins/*/tests/ 都要求它们在位。
+# 插件（D30 的两个示例 + D31 的官方 openai-api）：经 entry point 被发现，
+# 因此必须真的装进环境才跑得起来。tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 
 # legacy/ 债务指标（只允许下降）
 .venv\Scripts\python.exe scripts/legacy_debt.py
@@ -468,14 +495,13 @@ uv sync --all-extras --dev
 uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run --no-sync basedpyright
 
-# WebUI：dev server（代理 API/WS 到 gateway :8765）/ build / test
-# 构建产物输出到 ../src/nucleamind/legacy/web/dist（打进 Python wheel）
-cd webui && bun run dev      # 或 NANOBOT_API_URL=... bun run dev
+# WebUI：前端源码仍在树里，但 D31 删掉了它的后端（legacy/webui/ + gateway + websocket
+# 通道）。在 D32+ 的 WebUI 插件落地前，下面这几条构建得出产物却没有服务端可连。
 cd webui && bun run build
 cd webui && bun run test
 
-# Gateway（迁移期遗留入口，D31 随 legacy/agent/ 一并删除）
-nm legacy gateway
+# 无头模式：启动已启用的 Channel 插件并常驻（D31）
+nm serve
 ```
 
 ## Python 环境与沙箱
@@ -494,42 +520,39 @@ nm legacy gateway
 - 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
   对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
-## 高层架构（`legacy/` 隔离区，源自 nanobot）
+## `legacy/` 剩余部分（`D31` 之后）
 
-下列 `legacy/` 路径均在 `src/nucleamind/legacy/` 之下，描述的是**待迁移**的遗留实现。
-新 Kernel 的目标分层见技术方案 §4.2；`legacy/` 的隔离规则见
-[`src/nucleamind/legacy/README.md`](./src/nucleamind/legacy/README.md)。
+`D31` 删掉了遗留 Agent 路径：`legacy/{agent,cli,webui,gateway,api,sdk,triggers}` 与
+`nanobot.py`、`__main__.py`、`channels/websocket/` 全部不在了，`nm legacy` 与
+`runtime/legacy_entry.py` 一并删除，`R6` 自此**没有例外**。
 
-### 核心数据流
+剩下的是**不依赖 agent 的库代码**，它们留在树里只有一个用途：`D32+` 把能力迁成插件时
+的在树参考（已改过名、有通过的测试，比 `references/nanobot` 的上游副本好用）。
+**它们此后不可达**——没有任何入口能启动它们，`legacy/README.md` 的隔离规则照旧，
+债务棘轮继续压着，每迁完一个模块就在同一个 PR 里删掉对应目录。
 
-消息通过异步 `MessageBus`（`legacy/bus/queue.py`）解耦聊天渠道与 agent 核心：
-
-1. **Channels**（`legacy/channels/`）接收外部平台消息，向总线发布 `InboundMessage` 事件。
-2. **`AgentLoop`**（`legacy/agent/loop.py`）消费入站消息，构建上下文，协调整个 turn。
-3. **`AgentRunner`**（`legacy/agent/runner.py`）执行真正的 LLM 对话循环：发送消息、接收 tool calls、执行工具、流式返回。
-4. 响应以 `OutboundMessage` 事件发布回对应渠道。
-
-### 关键子系统
-
-- **Agent Loop**（`legacy/agent/loop.py`、`runner.py`）：核心处理引擎。`AgentLoop` 管理 session keys、hooks、上下文构建；`AgentRunner` 执行带工具调用的多轮 LLM 对话。
-- **LLM Providers**（`legacy/providers/`）：Anthropic、OpenAI 兼容、OpenAI Responses API、Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类（`base.py`），含图像生成（`image_generation.py`）与音频转录（`transcription.py`）。`factory.py` / `registry.py` 负责实例化与模型发现。
-- **Channels**（`legacy/channels/`）：Telegram、Discord、Slack、Feishu、Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、WebSocket、Mattermost。`manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
-- **Tools**（`legacy/agent/tools/`）：文件系统、shell（含沙箱后端）、web 搜索/抓取、MCP servers、cron、notebook、subagent、长任务/持续目标（`long_task.py`）、图像生成、自修改。`pkgutil` 扫描 + entry-point 插件自动发现。
-- **Memory**（`legacy/agent/memory.py`）：会话历史持久化 + Dream 两阶段记忆整合，原子写（temp + fsync + rename）保证持久性。
-- **Session Management**（`legacy/session/`）：会话历史、上下文压缩、TTL 自动压缩（`manager.py`）、持续目标状态（`goal_state.py`）。
-- **Config**（`legacy/config/schema.py`、`loader.py`）：Pydantic 配置，从 `~/.nanobot/config.json` 加载（迁移期不变），支持 camelCase 别名。
-- **WebUI**（`webui/`）：Vite + React SPA，通过 WebSocket 多路复用协议与 gateway 通信。
-- **API Server**（`legacy/api/server.py`）：OpenAI 兼容 HTTP API（`/v1/chat/completions`、`/v1/models`）。
-- **Command Router**（`legacy/command/`）：斜杠命令路由与内置命令处理。
-- **Skills**（`legacy/skills/`）：内置技能定义（cron、github、image-generation 等），markdown + YAML frontmatter。
-- **Security**（`legacy/security/`）：PTH 文件守卫等安全措施，CLI 入口激活。
+- **LLM Providers**（`legacy/providers/`，14103 行）：Anthropic、OpenAI 兼容、
+  OpenAI Responses API、Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类
+  （`base.py`），含图像生成与音频转录。**`D32` Model 插件化的主要来源。**
+- **Channels**（`legacy/channels/`，47807 行）：Telegram、Discord、Slack、Feishu、
+  Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、Mattermost。
+  `manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
+  **`D32+` Channel 插件化的主要来源。**
+- **Message Bus**（`legacy/bus/`）、**Session**（`legacy/session/`）、
+  **Cron**（`legacy/cron/`）、**Command Router**（`legacy/command/`）、
+  **Config**（`legacy/config/`）、**Utils**（`legacy/utils/`）、
+  **Security**（`legacy/security/`）、**Skills**（`legacy/skills/`）：
+  上面两块的支撑代码。新 Kernel 已各有对应机制，因此它们的迁移价值主要是行为参考。
+- **WebUI 前端**（`webui/`，TypeScript）：源码保留，但 `D31` 删掉了它的后端。
+  在 `D32+` 的 WebUI 插件落地前它没有服务端可连。
 
 ### 入口点
 
 - **`nm`（唯一命令）**：`src/nucleamind/runtime/cli/main.py`，子命令 `init` / `run` /
-  `config show` / `session` / `permissions` / `plugins` / `capabilities`（全部延迟导入）
-- **遗留 CLI**：`nm legacy` -> `src/nucleamind/runtime/legacy_entry.py` -> `legacy/cli/commands.py`
-- **遗留 Python SDK**：`legacy/nanobot.py`（新层门面 `embed/` 为重写，不移植旧实现）
+  `serve` / `config show` / `session` / `permissions` / `plugins` / `capabilities`
+  （全部延迟导入）
+- **嵌入式 Python SDK**：`src/nucleamind/embed/`（`open_instance()` / `run()`）
+- **OpenAI 兼容 HTTP API**：官方插件 `plugins/nucleamind-plugin-openai-api/` + `nm serve`
 
 ## 架构约束与改造方向
 

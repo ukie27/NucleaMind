@@ -1,5 +1,26 @@
 # Deployment
 
+> **⚠️ 本页描述的是 `D31` 已删除的遗留部署路径，正在等待重写。**
+>
+> `D00` 起 CLI 命令只有 `nm`（没有 `nanobot`），`D31` 又删掉了 `nm legacy`、遗留
+> gateway、WebUI 后端与遗留 OpenAI 接口。因此下面写到的 `nanobot agent` /
+> `nanobot gateway` / `nanobot serve` / `nanobot onboard` **都不存在了**，
+> 与 WebUI、channel、cron 有关的段落要等 `D32+` 把这些能力迁成插件之后才谈得上重写。
+>
+> **现在可用的部署形态只有两种**，`deploy/docker-compose.yml` 已按它们更新：
+>
+> | 目的 | 命令 |
+> | --- | --- |
+> | 交互式会话 | `nm run`（首次跑 `nm init` 生成配置） |
+> | 常驻服务 | `nm serve`——启动**已启用的 Channel 插件**并常驻 |
+>
+> OpenAI 兼容 HTTP 接口现在是官方插件 `plugins/nucleamind-plugin-openai-api/`：
+> `pip install --no-deps -e plugins/nucleamind-plugin-openai-api`，把 `openai-api`
+> 写进 `plugins.enabled`，然后 `nm serve`。详见该插件的 README。
+> 实例目录是 `~/.nucleamind/<instance>/`（不再是 `~/.nanobot/`）。
+>
+> 本页下面的内容原样保留，作为 `D32+` 重写时的素材。
+
 Use this page after `nanobot agent -m "Hello!"` works locally. Deployment keeps long-running surfaces online: WebUI, chat apps, heartbeat, Dream, cron jobs, and channel connections.
 
 ## Before You Deploy

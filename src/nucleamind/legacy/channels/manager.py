@@ -7,7 +7,6 @@ import hashlib
 import inspect
 from collections.abc import Callable, Iterable
 from contextlib import suppress
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
@@ -43,18 +42,6 @@ from nucleamind.legacy.utils.restart import (
 if TYPE_CHECKING:
     from nucleamind.legacy.cron.service import CronService
     from nucleamind.legacy.session.manager import SessionManager
-
-
-def _default_webui_dist() -> Path | None:
-    """Return the absolute path to the bundled webui dist directory if it exists."""
-    try:
-        import nucleamind.legacy.web as web_pkg  # type: ignore[import-not-found]
-    except ImportError:
-        return None
-    candidate = Path(web_pkg.__file__).resolve().parent / "dist"
-    return candidate if candidate.is_dir() else None
-
-
 # Retry delays for message sending (exponential backoff: 1s, 2s, 4s)
 _SEND_RETRY_DELAYS = (1, 2, 4)
 _RESTART_NOTICE_START_TIMEOUT_S = 30.0

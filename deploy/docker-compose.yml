@@ -5,19 +5,22 @@ x-common-config: &common-config
     args:
       NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-whatsapp}
   volumes:
-    - ~/.nanobot:/home/nanobot/.nanobot
+    - ~/.nucleamind:/home/nanobot/.nucleamind
   cap_drop:
     - ALL
 
+# `D31` 之后容器里跑的是新 Kernel（`nm`），遗留 gateway / WebUI 已随 `legacy/webui/`
+# 一并删除。这里因此只剩两个服务：常驻的 `nm serve` 与交互式的 `nm run`。
+# `nm serve` 服务的是**已启用的 Channel 插件**，OpenAI 兼容接口来自 openai-api 插件
+# （镜像里没有默认装它，需要在自己的镜像层里 pip install 并写进 plugins.enabled）。
 services:
-  nanobot-gateway:
-    container_name: nanobot-gateway
+  nucleamind-serve:
+    container_name: nucleamind-serve
     <<: *common-config
-    command: ["gateway"]
+    command: ["serve", "--host", "0.0.0.0"]
     restart: unless-stopped
     ports:
-      - 127.0.0.1:18790:18790
-      - 8765:8765
+      - 127.0.0.1:8760:8760
     deploy:
       resources:
         limits:
@@ -27,27 +30,10 @@ services:
           cpus: "0.25"
           memory: 256M
 
-  nanobot-api:
-    container_name: nanobot-api
-    <<: *common-config
-    command:
-      ["serve", "--host", "0.0.0.0", "-w", "/home/nanobot/.nanobot/api-workspace"]
-    restart: unless-stopped
-    ports:
-      - 127.0.0.1:8900:8900
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-          memory: 1G
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-
-  nanobot-cli:
+  nucleamind-cli:
     <<: *common-config
     profiles:
       - cli
-    command: ["status"]
+    command: ["run"]
     stdin_open: true
     tty: true

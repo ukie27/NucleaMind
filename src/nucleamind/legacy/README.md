@@ -1,14 +1,19 @@
 # legacy/ — 遗留隔离区
 
-本目录是原 nanobot 代码（约 13 万行 Python），由开发方案 `D00` 从仓库根的
-`nanobot/` 整体 `git mv` 而来。它**不是「以后再说」的垃圾桶**，而是有明确规则的
-隔离区。
+本目录是原 nanobot 代码的**剩余部分**（`D31` 之后 225 文件 / 77040 行），由开发方案
+`D00` 从仓库根的 `nanobot/` 整体 `git mv` 而来。它**不是「以后再说」的垃圾桶**，
+而是有明确规则的隔离区。
+
+**`D31` 之后它没有任何入口能启动**：遗留 Agent 路径（`agent/`、`cli/`、`webui/`、
+`gateway/`、`api/`、`sdk/`、`triggers/` 与 `nanobot.py`、`__main__.py`）已经删除，
+`nm legacy` 与 `runtime/legacy_entry.py` 一并删除。剩下的是不依赖 agent 的库代码，
+留在树里只有一个用途：`D32+` 把能力迁成插件时的**在树参考**。
 
 ## 隔离规则（技术方案 §4.3）
 
 1. **只出不进**：不允许新增文件，不允许新功能进入（`R6` 由 `tests/architecture/` 强制）。
 2. **依赖单向**：新代码不 import `legacy/`；`legacy/` 可以 import 新代码（适配层方向）。
-   唯一例外是 `runtime/legacy_entry.py`，它是迁移期的过渡适配器，`D31` 删除。
+   **`D31` 之后 `R6` 没有例外**——那个过渡适配器已经删掉，守卫的断言是「一处也没有」。
 3. **进度可度量**：`scripts/legacy_debt.py` 统计本目录的文件数与行数，这个数字
    只允许下降——上升即说明有人在往隔离区加东西。
 4. **迁移即删除**：一个能力迁到 `plugins/` 或 `builtins/` 后，本目录中的对应
@@ -36,16 +41,16 @@
 
 ## 入口
 
-迁移期本目录通过单个子命令可达：
-
-```bash
-nm legacy <原 nanobot 参数>     # 例：nm legacy status / nm legacy gateway
-```
-
-不保留 `nanobot` 命令别名。`nm legacy` 与 `runtime/legacy_entry.py` 在 `D31`
-随 `legacy/agent/` 一并删除。
+**没有入口。** `D31` 删掉了 `nm legacy`、`legacy/__main__.py` 与 gateway，
+本目录的代码此后只能被读，不能被运行。要跑 Agent 用 `nm run` / `nm serve`。
 
 ## 迁移状态
 
-`D00` 完成时：全部内容仍在本目录，尚未迁出任何能力。
+- `D00`：全部内容搬入本目录（352 文件 / 133317 行）。
+- `D31`：删除遗留 Agent 路径——`agent/`、`cli/`、`webui/`、`gateway/`、`api/`、`sdk/`、
+  `triggers/`、`nanobot.py`、`__main__.py`、`channels/websocket/`，以及
+  `session/webui_turns.py`、`cron/{bound_runner,webui_metadata}.py`、
+  `utils/progress_events.py`。降到 225 文件 / 77040 行。
+  剩余部分中 **`providers/` 与 `channels/` 是 `D32+` 的主要迁移源**。
+
 后续每完成一个能力模块，在此更新已删除的子目录列表。

@@ -1154,6 +1154,22 @@ docs/ 插件开发入门文档
 
 同一 PR 内必须完成删除，不留「以后再清」的副本——这是技术方案 §13 M5 第 d、e 步的要求。
 
+**实际落地与本节的三处偏差（`D31` 完成后回写）**
+
+1. **WebUI 与 gateway 一并删除，没有改调新 Kernel。** 上表只列了 `AgentLoop` 的四个调用方，
+   但 `legacy/webui/` 的 32 个模块要的是 agent 的 `ToolRegistry`、`SkillsLoader`、
+   MCP 生命周期与 token-usage Hook——新 Kernel 一样都没有，那是 `D32+` 的工作量而不是
+   200 行改造。删掉 `legacy/cli/` 之后 gateway / webui / api 本来也失去了唯一启动入口。
+   `webui/` 前端源码保留但暂时没有后端。
+2. **OpenAI 兼容接口是新层重写的官方插件，不是改造 `legacy/api/server.py`。**
+   落点 `plugins/nucleamind-plugin-openai-api/`（一条 `CHANNEL` 能力）+ 通用无头命令
+   `nm serve`。做成 Channel 是硬约束：出站增量只经 `deliver` 路由回注册过的 Channel，
+   `instance.submit()` 要等整条 turn 跑完才返回，用它做不出 SSE。
+3. **删除范围是「Agent 路径及其依赖方」，不是整个 `legacy/`。** 保留 `providers/`、
+   `channels/`（去掉 websocket）、`session/`、`cron/`、`command/`、`config/`、`utils/`、
+   `bus/`、`security/` 等不依赖 agent 的库代码，作为 `D32+` 的在树迁移源；它们此后不可达。
+   债务从 352 文件 / 133317 行降到 225 文件 / 77040 行。
+
 **验收**
 
 - `legacy/agent/`、`legacy/cli/` 目录不再存在，全仓库无悬挂引用

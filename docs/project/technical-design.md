@@ -117,20 +117,19 @@
 | `R3` | `sdk/` 只 import `contracts/`；它定义协议，宿主侧实现由 kernel 注入 |
 | `R4` | `builtins/` 与外部插件只能 import `sdk/` 和 `contracts/`；禁止 import `kernel/` |
 | `R5` | 只有 `runtime/` 可同时 import `kernel/` 与 `builtins/`；它是唯一的组装根 |
-| `R6` | 新层一律禁止 import `legacy/`；迁移期仅允许 `runtime/legacy_entry.py` 这一处过渡适配器直接 import，且必须在 D31 删除 |
+| `R6` | 新层一律禁止 import `legacy/`。**`D31` 之后没有例外**——迁移期那个 `runtime/legacy_entry.py` 适配器已随 `nm legacy` 一并删除 |
 
 `R5` 把「组装」显式收敛到一个层。没有这条规则，`kernel/` 里迟早会出现
 `from nucleamind.builtins import ...` 的便利导入，`R2` 就名存实亡。
 
-`R6` 是**单向**的：除唯一过渡适配器外，新代码不得 import `legacy/`，但 `legacy/`
-可以 import 新代码。
+`R6` 是**单向**的：新代码不得 import `legacy/`，但 `legacy/` 可以 import 新代码。
 方向刻意如此——迁移期 `legacy/` 里尚未删除的模块（如 `api/server.py`）需要改成调用新 Kernel，
 依赖箭头从遗留指向新架构，因此 `legacy/` 只会缩小，不会长出新的反向依赖。
 需要复用遗留实现时**把代码搬到新家并补测试**，而不是 import 过来；遗留模块删除时不留悬挂引用。
 
-`runtime/legacy_entry.py` 是有期限的迁移设施，只负责把 `nm legacy` 的参数和退出码交给
-遗留 CLI，不得被其他模块导入，也不得承载新功能。架构测试对该文件使用精确路径白名单，
-并断言仓库中不存在第二个“新层 → legacy”导入；D31 删除该文件、白名单和 `nm legacy`。
+**`D31` 已经删掉 `runtime/legacy_entry.py`、那条精确路径白名单与 `nm legacy`**，
+架构测试的断言相应从「恰好只有一处新层 → legacy 导入」改成「一处也没有」。
+`D31` 之后 `legacy/` 里剩下的是不可达的库代码，只作 `D32+` 的在树迁移参考。
 
 `R1`–`R6` 不是文档约定，而是 `tests/architecture/test_import_boundaries.py` 中基于 AST
 的可执行断言（见 §12.3）。这直接落实 `NFR-101`、`NFR-102`、`NFR-103`、`KER-002`。
@@ -374,8 +373,8 @@ NucleaMind 是改造，不是 nanobot 的兼容发行版。新架构的命名冲
 这是一次性的人工动作，不值得让新 Kernel 长期承担双读逻辑。
 
 唯一保留的旧路径是 `legacy/` 内部代码本身——它不是兼容层，而是尚未改写完的实现，
-按 §4.3 的规则只出不进，最终清空。迁移期它通过 `nm legacy` 子命令可运行
-（见开发方案 `D00`），该子命令在 `D31` 随 `legacy/agent/` 一并删除。
+按 §4.3 的规则只出不进，最终清空。`D31` 已删掉 `nm legacy` 与遗留 Agent 路径，
+剩余部分自此**没有任何入口能启动**，只作 `D32+` 的在树迁移参考。
 
 > 本节取代 `AGENTS.md` 中「暂不重命名、不要混用 `nucleamind` 前缀」的旧约定。
 > `AGENTS.md` 需随 M-A 一并更新。
@@ -1794,9 +1793,9 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 不假设全绿；采集错误非空时基线判为不可信。规范化规则与工具契约见
 [`development-plan.md`](./development-plan.md) 的 `D00`。
 
-按 §4.5，**不在新层写长期兼容垫片**。迁移期 `legacy/` 的入口收敛为 `nm legacy`
-单个子命令；`runtime/legacy_entry.py` 是唯一、限期存在的过渡例外，只负责转发遗留 CLI，
-在 D31 随 `legacy/agent/` 一并删除。
+按 §4.5，**不在新层写长期兼容垫片**。迁移期 `legacy/` 的入口曾收敛为 `nm legacy`
+单个子命令，`runtime/legacy_entry.py` 是唯一、限期存在的过渡例外；
+**两者都已在 `D31` 删除**。
 
 为什么放在最前面而不是「等 Kernel 稳定后再重命名」：
 
@@ -1861,6 +1860,9 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 3. 新写 `orchestrator.py`，接管 session/context/事件。
 4. 内建能力与插件体系齐备后（M4 之后），**直接删除 `legacy/agent/`**，
    其剩余调用方改调新 Kernel。见 [`development-plan.md`](./development-plan.md) 的 `D31`。
+   **`D31` 已完成**，两处与本节字面表述的偏差如实记在开发方案 §12：WebUI 与 gateway
+   随 `legacy/agent/` 一并删除（新 Kernel 没有它们要的 MCP / skills / tool-registry），
+   OpenAI 兼容接口在新层重写为官方插件而不是改造 `legacy/api/server.py`。
    不搭薄适配层、不设 `legacy | kernel` 双路径开关——本项目是改造而非兼容发行版，
    双路径要求两套实现长期共存与双份测试，成本高于收益，回退用 git 即可。
    M1–M4 期间 `legacy/` 内部代码完全不动，新 Kernel 以独立入口 `nm` 并行生长，

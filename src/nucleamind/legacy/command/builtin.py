@@ -19,7 +19,6 @@ from nucleamind.legacy.utils.workspace_prompts import initialize_workspace_promp
 
 if TYPE_CHECKING:
     from nucleamind.legacy.session.manager import Session
-    from nucleamind.legacy.utils.gitstore import CommitInfo
 
 # WebUI protocol contract for how a slash command participates in turn state:
 # - side_channel: returns control text without starting or ending an agent turn.
@@ -415,105 +414,6 @@ async def cmd_evaluator_prompt(ctx: CommandContext) -> OutboundMessage:
         content=content,
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
-
-
-def _format_dream_no_input_message() -> str:
-    return "\n".join([
-        "Dream has no conversation history to process yet.",
-        "",
-        "Dream reads new entries from `memory/history.jsonl` after the current Dream cursor.",
-        (
-            "Short chats only reach that file after token compaction or idle auto-compact, "
-            "so a fresh or short WebUI chat may leave Dream with no input."
-        ),
-        "",
-        "Next steps:",
-        "- Enable `agents.defaults.idleCompactAfterMinutes` so completed chats become Dream input automatically.",
-        "- Compact the current chat into memory once that manual action is available.",
-        "- If you expected history to exist, check whether `memory/history.jsonl` has new entries after the Dream cursor.",
-        "- Use `/dream-prompt` to see or change how Dream organizes memory.",
-    ])
-
-
-def _extract_changed_files(diff: str) -> list[str]:
-    """Extract changed file paths from a unified diff."""
-    files: list[str] = []
-    seen: set[str] = set()
-    for line in diff.splitlines():
-        if not line.startswith("diff --git "):
-            continue
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        path = parts[3]
-        if path.startswith("b/"):
-            path = path[2:]
-        if path in seen:
-            continue
-        seen.add(path)
-        files.append(path)
-    return files
-
-
-def _format_changed_files(diff: str) -> str:
-    files = _extract_changed_files(diff)
-    if not files:
-        return "No tracked memory files changed."
-    return ", ".join(f"`{path}`" for path in files)
-
-
-_DREAM_COMMIT_PREFIX = "dream:"
-
-
-def _format_dream_log_content(
-    commit: CommitInfo,
-    diff: str,
-    *,
-    requested_sha: str | None = None,
-) -> str:
-    files_line = _format_changed_files(diff)
-    lines = [
-        "## Dream Update",
-        "",
-        "Here is the selected Dream memory change." if requested_sha else "Here is the latest Dream memory change.",
-        "",
-        f"- Commit: `{commit.sha}`",
-        f"- Time: {commit.timestamp}",
-        f"- Changed files: {files_line}",
-    ]
-    if diff:
-        lines.extend([
-            "",
-            f"Use `/dream-restore {commit.sha}` to undo this change.",
-            "",
-            "```diff",
-            diff.rstrip(),
-            "```",
-        ])
-    else:
-        lines.extend([
-            "",
-            "Dream recorded this version, but there is no file diff to display.",
-        ])
-    return "\n".join(lines)
-
-
-def _format_dream_restore_list(commits: list[CommitInfo]) -> str:
-    lines = [
-        "## Dream Restore",
-        "",
-        "Choose a Dream memory version to restore. Latest first:",
-        "",
-    ]
-    for c in commits:
-        lines.append(f"- `{c.sha}` {c.timestamp} - {c.subject()}")
-    lines.extend([
-        "",
-        "Preview a version with `/dream-log <sha>` before restoring it.",
-        "Restore a version with `/dream-restore <sha>`.",
-    ])
-    return "\n".join(lines)
-
 
 
 

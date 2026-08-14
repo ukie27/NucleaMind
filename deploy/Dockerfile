@@ -50,7 +50,7 @@ RUN for channel in $(printf '%s' "$NANOBOT_CHANNELS" | tr ',' ' '); do \
 
 # Create the non-root user and hand ownership of the writable virtualenv to it.
 RUN useradd -m -u 1000 -s /bin/bash nanobot && \
-    mkdir -p /home/nanobot/.nanobot && \
+    mkdir -p /home/nanobot/.nucleamind && \
     chown -R nanobot:nanobot /home/nanobot /app/.venv
 
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -68,4 +68,5 @@ ENV PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1
 EXPOSE 18790 8765
 
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["status"]
+# `D31` 之后默认跑无头模式：装了 Channel 插件就服务它们，没装就以退出码 1 说明。
+CMD ["serve"]

@@ -1,8 +1,8 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-14
-- 当前阶段：阶段 7 Plugin Runtime **已收口**（`D00`–`D30` 均已完成，需求 §16.2 达成；
-  下一步 `D31` 旧路径切换与清理）
+- 当前阶段：阶段 8 旧路径清理 **已收口**（`D00`–`D31` 均已完成；
+  下一步 `D32+` 能力插件化，从 Model 与 Channel 开始）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1524,6 +1524,64 @@
     `tests/` 继承 `sdk.testing` 的契约测试基类（`ToolContract` / `SessionStoreContract`），
     其中 `SessionStoreContract` 与内建 `session_jsonl` 用的是**同一个基类**。
 
+- **`D31` 遗留 Agent 路径切换与删除 ★**（删 `legacy/` 约 55600 行 + 新增
+  `plugins/nucleamind-plugin-openai-api/` 约 850 行 + `runtime/cli/commands/serve.py` +
+  `tests/e2e/test_openai_api.py` 与 `tests/runtime/cli/test_serve_cli.py` 共 38 个新用例）：
+  - **本轮拍板的三件事**，逐条记在下面。
+  - **① 开发方案 §12 的一处假设与代码不符，据实修正。** 方案写的是「`legacy/api/server.py`
+    与 WebUI gateway 改为调用新 Kernel」。`api/server.py` 确实只有三个鸭子类型调用点
+    （`process_direct` 的两种签名 + 私有 `_last_usage`），但 **WebUI 不是**：`legacy/webui/`
+    的 32 个模块要的是 agent 的 `ToolRegistry`、`SkillsLoader`、MCP 生命周期与 token-usage
+    Hook，新 Kernel 一样都没有——那是 `D32+` 的工作量而不是 200 行改造。因此
+    **WebUI 与 gateway 一并删除**（`D32+` 以插件形态重来），只有 OpenAI 兼容接口在新层
+    重写。删掉 `legacy/cli/` 之后 gateway / webui / api 本来也失去了唯一的启动入口。
+  - **② 删除范围定在「Agent 路径及其依赖方」，不是整个 `legacy/`。** 保留
+    `providers/`（14103 行）、`channels/`（47807 行，去掉 websocket）、`session/`、`cron/`、
+    `command/`、`config/`、`utils/`、`bus/`、`security/` 等**不依赖 agent 的库代码**，
+    作为 `D32+`（Model / Channel / Cron 插件化）的**在树迁移源**——它们已经改过名、有通过的
+    测试，比 `references/nanobot` 的上游副本好用。它们此后**不可达**（没有任何入口能启动
+    它们），这是刻意的：债务棘轮继续压着，每迁完一个模块就删掉对应目录。
+  - **③ OpenAI 兼容接口做成 `plugins/` 的官方插件 + 一条 `CHANNEL` 能力，而不是
+    `builtins/` 或 `runtime/` 里的一个 HTTP 服务。** 三条理由：**流式只有 Channel 拿得到**
+    （出站增量经 `OrchestratorDeps.deliver` 按 `channel_id` 路由回注册过的 Channel，而
+    `instance.submit()` 要等整条 turn 跑完才返回，做不出 SSE）；`plugins.enabled` 天然就是
+    「默认不开监听端口」的闸门，落 `builtins/` 反而要给 `CHANNEL` 再加一层 `keep` 过滤；
+    开发方案原文就写着它在 `D32+` 迁为插件——直接落到终局形态，不做一次中间态。
+    `nm serve` 相应是**通用无头模式**（bootstrap → `start()` → 等信号 → `stop()`），
+    `D32+` 的 Telegram / Discord 插件用的是同一条命令。
+  - **`kernel/turn/orchestrator.py` 的唯一发布点补了两个键**（`input_tokens` /
+    `output_tokens`）。这是本轮唯一一处改 kernel：token 用量在进程外此前**完全不可观测**
+    （`TurnOutcome` 与 `TurnReceipt` 都不带它），而旧实现读的是 `AgentLoop._last_usage`
+    这个私有属性。键名用复数形式，`D02` 的整词脱敏规则因此原样放行。顺带 JSONL 事件日志
+    也有了用量记录。报出来的是**整条 turn 之和**（含工具往返），与 OpenAI 的单次调用语义
+    不同，拿不到时**省略 `usage` 字段而不是报零**。
+  - **保留集的修补原则是「删掉引用与它服务的那段代码」，不留空壳**：`command/` 删掉 dream
+    家族 / `/goal` / `/trigger` 七个处理器（它们服务的子系统已不存在），`build_help_text()`
+    与其余命令保留——`channels/{discord,telegram}` 的 `/help` 靠它；`config/schema.py` 的
+    `tools` 小节六个按工具切分的子配置随 `agent/tools/` 一并删除，前向引用的
+    `model_rebuild` 机制整套移除；`utils/restart.py` 把一个 webui 常量内联。
+    **保留集的 167 个模块逐个 `import` 验证通过**，无悬挂引用。
+  - **踩到并修掉的两个真问题**：① `ctx.turns` 在 `setup()` 期间**不可用**（orchestrator
+    那时还没装好，`runtime/plugin_context.py` 会抛 `KERNEL_INVARIANT_VIOLATED`），因此
+    取消门面只能惰性取——这条是测试先发现的；② manifest 的 `config_schema` 里 `port` 的
+    `minimum` 写成 1 会让 `port: 0`（内核分配空闲端口）在阶段 A 就被拒，而那正是测试与
+    「随便给我一个空闲端口」的部署要用的值。
+  - **两条如实记着的边界**（写进插件 docstring、README 与本文档，不留给用户发现）：
+    ① **同一 Channel 的 turn 是串行的**——装配根的泵要等上一条跑完才取下一条，因此并发
+    客户端会排队，这是相对 `legacy/api/server.py` 的**能力回退**，修它要动
+    `runtime/instance.py` 并重新回答 `EDG-202` 的严格 FIFO 断言；② 五种权限里**没有
+    「监听端口」**这一种（`net` 判的是出站），因此这个插件声明不出与它实际行为对应的权限
+    ——默认只绑回环，绑非回环地址时没配 `api_key` 直接以 `CONFIG_INVALID` 拒绝启动。
+  - 验收：**完整套件 4900 passed / 18 skipped / 0 failed**（`D30` 收口时新层 2238，
+    另有 14–18 个既有失败落在网络、子进程时序与 oauth-cli-kit 家族——**那批用例全部位于被
+    删除的目录里，因此这一轮真的是零失败**）。`ruff check`（src + tests + plugins +
+    examples + scripts）、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个，全在
+    `skills/skill-creator/scripts/`）、`legacy_debt --check` 通过（基线已下调）、
+    `check_startup_cost --check` 通过（`startup_ms` 约 500 ms，仍是 `D24` 记的那条
+    `import httpx` 告警）。**legacy 债务 352 文件 / 133317 行 → 225 文件 / 77040 行**
+    （降 42%）。真实 `nm --help`（无 legacy 子命令）/ `nm serve --bogus`（退出码 2）
+    在开发机上跑通。
+
 
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -1595,6 +1653,12 @@
   `on_disable` 从「留给以后」变成真的判定（`runtime/plugin_disable.py` +
   registry 的按能力抑制），插件开发入门文档就位且其代码块由测试直接执行，
   **阶段 7 收口、需求 §16.2 达成**。
+  `D31` 已完成，遗留 Agent 路径删除：`legacy/{agent,cli,webui,gateway,api,sdk,triggers}` 与
+  `nanobot.py`、`__main__.py`、`channels/websocket/` 全部删除，`nm legacy`、
+  `runtime/legacy_entry.py` 与 `R6` 的唯一白名单例外一并删除（`R6` 自此无例外），
+  `tests/baseline/` 随 `legacy/agent/` 一并删除；被删掉的 OpenAI 兼容接口由新层的官方插件
+  `plugins/nucleamind-plugin-openai-api/` 与通用无头命令 `nm serve` 取代，
+  **阶段 8 收口**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1648,13 +1712,45 @@
 
 ## 下一步工作
 
-1. **`D31` 遗留 Agent 路径切换与删除**（阶段 8）：删除 `legacy/agent/` 与 `legacy/cli/`、
-   `nm legacy` 子命令、`runtime/legacy_entry.py` 与 `D01` 里对应的 `R6` 白名单条目、
-   `tests/baseline/` 与对应的 `tests/legacy/` 用例；`legacy/api/server.py` 与 WebUI
-   gateway 改为调用新 Kernel。`legacy/agent/AgentLoop` 的 4 个调用方逐个处置，见
-   [`开发方案`](./development-plan.md) §12。
+1. **`D32+` 能力插件化**（阶段三 P1）：按技术方案 §13 M5 的顺序与五步法逐个立项
+   （Model / Memory / Tool / Channel / Cron / WebUI），每个模块独立编号、独立验收。
+   建议从 **Model** 与 **Channel** 起步——`legacy/providers/`（14103 行）与
+   `legacy/channels/`（47807 行）是 `D31` 刻意留在树里的迁移源。
+   每迁完一个模块，同 PR 内删除 `legacy/` 对应目录与其 `tests/legacy/` 用例
+   ——`legacy/` 债务指标不下降即视为该模块未完成。`legacy/` 清空后删除该目录、
+   `R6` 守卫与 `scripts/legacy_debt.py`。
+2. **两件 `D31` 明确推迟的事**，立项时一并考虑：
+   - **Channel 泵的并发**：`runtime/instance.py::_pump` 串行处理同一 Channel 的消息，
+     因此 `openai-api` 的并发客户端会排队。放开它要重新回答 `EDG-202` 的严格 FIFO 断言，
+     不是顺手能做的事。
+   - **WebUI**：`D31` 删掉了它的后端（`legacy/webui/` + gateway + websocket 通道），
+     前端源码 `webui/` 仍在树里但没有服务端可连。
 
-`D30` 留下的、`D31` 必须用到的事实：
+`D31` 留下的、`D32+` 必须用到的事实：
+
+- **`R6` 自此没有例外**：`runtime/legacy_entry.py` 与那条精确白名单都已删除，
+  守卫的断言从「恰好只有一处新层 → legacy 导入」改成「一处也没有」。
+  迁移期间**不要**为了图快再开一条例外——`legacy/` 里的代码要用就搬到新家并补测试
+  （`AGENTS.md` 原则 5）。
+- **`legacy/` 剩下的是不可达的库代码**（225 文件 / 77040 行）：没有任何入口能启动它，
+  `nm legacy`、`legacy/__main__.py` 与 gateway 都不在了。它只有一个用途——`D32+` 的
+  在树迁移参考。`legacy/__init__.py` 的惰性导出表已缩到三个仍有实现可指的名字。
+- **`command/` 被削过**：dream 家族 / `/goal` / `/trigger` 七个处理器随它们服务的子系统
+  （agent 的 memory、goal_permission、triggers/）一并删除，`build_help_text()` 与其余命令
+  保留——`channels/{discord,telegram}` 的 `/help` 靠它。`config/schema.py` 的 `tools` 小节
+  六个按工具切分的子配置也随 `agent/tools/` 一并删除，前向引用的 `model_rebuild` 机制
+  整套移除。
+- **OpenAI 兼容接口现在是插件**（`plugins/nucleamind-plugin-openai-api/`）：它要 `pip
+  install --no-deps -e` 装上才会被 entry point 发现，CI 有独立一步，`pyproject` 的
+  `testpaths` 也加了 `plugins`。**它是第一个官方插件，`D32+` 的 Channel 插件照它的形状写。**
+- **`nm serve` 是通用的**：任何 `CHANNEL` 能力都能用它跑无头模式，不要为某个插件写第二条
+  常驻命令。`--host` / `--port` 是所有网络 Channel 的公分母，翻成
+  `plugins.openai-api.config.*` 的覆盖；其余配置走 `--set`。
+- **`model.response_received` 的载荷多了 `input_tokens` / `output_tokens`**：这是 token
+  用量在进程外的**唯一**公开出口（`TurnOutcome` / `TurnReceipt` 都不带它）。JSONL 事件
+  日志因此也有了用量记录。
+
+`D30` 留下的、`D31` 用到的事实：
 
 - **`on_disable` 是 `plugins.<id>` 条目的第三个键**（`config` / `secrets` / `on_disable`，
   `kernel/config/plugin_blocks.py::ENTRY_KEYS`）。`on_override_failure` 仍未落地，仍不放行
@@ -2314,8 +2410,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅  D29 ✅  D30 ✅
-D31 ⬜（尚未开始）
+D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅  D29 ✅  D30 ✅  D31 ✅
+D32+ ⬜（能力插件化，尚未立项）
 
 ## 本目录文档分类
 

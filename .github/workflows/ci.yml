@@ -45,12 +45,13 @@ jobs:
           pip install -e ".[dev]"
           python -m scripts.install_channel_dependencies --all-channels
 
-      # 示例插件经 entry point 被发现，因此必须真的装进环境（D30）。
-      # tests/e2e/test_plugin_runtime.py 的第一条用例会在没装时明确报出来。
-      - name: Install example plugins
+      # 插件经 entry point 被发现，因此必须真的装进环境（D30 的两个示例、D31 的官方
+      # openai-api）。tests/e2e/ 的第一条用例会在没装时明确报出来。
+      - name: Install plugins
         run: |
           pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
           pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
+          pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 
       - name: Lint
         run: ruff check src/ plugins/ examples/ scripts/ tests/

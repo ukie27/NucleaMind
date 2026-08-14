@@ -5,12 +5,10 @@ x-bwrap-security: &bwrap-security
     - apparmor=unconfined
     - seccomp=unconfined
 
+# 服务名与 docker-compose.yml 同步（`D31` 起只剩两个）。
 services:
-  nanobot-gateway:
+  nucleamind-serve:
     <<: *bwrap-security
 
-  nanobot-api:
-    <<: *bwrap-security
-
-  nanobot-cli:
+  nucleamind-cli:
     <<: *bwrap-security
