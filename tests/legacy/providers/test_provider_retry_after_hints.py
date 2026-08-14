@@ -1,6 +1,5 @@
 from types import SimpleNamespace
 
-from nucleamind.legacy.providers.anthropic_provider import AnthropicProvider
 from nucleamind.legacy.providers.azure_openai_provider import AzureOpenAIProvider
 from nucleamind.legacy.providers.openai_compat_provider import OpenAICompatProvider
 
@@ -27,16 +26,5 @@ def test_azure_openai_error_captures_retry_after_from_headers() -> None:
     )
 
     response = AzureOpenAIProvider._handle_error(err)
-
-    assert response.retry_after == 20.0
-
-
-def test_anthropic_error_captures_retry_after_from_headers() -> None:
-    err = Exception("boom")
-    err.response = SimpleNamespace(
-        headers={"Retry-After": "20"},
-    )
-
-    response = AnthropicProvider._handle_error(err)
 
     assert response.retry_after == 20.0

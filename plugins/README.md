@@ -13,7 +13,22 @@ plugins/nucleamind-plugin-<id>/
 import 兄弟模块，依赖规则 `R4` 就成了空话。官方插件与第三方插件走**完全相同**
 的加载路径（entry point 组 `nucleamind.plugins`）。
 
-本目录当前为空。插件运行时已由开发方案 `D25`–`D30` 落地（写插件请看
-[`docs/plugin-development.md`](../docs/plugin-development.md)，可运行的最小范例在
-[`examples/plugins/`](../examples/plugins/README.md)），首批官方插件在 `D32+` 的能力
-插件化阶段立项。
+写插件请看 [`docs/plugin-development.md`](../docs/plugin-development.md)，可运行的最小范例在
+[`examples/plugins/`](../examples/plugins/README.md)。
+
+## 当前的官方插件
+
+| 目录 | id | 能力 | 落地于 |
+| --- | --- | --- | --- |
+| `nucleamind-plugin-openai-api/` | `openai-api` | `CHANNEL:openai` —— OpenAI 兼容 HTTP 接口（`/v1/chat/completions`、`/v1/models`），配合 `nm serve` 常驻 | `D31` |
+| `nucleamind-plugin-anthropic/` | `anthropic` | `MODEL:anthropic` —— Anthropic 原生 Messages API，与内建 `model-openai` 并存 | `D32` |
+
+**它们必须真的装进环境才会被发现**（entry point 没有第二条路）：
+
+```bash
+pip install --no-deps -e plugins/nucleamind-plugin-openai-api
+pip install --no-deps -e plugins/nucleamind-plugin-anthropic
+```
+
+装上不等于启用——`plugins.enabled` 是唯一闸门，改完要重启实例。
+

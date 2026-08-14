@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 import nucleamind.legacy.providers.openai_codex_provider as codex_provider
-from nucleamind.legacy.providers.anthropic_provider import AnthropicProvider
 from nucleamind.legacy.providers.base import (
     DEFAULT_STREAM_IDLE_TIMEOUT_S,
     MAX_STREAM_IDLE_TIMEOUT_S,
@@ -32,22 +31,6 @@ class _AsyncStream:
         chunk = self._chunks[self._idx]
         self._idx += 1
         return chunk
-
-
-class _AnthropicStream(_AsyncStream):
-    def __init__(self, chunks: list[Any]) -> None:
-        super().__init__(chunks)
-        self.get_final_message = AsyncMock(return_value=SimpleNamespace(
-            content=[SimpleNamespace(type="text", text="ok")],
-            stop_reason="end_turn",
-            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
-        ))
-
-    async def __aenter__(self) -> _AnthropicStream:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> None:
-        pass
 
 
 class _BedrockClient:
@@ -92,18 +75,6 @@ async def test_openai_compat_stream_ignores_invalid_idle_timeout_env(monkeypatch
             create=AsyncMock(return_value=_AsyncStream([chunk])),
         )),
     )
-
-    result = await provider.chat_stream(messages=[{"role": "user", "content": "hi"}])
-
-    assert result.content == "ok"
-
-
-@pytest.mark.asyncio
-async def test_anthropic_stream_ignores_invalid_idle_timeout_env(monkeypatch) -> None:
-    monkeypatch.setenv("NANOBOT_STREAM_IDLE_TIMEOUT_S", "abc")
-    provider = AnthropicProvider(api_key="sk-test")
-    provider._client = MagicMock()
-    provider._client.messages.stream = MagicMock(return_value=_AnthropicStream([]))
 
     result = await provider.chat_stream(messages=[{"role": "user", "content": "hi"}])
 

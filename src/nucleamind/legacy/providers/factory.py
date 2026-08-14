@@ -95,9 +95,7 @@ def _resolve_provider_setup(
         and not (p and p.api_base)
     ):
         raise ValueError(f"Provider '{provider_name}' requires api_base in config.")
-    elif backend in {"anthropic", "openai_compat"} and not (
-        backend == "openai_compat" and model.startswith("bedrock/")
-    ):
+    elif backend == "openai_compat" and not model.startswith("bedrock/"):
         needs_key = not (p and p.api_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
         if needs_key and not exempt:
@@ -176,15 +174,6 @@ def _make_provider_core(
         from nucleamind.legacy.providers.github_copilot_provider import GitHubCopilotProvider
 
         provider = GitHubCopilotProvider(default_model=model)
-    elif backend == "anthropic":
-        from nucleamind.legacy.providers.anthropic_provider import AnthropicProvider
-
-        provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, preset=preset),
-            default_model=model,
-            extra_headers=_provider_extra_headers(spec, p),
-        )
     elif backend == "bedrock":
         from nucleamind.legacy.providers.bedrock_provider import BedrockProvider
 

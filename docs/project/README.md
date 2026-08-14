@@ -1,8 +1,9 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-14
-- 当前阶段：阶段 8 旧路径清理 **已收口**（`D00`–`D31` 均已完成；
-  下一步 `D32+` 能力插件化，从 Model 与 Channel 开始）
+- 更新时间：2026-08-14（`D32` 收口）
+- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D32` 均已完成；`D32` 交付了
+  M5 迁移顺序的第 1 项——Anthropic 原生 Model Provider 插件；
+  下一步按技术方案 §13 M5 继续：Memory / 扩展 Tool / Channel / Cron / WebUI）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1583,6 +1584,104 @@
     在开发机上跑通。
 
 
+- **`D32` 官方插件：Anthropic 原生 Model Provider ★**（`plugins/nucleamind-plugin-anthropic/`
+  六个模块约 1690 行 + 四个测试文件 124 个用例 + 删除 `legacy/providers/anthropic_provider.py`
+  与 9 个 legacy 测试文件）：
+  - **技术方案 §13 M5 五步法的第一次完整应用**：a 步的行为基线用的是 `tests/legacy/providers/`
+    里既有的 12 个 Anthropic 相关文件（`D07` 的 `tests/baseline/` 已随 `D31` 删除，
+    不为一个要删掉的实现再写一遍基线）；b/c 步是本插件；d/e 步同 PR 删除。
+  - **本轮拍板的四件事**，逐条记在下面。
+  - **① 落 `plugins/` 而不是 `builtins/`，用 raw httpx 而不是 `anthropic` SDK。** 前者：
+    §7.3 的内建默认能力集不该因为多一个供应商而变长，而 `plugins.enabled` 天然就是闸门
+    （与 `D31` 的 openai-api 同一条理由）。后者有三个后果都指向同一边：`transport=` 可注入
+    让 `ModelProviderContract` 走 `httpx.MockTransport`、零真实网络（124 个用例一个 socket
+    都不开）；宿主发行版因此把 `anthropic>=0.100.0` 从根 `pyproject.toml` 摘掉了；
+    以及线格式的每一条规则都能在纯函数上逐字节钉住。
+  - **② 一张按模型名版本号 gating 的表都不移植。** legacy 有四张
+    （`_ADAPTIVE_ONLY_MIN_VERSIONS` / `_THINKING_DISABLE_MIN_VERSIONS` /
+    `_SAMPLING_DEPRECATED_MODELS` + 解析版本号的正则），`D19` 拒过同类的 `max_tokens_field`
+    slug 表，理由一个字没变：表只会越滚越大，而用户换一个新模型要等我们发版。改成
+    `thinking.mode`（四取值一一对应线格式的四种形状）/ `supports_temperature` / `effort`
+    三个配置项。**legacy 那两处「替用户改主意」的行为也一并拒掉**：thinking 开启时强制
+    `temperature=1.0` 不做（答案是 `supports_temperature: false`）、`budget_tokens` 超了就把
+    `max_tokens` 抬到 `budget+4096` 不做（直接 `CONFIG_INVALID`——抬完之后生效的上限就不是
+    用户配的那个）。
+  - **③ 能力声明与开关同源，两个方向都判死。** `describe()` 交出「配置基线 ∪ thinking 开着
+    时的 `reasoning` ∪ 缓存开着时的 `prompt_caching`」；反过来**声明了 `reasoning` 却没开
+    thinking 是 `CONFIG_INVALID`**。只做前一半的话，一份声明得漂亮的配置会让组装器以为
+    拿得到一份它拿不到的东西，`MOD-005` 的「缺席即报缺失、绝不静默降级」只在一个方向上成立。
+    做法与 `D20` 的 `enabled_tool_names(config)` 同源。
+  - **④ `critical=False`。** 第二个 Model Provider 起不来不该让实例整个起不来——内建
+    `openai` 仍在，装配根步骤 8 的必需能力判定照样通过。代价是配置错误只表现为
+    `nm plugins` 里的一行 `PLUGIN_LOAD_FAILED`，因此配置校验仍在 `setup()` 里一次做完、
+    不拖到第一次 turn（`D18` 的先例），是「响」而不是静默。
+  - **工具名必须编码，这是与内建 `model_openai` 最大的一处线格式差异**（也是写之前没想到
+    的一条）：`contracts/tool.py` 的工具名式样是点分命名空间（`fs.read`），而 Anthropic 的
+    `tools[].name` 只收 `^[a-zA-Z0-9_-]{1,64}$`——`.` 直接 400。契约名恒不含 `-`，因此
+    `.` ↔ `-` 是**无碰撞双射**，有一条「全部合法契约名往返恒等」的用例钉住。内建那句
+    「`parameters` 已是 JSON Schema，原样透传」对参数成立、对名字不成立。
+  - **`StopReason.STOP_SEQUENCE` 在全项目第一次可达**：`model_openai/wire.py` 的注释写着
+    OpenAI 对「自然结束」与「撞上 stop 序列」都回 `"stop"`、线格式里没有第三种取值；
+    Anthropic 明确分得开。`refusal` 同理走 `CONTENT_FILTER`，且它是 **HTTP 200 上的正常
+    响应而不是异常**（`is_complete_answer` 因此为假）。
+  - **usage 的输入侧必须三项相加**（`input_tokens + cache_creation + cache_read`）：线格式里
+    的 `input_tokens` 只是**未命中缓存的余量**，不加会让报出去的输入量凭空少一大截（开了
+    prompt caching 之后差得尤其远）。`reasoning_tokens` **恒为 0 且不估算**——Anthropic 不
+    单独报它（含在 `output_tokens` 里），一个猜出来的数字会被当成实测值写进事件日志；
+    `cache_creation_input_tokens` 进 `provider_metadata`，那是「缓存到底写进去没有」的唯一
+    观测信号。
+  - **交付六个模块而不是四个**（比内建 `model_openai` 多一个）：分界线仍是「碰不碰 IO」，
+    但 Anthropic 的翻译量大得多——请求侧多了 system 提升、`tool_result` 折叠进前一条 user 轮、
+    首尾 assistant 规整、工具名编码、`cache_control` 布点、thinking 四形态；响应侧多了 6 种
+    SSE 事件 × 4 种 delta。合成一个 `wire.py` 约 800 行、正好顶在 `test_file_size.py` 的阈值
+    上，因此按**方向**切成 `wire.py`（请求）与 `decode.py`（响应），共享的只有工具名 codec。
+  - **SSE 只解析 `data:` 行、按载荷自带的 `type` 分派**，`event:` 行忽略：认两个真相来源会在
+    中转改写 `event:` 时静默分叉。Anthropic 也没有 `[DONE]` 哨兵，迭代结束即流结束。
+    `tool_use` 增量的身份键是 `index`（`id`/`name` 只在 `content_block_start` 出现一次），
+    好消息是首帧就给全，因此内建那套「补一个 `call_auto_N` 并记进 metadata」的补救在这里
+    根本不存在。
+  - **测试文件被架构守卫逼着拆开**：一份 1209 行的用例文件撞上 `tests/architecture/
+    test_file_size.py` 的 800 行上限（那条守卫对 `plugins/` 全目录生效，含测试）。拆成
+    `test_wire.py` / `test_decode.py` / `test_anthropic_plugin.py` + 一个 `_support.py`。
+    另一条被守卫挡下的是 `R4`：插件测试**也**不许 import `kernel/`，因此哨兵用例里那句
+    `prepare_payload` 换成了对 `NucleaError` 各渲染面的直接断言（脱敏在构造时完成，
+    结论不变）。零网络闸门是本项目第三份同判据实现，刻意不共享。
+  - **删除清单**：`legacy/providers/anthropic_provider.py`（860 行）、`factory.py` 的
+    `backend == "anthropic"` 整支与那条 `in {...}` 判断、`__init__.py` 的三处懒加载登记、
+    `registry.py` 三条 `backend="anthropic"` 的 `ProviderSpec`（`anthropic` / `kimi_coding` /
+    `minimax_anthropic`——留着会落进 factory 的 `else` 被 `OpenAICompatProvider` 静默错服，
+    而这三家的能力已由插件的 `base_url` + `auth` + `beta_headers` 覆盖）、
+    `config/schema.py` 随之失效的三个 `ProviderConfig` 字段；`tests/legacy/providers/` 整删
+    9 个文件、部分删 6 个文件里的 Anthropic 用例（其余为 openai_compat / azure / bedrock
+    提供覆盖，保留）。**根 `pyproject.toml` 摘掉 `anthropic>=0.100.0`**，全仓库
+    `import anthropic` 零命中。
+  - **未新增 `ErrorCode`**（`CONFIG_SECRET_MISSING` / `PERMISSION_DENIED` /
+    `INPUT_TOO_LARGE` / `EXTERNAL_MODEL_PROVIDER` / `TIMEOUT_MODEL_REQUEST` /
+    `CAPABILITY_MISSING` / `CONFIG_INVALID` / `CONFIG_UNKNOWN_FIELD` 够用），
+    **未新增 `EventName`**，**未碰 `kernel/` 与 `contracts/`**。
+  - **本轮不做与理由**：重试引擎与 fallback（编排层策略，两处都做会叠成放大器）、
+    图像/文档输入（`ModelMessage.content` 是纯 `str`，契约层没有多模态位置）、
+    server tools（会绕过 `ToolExecutor`，等于给模型开一条不受 `TurnLimits` 与权限约束的
+    副作用通道）、结构化输出与 `tool_choice` 控制（契约里没有对应槽）、
+    Bedrock / Vertex / Foundry（三套认证机制，不是一个 `base_url`）。
+  - **一条如实记着的能力回退**：**thinking 块无法多轮回放**。Anthropic 要求续写时把
+    `thinking` 块（含 `signature`）原样回传，而 `ModelMessage` 只有
+    `role`/`content`/`tool_calls`/`tool_call_id`，**没有放 provider 私有块的槽位**，
+    `signature_delta` 因此被吞掉。写进插件 docstring 与 README，不当成没发生；要修得先给
+    `contracts/model.py` 加一个 opaque 块槽位——那是要走评审的冻结表面变更（`NFR-104`），
+    列为下一轮的契约变更候选。
+  - 验收：**完整套件 4938 passed / 18 skipped / 0 failed**（`D31` 收口时 4900 / 18 / 0）；
+    插件自测 124 个用例 0.8 s。`ruff check`（src + plugins + examples + tests + scripts）、
+    `basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、`legacy_debt --check` 通过
+    （基线已下调）、`check_startup_cost --check` 通过（`startup_ms` 仍是 `D24` 记的那条
+    `import httpx` 告警）。**legacy 债务 225 文件 / 77040 行 → 224 文件 / 76136 行**，
+    其中 `providers/` 从 14103 降到 13202。真实 `nm plugins list` / `nm capabilities` 在
+    开发机上跑通：插件被发现、被加载，`model:anthropic → plugin:anthropic` 出现在生效集合里。
+    **已知偏差**：插件目录不在 `basedpyright` 的 `include` 范围内（CI 只查 `src/nucleamind`），
+    单独对它跑严格检查会在那份嵌套 JSON Schema 字面量上报一条 `reportArgumentType`——
+    与官方插件 `openai-api` 同一类情况（它单独跑有 22 条）。本轮没有改 `include` 范围。
+
+
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
@@ -1659,6 +1758,12 @@
   `tests/baseline/` 随 `legacy/agent/` 一并删除；被删掉的 OpenAI 兼容接口由新层的官方插件
   `plugins/nucleamind-plugin-openai-api/` 与通用无头命令 `nm serve` 取代，
   **阶段 8 收口**。
+  `D32` 已完成，能力插件化的第一项落地：官方插件 `plugins/nucleamind-plugin-anthropic/`
+  （Anthropic 原生 Messages API 的一条 `MODEL` 能力，raw httpx + 可注入 transport，
+  与内建 `model-openai` 并存），同 PR 删掉 `legacy/providers/anthropic_provider.py`、
+  三条 `backend="anthropic"` 的 `ProviderSpec` 与 9 个 legacy 测试文件，
+  并把 `anthropic` 从根 `pyproject.toml` 的依赖里摘掉，**技术方案 §13 M5 的五步法
+  第一次完整走通、阶段三 P1 开工**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1712,19 +1817,55 @@
 
 ## 下一步工作
 
-1. **`D32+` 能力插件化**（阶段三 P1）：按技术方案 §13 M5 的顺序与五步法逐个立项
-   （Model / Memory / Tool / Channel / Cron / WebUI），每个模块独立编号、独立验收。
-   建议从 **Model** 与 **Channel** 起步——`legacy/providers/`（14103 行）与
-   `legacy/channels/`（47807 行）是 `D31` 刻意留在树里的迁移源。
-   每迁完一个模块，同 PR 内删除 `legacy/` 对应目录与其 `tests/legacy/` 用例
+1. **`D33+` 继续能力插件化**（阶段三 P1）：按技术方案 §13 M5 的顺序与五步法逐个立项
+   （Memory / 扩展 Tool / Channel / Cron / WebUI），每个模块独立编号、独立验收。
+   `D32` 已经交了第 1 项（额外 Model Provider），并把五步法在本仓库跑通了一遍——
+   **照它的形状写**：a 步复用 `tests/legacy/` 里既有的行为用例当基线（不为一个要删掉的
+   实现再写一遍），b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
+   剩下的迁移源是 `legacy/channels/`（47762 行）与 `legacy/providers/` 的其余部分
+   （13202 行）。每迁完一个模块，同 PR 内删除 `legacy/` 对应目录与其 `tests/legacy/` 用例
    ——`legacy/` 债务指标不下降即视为该模块未完成。`legacy/` 清空后删除该目录、
    `R6` 守卫与 `scripts/legacy_debt.py`。
-2. **两件 `D31` 明确推迟的事**，立项时一并考虑：
+2. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
+   **provider-opaque 块槽位**。Anthropic 要求多轮续写时把 `thinking` 块（含 `signature`）
+   原样回传，而契约层现在没有地方放它——`anthropic` 插件因此在「thinking 开启 + 工具调用
+   多轮」这个组合下无法回放思考块，这是相对旧实现的真实能力回退。同一个槽位也是
+   OpenAI Responses API 的续写状态、以及将来多模态输入的落点，因此值得一次性想清楚
+   而不是为某一家开一个字段。
+3. **两件 `D31` 明确推迟的事**，立项时一并考虑：
    - **Channel 泵的并发**：`runtime/instance.py::_pump` 串行处理同一 Channel 的消息，
      因此 `openai-api` 的并发客户端会排队。放开它要重新回答 `EDG-202` 的严格 FIFO 断言，
      不是顺手能做的事。
    - **WebUI**：`D31` 删掉了它的后端（`legacy/webui/` + gateway + websocket 通道），
      前端源码 `webui/` 仍在树里但没有服务端可连。
+
+`D32` 留下的、`D33+` 必须用到的事实：
+
+- **M5 五步法在本仓库的实际形态**：a 步**不新写基线**——`tests/legacy/` 里既有的用例就是
+  行为说明书（`D07` 的 `tests/baseline/` 已随 `D31` 删除，不为一个要删掉的实现再写一遍）；
+  b 步在 `plugins/` 里**新写**而不是搬运（`AGENTS.md` 原则 5）；d 步「删掉引用与它服务的
+  那段代码，不留空壳」要连带删掉 `registry.py` 的 `ProviderSpec` 与 `config/schema.py` 的
+  字段——留着它们会落进 factory 的 `else` 被另一个 backend 静默错服；e 步对**部分**引用
+  的测试文件是逐个删用例而不是整删（其余用例还在为别的 provider 提供覆盖）。
+- **`tests/architecture/` 的三条守卫对 `plugins/` 全目录生效，包括测试**：`R4`（插件测试
+  也不许 import `kernel/`）、单文件 ≤800 行、`Any` 须带 `# boundary:`。`D32` 的用例文件
+  因此被拆成三个 + 一个 `_support.py`，哨兵用例里的 `prepare_payload` 换成对 `NucleaError`
+  各渲染面的直接断言。**下一个插件从一开始就按这个形状写**，别等守卫来告诉你。
+- **插件目录不在 `basedpyright` 的 `include` 范围内**（`pyproject.toml` 只写了
+  `src/nucleamind`），因此 CI 的类型检查看不到 `plugins/`。单独对插件跑严格检查会在嵌套
+  JSON Schema 字面量上报 `reportArgumentType`（`config_schema` 的值类型是 pydantic 的递归
+  `JsonValue`，而 `dict` 的值类型不变，嵌套字面量怎么标注都推不成它的子类型）——
+  `openai-api` 单独跑有 22 条。要不要把 `plugins/` 纳入检查范围是一个独立决定。
+- **零网络闸门现在有三份**（`tests/builtins/`、`tests/integration/`、
+  `plugins/nucleamind-plugin-anthropic/tests/`），判据逐条相同、刻意不共享：`R4` 够不着，
+  且三棵测试树可以各自独立运行。写第四个会发 HTTP 的插件时照抄，**不要**改成拦
+  `socket.socket` 的构造——Windows 的 `ProactorEventLoop` 用 `socketpair()` 做 self-pipe。
+- **`anthropic` 已不是宿主依赖**。根 `pyproject.toml` 的 `dependencies` 里还剩若干只服务
+  `legacy/` 的第三方包（`openai` / `boto3`（extra）/ `oauth-cli-kit` / `json-repair` /
+  `filelock` 等），每迁完一个模块顺手检查一次「还有没有 `import X`」，有零命中的就摘掉。
+- **`nm plugins list` 对未加载的插件显示 `discovered` 而不是 `loaded`**，这是 `D29` 定的：
+  只读诊断不跑 `setup()`。要确认一个 Model / Channel 插件真的装起来了，看
+  `nm capabilities` 的生效集合里有没有 `<kind>:<name> ← plugin:<id>`。
 
 `D31` 留下的、`D32+` 必须用到的事实：
 
@@ -1732,7 +1873,7 @@
   守卫的断言从「恰好只有一处新层 → legacy 导入」改成「一处也没有」。
   迁移期间**不要**为了图快再开一条例外——`legacy/` 里的代码要用就搬到新家并补测试
   （`AGENTS.md` 原则 5）。
-- **`legacy/` 剩下的是不可达的库代码**（225 文件 / 77040 行）：没有任何入口能启动它，
+- **`legacy/` 剩下的是不可达的库代码**（`D32` 之后 224 文件 / 76136 行）：没有任何入口能启动它，
   `nm legacy`、`legacy/__main__.py` 与 gateway 都不在了。它只有一个用途——`D32+` 的
   在树迁移参考。`legacy/__init__.py` 的惰性导出表已缩到三个仍有实现可指的名字。
 - **`command/` 被削过**：dream 家族 / `/goal` / `/trigger` 七个处理器随它们服务的子系统

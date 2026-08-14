@@ -10,7 +10,6 @@ from nucleamind.legacy.providers.base import LLMProvider, LLMResponse
 __all__ = [
     "LLMProvider",
     "LLMResponse",
-    "AnthropicProvider",
     "OpenAICompatProvider",
     "OpenAICodexProvider",
     "XAIGrokProvider",
@@ -20,7 +19,6 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
-    "AnthropicProvider": ".anthropic_provider",
     "OpenAICompatProvider": ".openai_compat_provider",
     "OpenAICodexProvider": ".openai_codex_provider",
     "XAIGrokProvider": ".xai_grok_provider",
@@ -30,7 +28,6 @@ _LAZY_IMPORTS = {
 }
 
 if TYPE_CHECKING:
-    from nucleamind.legacy.providers.anthropic_provider import AnthropicProvider
     from nucleamind.legacy.providers.azure_openai_provider import AzureOpenAIProvider
     from nucleamind.legacy.providers.bedrock_provider import BedrockProvider
     from nucleamind.legacy.providers.github_copilot_provider import GitHubCopilotProvider

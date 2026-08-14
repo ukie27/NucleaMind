@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from nucleamind.legacy.providers.anthropic_provider import AnthropicProvider
 from nucleamind.legacy.providers.base import LLMProvider, LLMResponse
 from nucleamind.legacy.providers.openai_compat_provider import OpenAICompatProvider
 
@@ -51,37 +50,6 @@ def test_openai_handle_error_marks_timeout_kind() -> None:
 
     assert response.finish_reason == "error"
     assert response.error_kind == "timeout"
-
-
-def test_anthropic_handle_error_extracts_structured_metadata() -> None:
-    class FakeStatusError(Exception):
-        pass
-
-    err = FakeStatusError("boom")
-    err.status_code = 408
-    err.response = _fake_response(
-        status_code=408,
-        headers={"retry-after": "1.5", "x-should-retry": "true"},
-    )
-    err.body = {"type": "error", "error": {"type": "rate_limit_error"}}
-
-    response = AnthropicProvider._handle_error(err)
-
-    assert response.finish_reason == "error"
-    assert response.error_status_code == 408
-    assert response.error_type == "rate_limit_error"
-    assert response.error_retry_after_s == 1.5
-    assert response.error_should_retry is True
-
-
-def test_anthropic_handle_error_marks_connection_kind() -> None:
-    class FakeConnectionError(Exception):
-        pass
-
-    response = AnthropicProvider._handle_error(FakeConnectionError("connection"))
-
-    assert response.finish_reason == "error"
-    assert response.error_kind == "connection"
 
 
 @pytest.mark.parametrize("expected, kwargs", [

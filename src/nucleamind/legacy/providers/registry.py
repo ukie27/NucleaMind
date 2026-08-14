@@ -47,8 +47,10 @@ class ProviderSpec:
     settings_alias_for: str = ""  # compatibility alias grouped under this provider in Settings
 
     # which provider implementation to use
-    # "openai_compat" | "anthropic" | "azure_openai" | "openai_codex" | "xai_grok"
+    # "openai_compat" | "azure_openai" | "openai_codex" | "xai_grok"
     # | "github_copilot" | "bedrock"
+    # ("anthropic" 随 D32 一并删除：Anthropic 原生走官方插件
+    #  `plugins/nucleamind-plugin-anthropic/`，中转端点靠它的 `base_url` 配置)
     backend: str = "openai_compat"
 
     # extra env vars / request headers supplied by the provider integration.
@@ -372,15 +374,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 
 
     # === Standard providers (matched by model-name keywords) ===============
-    # Anthropic: native Anthropic SDK
-    ProviderSpec(
-        name="anthropic",
-        keywords=("anthropic", "claude"),
-        env_key="ANTHROPIC_API_KEY",
-        display_name="Anthropic",
-        backend="anthropic",
-        supports_prompt_caching=True,
-    ),
     # OpenAI: SDK default base URL (no override needed)
     ProviderSpec(
         name="openai",
@@ -542,17 +535,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             ("kimi-k2.7-code-highspeed", {"temperature": 1.0}),
         ),
     ),
-    # Kimi Coding Plan — Anthropic Messages API at api.kimi.com/coding
-    # sk-kimi-* keys; requires User-Agent: claude-code/0.1.0 header.
-    ProviderSpec(
-        name="kimi_coding",
-        keywords=("kimi-coding", "kimi_coding", "kimi-for-coding"),
-        env_key="KIMI_CODING_API_KEY",
-        display_name="Kimi Coding",
-        backend="anthropic",
-        default_api_base="https://api.kimi.com/coding/v1",
-        default_extra_headers=(("User-Agent", "claude-code/0.1.0"),),
-    ),
     # MiniMax: OpenAI-compatible API
     ProviderSpec(
         name="minimax",
@@ -562,15 +544,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         backend="openai_compat",
         default_api_base="https://api.minimax.io/v1",
         thinking_style="reasoning_split",
-    ),
-    # MiniMax Anthropic-compatible endpoint: supports thinking mode
-    ProviderSpec(
-        name="minimax_anthropic",
-        keywords=("minimax_anthropic",),
-        env_key="MINIMAX_API_KEY",
-        display_name="MiniMax (Anthropic)",
-        backend="anthropic",
-        default_api_base="https://api.minimax.io/anthropic",
     ),
     # Mistral AI: OpenAI-compatible API.
     # Reasoning quirks:

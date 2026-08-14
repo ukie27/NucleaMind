@@ -9,7 +9,6 @@ import sys
 def test_importing_providers_package_is_lazy(monkeypatch) -> None:
     original_package = sys.modules["nucleamind.legacy.providers"]
     monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers", raising=False)
-    monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers.anthropic_provider", raising=False)
     monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers.openai_compat_provider", raising=False)
     monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers.openai_codex_provider", raising=False)
     monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers.xai_oauth", raising=False)
@@ -21,7 +20,6 @@ def test_importing_providers_package_is_lazy(monkeypatch) -> None:
     try:
         providers = importlib.import_module("nucleamind.legacy.providers")
 
-        assert "nucleamind.legacy.providers.anthropic_provider" not in sys.modules
         assert "nucleamind.legacy.providers.openai_compat_provider" not in sys.modules
         assert "nucleamind.legacy.providers.openai_codex_provider" not in sys.modules
         assert "nucleamind.legacy.providers.xai_oauth" not in sys.modules
@@ -32,7 +30,6 @@ def test_importing_providers_package_is_lazy(monkeypatch) -> None:
         assert providers.__all__ == [
             "LLMProvider",
             "LLMResponse",
-            "AnthropicProvider",
             "OpenAICompatProvider",
             "OpenAICodexProvider",
             "XAIGrokProvider",
@@ -51,14 +48,14 @@ def test_importing_providers_package_is_lazy(monkeypatch) -> None:
 def test_explicit_provider_import_still_works(monkeypatch) -> None:
     original_package = sys.modules["nucleamind.legacy.providers"]
     monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers", raising=False)
-    monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers.anthropic_provider", raising=False)
+    monkeypatch.delitem(sys.modules, "nucleamind.legacy.providers.bedrock_provider", raising=False)
 
     try:
         namespace: dict[str, object] = {}
-        exec("from nucleamind.legacy.providers import AnthropicProvider", namespace)
+        exec("from nucleamind.legacy.providers import BedrockProvider", namespace)
 
-        assert namespace["AnthropicProvider"].__name__ == "AnthropicProvider"
-        assert "nucleamind.legacy.providers.anthropic_provider" in sys.modules
+        assert namespace["BedrockProvider"].__name__ == "BedrockProvider"
+        assert "nucleamind.legacy.providers.bedrock_provider" in sys.modules
     finally:
         monkeypatch.undo()
         setattr(sys.modules["nucleamind.legacy"], "providers", original_package)

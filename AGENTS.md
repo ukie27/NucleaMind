@@ -50,8 +50,13 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   的删除与替代（删 `legacy/{agent,cli,webui,gateway,api,sdk,triggers}` 与 `nanobot.py`、
   `nm legacy`、`runtime/legacy_entry.py` 与 `R6` 的唯一白名单例外、`tests/baseline/`；
   新增官方插件 `plugins/nucleamind-plugin-openai-api/` 与通用无头命令 `nm serve`），
-  **阶段 8 收口**，下一步 `D32+` 能力插件化。
-  遗留实现的**剩余部分**位于 `src/nucleamind/legacy/`（225 文件 / 77040 行），
+  **阶段 8 收口**；`D32` 已落地能力插件化的第一项——官方插件
+  `plugins/nucleamind-plugin-anthropic/`（Anthropic 原生 Messages API 的 `MODEL` 能力，
+  raw httpx，与内建 `model-openai` 并存），同 PR 删掉
+  `legacy/providers/anthropic_provider.py` 及三条 `backend="anthropic"` 的 `ProviderSpec`，
+  并把 `anthropic` 从根 `pyproject.toml` 的依赖里摘掉；**阶段三 P1 开工**，
+  下一步按技术方案 §13 M5 的顺序继续（Memory / 扩展 Tool / Channel / Cron / WebUI）。
+  遗留实现的**剩余部分**位于 `src/nucleamind/legacy/`（224 文件 / 76136 行），
   自 `D31` 起**没有任何入口能启动它**——它只是 `D32+` 的在树迁移源；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
@@ -80,7 +85,7 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 ├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
 ├── embed/                 # 第 5 层：嵌入式 Python SDK
 └── legacy/                # 隔离区：nanobot 遗留代码，只出不进；D31 之后已无入口可启动
-plugins/                   # 一等公民：官方插件，各自独立发行（D31 起有 openai-api）
+plugins/                   # 一等公民：官方插件，各自独立发行（openai-api、anthropic）
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
@@ -330,6 +335,34 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   「监听端口」**这一种（`net` 判的是出站），因此这个插件声明不出与它实际行为对应的权限。
   默认只绑回环，绑非回环地址时没配 `api_key` 直接以 `CONFIG_INVALID` 拒绝启动。
 
+`plugins/nucleamind-plugin-anthropic/`（`D32`，M5 五步法的第一次完整应用）六条：
+
+- **迁移不是移植。** 旧实现有四张按模型名版本号 gating 的表
+  （`_ADAPTIVE_ONLY_MIN_VERSIONS` / `_THINKING_DISABLE_MIN_VERSIONS` /
+  `_SAMPLING_DEPRECATED_MODELS` + 那个版本号正则），**一张都没搬**——`D19` 拒过同类的
+  `max_tokens_field` slug 表，理由不变：表只会越滚越大，用户换新模型要等我们发版。
+  四种 thinking 形状改由 `thinking.mode` 直接选，采样禁用改由 `supports_temperature` 表达。
+  旧实现的**重试引擎也没搬**：重试是编排层策略，provider 只如实标 `retryable`。
+- **工具名必须编码，这是与内建 `model_openai` 最大的一处线格式差异。** 契约工具名是点分
+  命名空间（`fs.read`），Anthropic 的 `tools[].name` 只收 `^[a-zA-Z0-9_-]{1,64}$`。契约名
+  恒不含 `-`，因此 `.` ↔ `-` 是**无碰撞双射**（`wire.encode_tool_name` / `decode_tool_name`）。
+  内建那句「`parameters` 已是 JSON Schema，原样透传」在这里对参数成立、对名字不成立。
+- **`StopReason.STOP_SEQUENCE` 在这里第一次可达。** `model_openai/wire.py` 的注释写着
+  OpenAI 对自然结束与撞上 stop 序列都回 `"stop"`、分不出来；Anthropic 明确回
+  `stop_sequence`。`refusal` 同理走 `CONTENT_FILTER`，且它是 **HTTP 200 上的正常响应**。
+- **usage 的输入侧必须三项相加**（`input_tokens + cache_creation + cache_read`）：线格式里的
+  `input_tokens` 只是**未命中缓存的余量**，不加就少报一大截。`reasoning_tokens` **恒为 0**
+  且**不估算**——Anthropic 不单独报它，猜出来的数字会被当成实测值写进事件日志。
+- **能力声明与开关同源**：`describe()` 交出的是「配置基线 ∪ thinking 开着时的 `reasoning`
+  ∪ 缓存开着时的 `prompt_caching`」，反过来**声明了却没开开关是 `CONFIG_INVALID`**。
+  两个方向都判死，`MOD-005` 才真的成立（与 `D20` 的 `enabled_tool_names(config)` 同一种做法）。
+- **thinking 块无法多轮回放，这是相对旧实现的真实能力回退。** Anthropic 要求续写时把
+  `thinking` 块（含 `signature`）原样回传，而 `ModelMessage` 没有放 provider 私有块的槽位，
+  `signature_delta` 因此被吞掉。写在插件 docstring 与 README 里，**不当成没发生**；
+  要修得先给 `contracts/model.py` 加一个 opaque 块槽位（`NFR-104` 的冻结表面变更）。
+  图像输入同理（`ModelMessage.content` 是纯 `str`），旧实现的 `_convert_image_block` 没有
+  搬运源。
+
 `runtime/plugin_disable.py` + `examples/plugins/`（`D30`）是插件体系的收口，五条：
 
 - **`on_disable` 是拒绝隐式恢复的那道判定**（`BAS-004`、§10.4）。禁用一个声明过
@@ -475,11 +508,12 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m pytest tests/kernel/test_engine.py::test_function -v
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
-# 插件（D30 的两个示例 + D31 的官方 openai-api）：经 entry point 被发现，
+# 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic）：经 entry point 被发现，
 # 因此必须真的装进环境才跑得起来。tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
 
 # legacy/ 债务指标（只允许下降）
 .venv\Scripts\python.exe scripts/legacy_debt.py
@@ -531,9 +565,10 @@ nm serve
 **它们此后不可达**——没有任何入口能启动它们，`legacy/README.md` 的隔离规则照旧，
 债务棘轮继续压着，每迁完一个模块就在同一个 PR 里删掉对应目录。
 
-- **LLM Providers**（`legacy/providers/`，14103 行）：Anthropic、OpenAI 兼容、
-  OpenAI Responses API、Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类
-  （`base.py`），含图像生成与音频转录。**`D32` Model 插件化的主要来源。**
+- **LLM Providers**（`legacy/providers/`，13202 行）：OpenAI 兼容、OpenAI Responses API、
+  Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类（`base.py`），含图像生成与音频转录。
+  **`D32` 已取走 Anthropic 那一份**（`anthropic_provider.py` 与三条 `backend="anthropic"`
+  的 `ProviderSpec` 已删除），其余仍是后续 Model 插件化的来源。
 - **Channels**（`legacy/channels/`，47807 行）：Telegram、Discord、Slack、Feishu、
   Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、Mattermost。
   `manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
@@ -553,6 +588,7 @@ nm serve
   （全部延迟导入）
 - **嵌入式 Python SDK**：`src/nucleamind/embed/`（`open_instance()` / `run()`）
 - **OpenAI 兼容 HTTP API**：官方插件 `plugins/nucleamind-plugin-openai-api/` + `nm serve`
+- **Anthropic 原生模型**：官方插件 `plugins/nucleamind-plugin-anthropic/`（一条 `MODEL` 能力）
 
 ## 架构约束与改造方向
 
