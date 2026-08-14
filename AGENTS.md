@@ -14,7 +14,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `D07` 已落地旧实现行为基线（`tests/baseline/`），`D08` 已落地取消与预算
   （`kernel/turn/{cancel,limits}.py`），`D09` 已落地 Turn Engine
   （`kernel/turn/{engine,events,deps,scheduling,folding}.py`，纯循环，≤400 行），
-  阶段 2 Turn 内核收口；`D10` 已落地实例布局与配置加载（`kernel/config/` 九个模块），
+  阶段 2 Turn 内核收口；`D10` 已落地实例布局与配置加载（`kernel/config/`，`D24`/`D28`
+  之后共十三个模块），
   `D11` 已落地 Secret 与凭据（`kernel/config/secrets.py`，`SecretStr` 下沉到
   `contracts/errors.py`），`D12` 已落地可观测性（`kernel/observability/` 五个模块），
   阶段 3 支撑设施收口；`D13` 已落地输入分流与 Session 并发
@@ -38,7 +39,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/plugins/{permissions,permission_codec}.py` + `runtime/access/` +
   `nm permissions`），`D27` 已落地两阶段加载与事务性注册
   （`kernel/plugins/loader.py` + `runtime/plugin_plan.py`，外部插件与内建合并进同一次
-  `wire_capabilities()`），**阶段 7 推进中**，下一步 `D28`。
+  `wire_capabilities()`），`D28` 已落地插件生命周期（`kernel/plugins/lifecycle.py`：
+  六阶段状态机、停止顺序、每插件停止预算；镜像常量拆出 `kernel/config/defaults.py`），
+  **阶段 7 推进中**，下一步 `D29`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、`access/` 与 `cli/`，
@@ -163,6 +166,9 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   （`FieldKind` / `FieldSpec` / `coerce_value` 与六个 `*_at()` 收窄器）在 `fields.py`，
   它**一个字段名都不认识**——分界线就是这个：加字段改 `schema.py`，加一种字段形状才改
   `fields.py`。`json_schema.py` 是那张表的**派生物**（给编辑器用），不是第二份真相。
+  **默认值常量写进 `defaults.py`**（`D28` 从 `schema.py` 拆出，它撞上了 500 行上限）：
+  那里只有镜像自 `kernel.turn` / `kernel.routing` / `kernel.plugins` 的字面量，每一组都有
+  一条逐项对照测试；`schema.py` 从它 import 再原样再导出，因此既有引用一个都没变。
 - **`kernel/config/` 全包不写任何文件**（`EDG-501`）：`config.json` 只以 `"rb"` 打开且只在
   `sources.read_config_file` 一处。`D24` 的 `scaffold.py` / `json_schema.py` 也不例外——
   它们只**渲染**，落盘在 `runtime/first_run.py`（`O_CREAT|O_EXCL`，没有 `--force`，
@@ -170,11 +176,12 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **顶层 `$schema` 是 `validate_config()` 唯一放行的非小节键**（`schema.IGNORED_TOP_LEVEL_KEYS`）。
   它必须是**具名的一条**，不是「`$` 开头就放行」——后者会让拼错成 `$turn` 的小节静默消失。
   这是全项目第二处对未知键让路的地方，第一处是 `plugins` 小节里的插件 id。
-- **不要在 `schema.py` 里 module-level import `kernel.turn.limits`**：那会执行
+- **不要在 `kernel/config/` 里 module-level import `kernel.turn.limits`**：那会执行
   `kernel/turn/__init__.py`，把 engine/scheduling/folding 与 asyncio 拖上配置路径
-  （`NFR-405` 冷启动预算 300 ms），`kernel.routing` 同理。`to_limits()` 用函数内 import，
-  turn 的六个默认值、routing 的五个默认值与 hooks/context 的三个超时都在两处各写一份、
-  由对照测试钉住。同理**不要把 pydantic 引进 `kernel/config/`**，有子进程测试盯着。
+  （`NFR-405` 冷启动预算 300 ms），`kernel.routing` 与 `kernel.plugins` 同理。
+  `to_limits()` 用函数内 import，turn 的六个默认值、routing 的五个默认值、hooks/context
+  的三个超时与插件停止预算都在两处各写一份（本层那份在 `defaults.py`）、由对照测试钉住。
+  同理**不要把 pydantic 引进 `kernel/config/`**，有子进程测试盯着。
 - **判断 PID 是否存活一律用 `process.process_is_alive()`**，绝不用 `os.kill(pid, 0)`：
   Windows 上 CPython 把非 CTRL 信号映射到 `TerminateProcess`，那个「探测」会杀掉目标进程。
   返回值是**三态**，`UNKNOWN` 不得用来回收锁。
@@ -271,6 +278,22 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   标记文件 `.nucleamind-state.json` **只在状态目录已存在时**才读写——不为一个从未写盘的
   插件建目录。`jsonschema` 在这里是全项目第二个接触点（另一处 `turn/invoker._compile`），
   两处都惰性 import。
+- **停止顺序是加载顺序的逆序，只有 `stop_order(LoadPlan.order)` 一条路**（`D28`、
+  `PLG-005`）。装配根交给 `units_for()` 的顺序表就是 `contexts` 的顺序，它源自
+  `all_manifests`（内建在前、外部按拓扑序在后）——停止侧不重排一遍拓扑。
+- **阶段是判定口径、`PluginState` 是显示口径**：`PluginPhase` 与那张唯一的
+  `PHASE_TRANSITIONS` 在 `lifecycle.py`，非法转换是 `KERNEL_INVARIANT_VIOLATED` 而不是
+  被静默接受；诊断要的粗粒度状态由 `PHASE_STATES` 投影，不要另写一份映射（`D12` 的
+  「不发明第二套生命周期 taxonomy」就是靠这个投影兑现的）。**`FAILED` 不是终态**——
+  `setup()` 中途失败的插件可能已经订阅过事件或派生过任务，它欠一次清理。
+- **停止超时是放弃等待而不是等它结束**（`EDG-104`）：那个协程可能仍在跑，
+  `StopOutcome.timed_out` 与 `TIMEOUT_PLUGIN_STOP` 如实标着。预算是
+  `plugins.stop_timeout_ms`（默认 5000），**按插件各算一份**；`RuntimePluginContext`
+  自己不设第二个超时，两处各判一次会让「等了多久」取决于两个数的最小值。
+- **`EDG-105` 的三项落在两处**：取消订阅与取消任务在 `RuntimePluginContext.shutdown()`；
+  「注销能力」**不在运行期**——registry 解析后只读（`NFR-403`）且首版不热更新（§10.4），
+  被禁用的提供方在下一次启动时连 `setup()` 都不跑。别为了让一条测试好写而给冻结的
+  registry 开一个 `unregister()`：已经被 `ToolExecutor` 取走的实现体它也收不回来。
 
 `kernel/plugins/permissions.py` + `runtime/access/`（`D26`）是权限的唯一来源。六条：
 

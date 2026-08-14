@@ -1,0 +1,72 @@
+"""配置默认值里那些**镜像自别处**的字面量（技术方案 §6.7）。
+
+职责：把 turn 六项预算、routing 五项、hooks/context 三项超时与插件停止预算的默认值集中
+成一处常量，供 `schema.SECTION_SPECS` 引用。
+不负责：定义有哪些字段（`schema.py` 的那张表）、校验（`fields.py`）、读取任何来源
+（`sources.py`）；本模块只有字面量，没有逻辑。
+
+**这些常量是各自真实归属地的副本，不是第二个真相来源**：真正的定义在
+`kernel/turn/limits.py`、`kernel/routing/`、`kernel/turn/{hooks,context_builder}.py` 与
+`kernel/plugins/lifecycle.py`，每一组都有一条逐项对照的测试盯着。
+
+**为什么不 import 那些模块**：`kernel.turn` / `kernel.routing` / `kernel.plugins` 的
+`__init__` 会把 engine、调度器、registry 与 asyncio 一起拖上配置路径，而 `nm config show`
+与诊断只需要十几个整数（`NFR-405` 给整个冷启动的预算是 300 ms）。抄一份字面量 + 一条
+对照测试，是这条约束下唯一诚实的做法——两处不一致时测试会响，而不是用户的实例会。
+
+拆出本模块是因为 `schema.py` 撞到了 `kernel/` 的 500 行上限（`D28`）：先被挪走的应当是
+「没有逻辑、只是被别处引用」的那部分，而不是字段表本身。
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+__all__ = [
+    "DEFAULT_COMMAND_PREFIX",
+    "DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS",
+    "DEFAULT_DEDUP_CAPACITY",
+    "DEFAULT_DEDUP_TTL_MS",
+    "DEFAULT_INTERCEPTOR_TIMEOUT_MS",
+    "DEFAULT_MAX_ITERATIONS",
+    "DEFAULT_MAX_TOOL_CALLS_PER_TURN",
+    "DEFAULT_OBSERVER_TIMEOUT_MS",
+    "DEFAULT_PLUGIN_STOP_TIMEOUT_MS",
+    "DEFAULT_QUEUE_MAX_SIZE",
+    "DEFAULT_SESSION_CONCURRENCY",
+    "DEFAULT_TOOL_RESULT_MAX_BYTES",
+    "DEFAULT_TOOL_TIMEOUT_MS",
+    "DEFAULT_TURN_TIMEOUT_MS",
+    "SESSION_CONCURRENCY_CHOICES",
+]
+
+#: turn 六项预算（第六项 `context_max_tokens` 无默认值）。**与 `kernel/turn/limits.py` 的
+#: `DEFAULT_*` 必须逐一相等**，由 `test_turn_defaults_match_the_limits_module` 盯着。
+DEFAULT_MAX_ITERATIONS: Final = 16
+DEFAULT_MAX_TOOL_CALLS_PER_TURN: Final = 48
+DEFAULT_TOOL_TIMEOUT_MS: Final = 120_000
+DEFAULT_TOOL_RESULT_MAX_BYTES: Final = 65_536
+DEFAULT_TURN_TIMEOUT_MS: Final = 900_000
+
+#: 路由五项。**与 `kernel/routing/` 的同名 `DEFAULT_*` 必须逐一相等**，由
+#: `test_routing_defaults_match_the_routing_package` 盯着。
+DEFAULT_COMMAND_PREFIX: Final = "/"
+DEFAULT_SESSION_CONCURRENCY: Final = "queue"
+DEFAULT_QUEUE_MAX_SIZE: Final = 32
+DEFAULT_DEDUP_CAPACITY: Final = 4096
+DEFAULT_DEDUP_TTL_MS: Final = 600_000
+
+#: `session_concurrency` 的合法取值，与 `routing.ConcurrencyPolicy` 的三个取值同名。
+SESSION_CONCURRENCY_CHOICES: Final = ("queue", "merge", "reject")
+
+#: Hook 与 Context Provider 的三项超时（技术方案 §6.6、§10.2 第 7 步 b）。**与
+#: `kernel/turn/hooks.py` 与 `context_builder.py` 的同名 `DEFAULT_*` 必须逐一相等**，
+#: 由 `test_orchestration_defaults_match_the_turn_package` 盯着。
+DEFAULT_OBSERVER_TIMEOUT_MS: Final = 2_000
+DEFAULT_INTERCEPTOR_TIMEOUT_MS: Final = 5_000
+DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS: Final = 3_000
+
+#: 单个插件的停止预算（`D28`、`EDG-104`）。**与 `kernel/plugins/lifecycle.py` 的
+#: `DEFAULT_STOP_TIMEOUT_MS` 必须相等**，由
+#: `test_the_stop_budget_default_matches_the_config_schema` 盯着。
+DEFAULT_PLUGIN_STOP_TIMEOUT_MS: Final = 5_000

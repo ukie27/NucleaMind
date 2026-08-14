@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-13
-- 当前阶段：阶段 7 Plugin Runtime 推进中（`D00`–`D26` 均已完成，下一步 `D27`）
+- 更新时间：2026-08-14
+- 当前阶段：阶段 7 Plugin Runtime 推进中（`D00`–`D28` 均已完成，下一步 `D29`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1484,6 +1484,12 @@
   校验 / `state_version`，`runtime/plugin_plan.py` 的 manifest 判定与加载计划，装配根把
   内建与外部插件合并进**同一次** `wire_capabilities()`），外部插件从此真的跑得起来，
   阶段 A 的七步至此交齐。
+  `D28` 已完成，插件生命周期落地（`kernel/plugins/lifecycle.py`：六阶段状态机与唯一一张
+  转换表、`stop_order()` 取 `LoadPlan.order` 的逆序、每插件独立停止预算），
+  `AgentInstance.stop()` 从「取消一堆任务」变成「逐个提供方走完状态机并各发一条事件」，
+  `RuntimePluginContext.shutdown()` 成为退订与取消任务的唯一落点；顺带把
+  `kernel/config/schema.py` 里那批镜像常量拆到 `kernel/config/defaults.py`（它撞上了
+  `kernel/` 的 500 行上限）。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1537,14 +1543,41 @@
 
 ## 下一步工作
 
-1. **`D28` 插件生命周期**（阶段 7 第五步）：状态机
-   `DISCOVERED → VALIDATED → LOADED → STARTED → STOPPING → STOPPED`、停止顺序 = 启动
-   拓扑序的逆序（`PLG-005`）、停止超时 5000 ms 后放弃等待继续停其余（`EDG-104`）、禁用后
-   清理全部痕迹（`EDG-105`）。**启动拓扑序现在有唯一来源了**：`plan_load_order()` 的
-   `LoadPlan.order`，`D28` 的停止顺序直接取它的逆序，不要另算一遍。
-2. `nm plugins` / `nm capabilities`（`D29`）仍然没有；数据源已经齐了
-   （`AgentInstance.diagnostics`，`/plugins` 现在同时列得出发现阶段与校验阶段的失败），
-   与会话内的 `/plugins` 共用。
+1. **`D29` `nm plugins` 命令与诊断输出**（阶段 7 第六步）：
+   `nm plugins list / enable / disable / uninstall / purge`、`nm capabilities` 打印
+   shadowed 关系、`purge` 需 `--confirm` 且先打印将删除的路径与体积（`EDG-505`）。
+   数据源已经齐了（`AgentInstance.diagnostics`，`/plugins` 同时列得出发现阶段与校验阶段
+   的失败），与会话内的 `/plugins` 共用；`D28` 之后 `PluginLifecycle.state` 是把运行期
+   阶段投影成 `PluginState` 的唯一途径，渲染时不要再造一份映射。
+2. `D30` 插件里程碑验收（需求 §16.2）。
+
+`D28` 留下的、`D29`–`D31` 必须用到的事实：
+
+- **停止顺序只有一个来源，且它是加载顺序的逆序**：`stop_order(LoadPlan.order)`。
+  装配根交给 `units_for()` 的那张顺序表就是 `contexts` 的顺序（内建在前、外部按拓扑序
+  在后），因此「被依赖者后停」与「被依赖者先起」共用同一个序——不要在停止侧再排一次。
+- **阶段是判定口径、`PluginState` 是显示口径**：`PluginPhase`（六个阶段 + `FAILED`）与
+  `PHASE_TRANSITIONS` 那张唯一的转换表在 `kernel/plugins/lifecycle.py`，投影表
+  `PHASE_STATES` 也在那里。`D12` 定的「不发明第二套生命周期 taxonomy」的兑现方式就是
+  这个投影，`nm plugins` 渲染时读 `lifecycle.state` 而不是自己判。
+- **`FAILED` 不是终态**：`setup()` 中途失败的插件可能已经订阅过事件或派生过任务
+  （`setup` 跑在事件循环里），它欠一次清理，因此 `FAILED -> STOPPING` 是合法边。
+  唯一的终态是 `STOPPED`。
+- **停止超时后是放弃等待而不是等它结束**（`EDG-104`）：那个协程可能仍在跑，
+  `StopOutcome.timed_out` 与独立的 `TIMEOUT_PLUGIN_STOP` 错误码如实标着这件事。
+  预算是 `plugins.stop_timeout_ms`（默认 5000），**按插件各算一份**。
+- **`EDG-105` 的三项在 P0 分别落在两处**：取消订阅与取消任务在
+  `RuntimePluginContext.shutdown()`；「注销能力」**不在运行期**——registry 解析后只读
+  （`NFR-403`）且首版不热更新（§10.4），被禁用的提供方在下一次启动时连 `setup()` 都不跑。
+  想做热更新就要先回答「已经被别人取回的实现体怎么办」（`ToolExecutor` 在装配时就持有
+  它们了），那不是加一个 `unregister()` 能解决的。
+- **`kernel/config/schema.py` 撞过 500 行上限**：那批「镜像自 `kernel.turn` /
+  `kernel.routing` / `kernel.plugins` 的默认值字面量」已经拆到
+  `kernel/config/defaults.py`，schema 从那里 import 再原样再导出。加新配置字段时，
+  默认值常量写进 `defaults.py`，字段声明仍然只进 `SECTION_SPECS`。
+- **`plugins` 小节的保留键现在有四个**（`enabled` / `disable` / `search_paths` /
+  `stop_timeout_ms`）。它们与插件 id 共用命名空间但撞不上：插件 id 不允许下划线。
+  新增保留键时沿用带下划线的形状，理由写在 `plugin_blocks.RESERVED_PLUGIN_KEYS` 上。
 
 `D27` 留下的、`D28`–`D30` 必须用到的事实：
 
@@ -2127,8 +2160,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅
-D28– ⬜（尚未开始）
+D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅
+D29– ⬜（尚未开始）
 
 ## 本目录文档分类
 

@@ -3,7 +3,8 @@
 职责：re-export `declarations`（注册意图的 kernel 投影）、`discovery`（两条显式来源的
 插件发现）、`host`（唯一的 Host `NucleaAPI` 实现）、`capabilities`（五个单值 kind 的载荷
 形状与取回函数）、`loader`（阶段 A 的依赖拓扑、配置校验与状态版本）与 `builtin_loader`
-（把一批 `LoadRequest` 跑成注册）与 `permissions`（权限账本）的公开表面。
+（把一批 `LoadRequest` 跑成注册）与 `permissions`（权限账本）与 `lifecycle`（阶段状态机、
+停止顺序与停止超时）的公开表面。
 不负责：校验 manifest、构造 `PluginContext`、实现被守卫的资源门面、决定谁被启用——
 那些分别在 `sdk/manifest.py`、`runtime/plugin_context.py`、`runtime/access/` 与 `runtime/`；
 本包不读配置、不访问网络（`permissions.py` 只读写 `permissions.json`，`loader.py` 只读写
@@ -52,6 +53,19 @@ from .discovery import (
     read_candidate,
 )
 from .host import CapabilityHost
+from .lifecycle import (
+    DEFAULT_STOP_TIMEOUT_MS,
+    PHASE_STATES,
+    PHASE_TRANSITIONS,
+    PluginLifecycle,
+    PluginPhase,
+    StopAction,
+    StopOutcome,
+    StopUnit,
+    stop_order,
+    stop_plugins,
+    units_for,
+)
 from .loader import (
     STATE_FILE,
     STATE_VERSION_KEY,
@@ -75,10 +89,13 @@ from .permissions import (
 )
 
 __all__ = [
+    "DEFAULT_STOP_TIMEOUT_MS",
     "ENTRY_POINT_GROUP",
     "LEDGER_VERSION",
     "MANIFEST_ATTRIBUTE",
     "MANIFEST_FILENAME",
+    "PHASE_STATES",
+    "PHASE_TRANSITIONS",
     "STATE_FILE",
     "STATE_VERSION_KEY",
     "CapabilityBinding",
@@ -102,6 +119,8 @@ __all__ = [
     "PlanNode",
     "PluginCandidate",
     "PluginGrants",
+    "PluginLifecycle",
+    "PluginPhase",
     "RegisteredChannel",
     "RegisteredCliEntry",
     "RegisteredMemoryProvider",
@@ -111,6 +130,9 @@ __all__ = [
     "SessionStoreBinding",
     "SetupFn",
     "SourceKind",
+    "StopAction",
+    "StopOutcome",
+    "StopUnit",
     "channels_from",
     "check_state_version",
     "cli_entry_from",
@@ -125,5 +147,8 @@ __all__ = [
     "plan_load_order",
     "read_candidate",
     "session_store_from",
+    "stop_order",
+    "stop_plugins",
+    "units_for",
     "validate_plugin_config",
 ]

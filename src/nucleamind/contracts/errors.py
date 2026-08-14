@@ -98,6 +98,7 @@ class ErrorCode(StrEnum):
     TIMEOUT_TOOL_CANCEL = "timeout.tool_cancel"
     TIMEOUT_HOOK = "timeout.hook"
     TIMEOUT_HTTP_REQUEST = "timeout.http_request"
+    TIMEOUT_PLUGIN_STOP = "timeout.plugin_stop"
 
     # CANCELLED
     CANCELLED_BY_USER = "cancelled.by_user"
@@ -164,6 +165,10 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         # `ctx.net` 的出网超时（`D26`）。不复用 `TIMEOUT_TOOL_CALL`：发请求的可能是 Channel
         # 或 Hook，把它记成「某个工具超时了」会让诊断指向一个根本没被调用的工具。
         ErrorCode.TIMEOUT_HTTP_REQUEST: ErrorCategory.TIMEOUT,
+        # 插件停止超时（`D28`、`EDG-104`）。不复用 `PLUGIN_LOAD_FAILED`：那是「它没能起来」，
+        # 而这里是「它起来了、但没能在期限内停下」——后者留下的是仍在跑的后台任务，
+        # 排查动作（看插件的 spawn_task 有没有吞掉 CancelledError）完全不同。
+        ErrorCode.TIMEOUT_PLUGIN_STOP: ErrorCategory.TIMEOUT,
         ErrorCode.CANCELLED_BY_USER: ErrorCategory.CANCELLED,
         ErrorCode.CANCELLED_BY_BUDGET: ErrorCategory.CANCELLED,
         # 实例关闭导致的取消：既不是用户按下 Ctrl-C，也不是撞上预算，

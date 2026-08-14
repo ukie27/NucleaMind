@@ -1167,6 +1167,28 @@ DISCOVERED -> VALIDATED -> LOADED -> STARTED -> STOPPING -> STOPPED
 必须通过 `api.ctx.spawn_task()` 创建，Host API 不暴露裸 `asyncio.create_task`，
 使「谁的任务」始终可判定。
 
+`D28` 落地时对本节的四处细化（实现在 `kernel/plugins/lifecycle.py`、
+`runtime/plugin_context.py::RuntimePluginContext.shutdown()` 与
+`runtime/instance.py::_stop_plugins()`）：
+
+- **`FAILED` 不是终态，`STOPPED` 才是**。本节的图把 `FAILED` 画成每个阶段的出口，但没说
+  失败之后怎么收场。`setup()` 跑在事件循环里，一个中途失败的插件可能已经订阅过事件或
+  `spawn_task()` 过——注册被回滚了，这些副作用没有。因此 `FAILED -> STOPPING` 是合法边，
+  否则那些任务会活过实例本身。同理 `LOADED -> STOPPING`（装配失败时插件从未 `STARTED`）。
+- **停止超时的处置是「放弃等待」而不是「等它结束」**（`EDG-104`）：取消那个任务、记一条
+  `TIMEOUT_PLUGIN_STOP`（新增的错误码，复用 `PLUGIN_LOAD_FAILED` 会把「它没能起来」与
+  「它没能停下」记成一件事）、继续停下一个。被放弃的协程可能仍在跑，`StopOutcome.timed_out`
+  如实标着；预算是配置 `plugins.stop_timeout_ms`，**按插件各算一份**。
+- **`EDG-105` 的「注销能力」在 P0 不在运行期**：registry 解析后只读（`NFR-403`），而
+  §10.4 已经写明首版不热更新——被 `plugins.disable` 关掉的提供方在**下一次启动**时连
+  `setup()` 都不跑，它的能力从来没进过 registry。运行期摘除还要回答「已经被
+  `ToolExecutor` / `OrchestratorDeps` 取走的实现体怎么办」，那是 P2 热更新的问题，
+  不是一个 `unregister()`。另外两项（取消订阅、取消任务）如实落在 `shutdown()` 里。
+- **`PluginPhase` 与 `PluginState` 是判定口径与显示口径**：`D12` 定的「不发明第二套生命
+  周期 taxonomy」由 `PHASE_STATES` 这张投影表兑现，而不是让两个枚举各长各的。`VALIDATED`
+  与 `DISCOVERED` 同投影成 `discovered`，`STOPPING` 仍投影成 `activated`——停到一半的插件
+  还没停下。
+
 ### 7.5 Host API 与权限
 
 回答 §17.2 第 2 项。**首版只做「声明式权限 + 应用级强制」，明确不承诺进程隔离。**

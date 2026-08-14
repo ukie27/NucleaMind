@@ -62,7 +62,10 @@ from nucleamind.kernel.plugins import (
     Decision,
     Grant,
     LedgerDecision,
+    LoadOutcome,
     PermissionLedger,
+    PluginLifecycle,
+    PluginPhase,
     channels_from,
     cli_entry_from,
     model_providers_from,
@@ -408,6 +411,31 @@ async def _wire(
     )
 
 
+def _lifecycles(
+    manifests: Sequence[PluginManifest], outcomes: Sequence[LoadOutcome]
+) -> tuple[PluginLifecycle, ...]:
+    """给每个提供方建一份生命周期，置于 `LOADED` 或 `FAILED`（`D28`、`NFR-201`）。
+
+    **按位置对齐**：`load_into()` 对每个请求恰好产出一个结果且保持顺序，而请求是按
+    `manifests` 一一翻译的。按 `ProviderId` 索引在这里行不通——全部内建共用一个
+    `Builtin()`，那样会把七份内建的加载结果并成一条（`D23` 在配置块上、`D26` 在权限账本上
+    踩过同一个坑）。
+
+    走到这一步的提供方都已过阶段 A，因此先推 `VALIDATED`；`setup()` 失败的在那个阶段
+    失败（`failed_phase=validated`），这正是「记录失败发生在哪个阶段」要的信息。
+    """
+    lifecycles: list[PluginLifecycle] = []
+    for manifest, outcome in zip(manifests, outcomes, strict=False):
+        lifecycle = PluginLifecycle(plugin_id=manifest.id)
+        lifecycle.advance(PluginPhase.VALIDATED)
+        if outcome.error is None:
+            lifecycle.advance(PluginPhase.LOADED)
+        else:
+            lifecycle.fail(outcome.error)
+        lifecycles.append(lifecycle)
+    return tuple(lifecycles)
+
+
 async def bootstrap(
     *,
     instance_dir: Path | str | None = None,
@@ -550,6 +578,7 @@ async def _bootstrap_locked(
         model_info=model_info,
         cli=cli.value,
         contexts=tuple(contexts),
+        lifecycles=_lifecycles(all_manifests, wiring.outcomes),
         runtime=runtime,
         lock=lock,
         closers=closers,
@@ -580,6 +609,7 @@ def _assemble(
     model_info: ModelInfo | None,
     cli: CliEntry,
     contexts: tuple[RuntimePluginContext, ...],
+    lifecycles: tuple[PluginLifecycle, ...],
     runtime: PluginRuntime,
     lock: InstanceLock | None,
     closers: Sequence[Closer],
@@ -675,6 +705,8 @@ def _assemble(
         channels=channels,
         outcomes=wiring.outcomes,
         contexts=contexts,
+        lifecycles=lifecycles,
+        stop_timeout_ms=config.plugins.stop_timeout_ms,
         runtime=runtime,
         lock=lock,
         closers=tuple(closers),

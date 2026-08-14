@@ -32,6 +32,23 @@ from typing import TYPE_CHECKING, Final, Mapping
 
 from ...contracts import ErrorCode, NucleaError
 from . import plugin_blocks as blocks
+from .defaults import (
+    DEFAULT_COMMAND_PREFIX,
+    DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
+    DEFAULT_DEDUP_CAPACITY,
+    DEFAULT_DEDUP_TTL_MS,
+    DEFAULT_INTERCEPTOR_TIMEOUT_MS,
+    DEFAULT_MAX_ITERATIONS,
+    DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    DEFAULT_OBSERVER_TIMEOUT_MS,
+    DEFAULT_PLUGIN_STOP_TIMEOUT_MS,
+    DEFAULT_QUEUE_MAX_SIZE,
+    DEFAULT_SESSION_CONCURRENCY,
+    DEFAULT_TOOL_RESULT_MAX_BYTES,
+    DEFAULT_TOOL_TIMEOUT_MS,
+    DEFAULT_TURN_TIMEOUT_MS,
+    SESSION_CONCURRENCY_CHOICES,
+)
 from .fields import (
     FieldKind,
     FieldSpec,
@@ -80,39 +97,6 @@ SCHEMA_KEY: Final = "$schema"
 #: 这是全项目第二处对未知键让路的地方，第一处是 `plugins` 小节里的插件 id。
 IGNORED_TOP_LEVEL_KEYS: Final[tuple[str, ...]] = (SCHEMA_KEY,)
 
-#: turn 六项预算的默认值。**与 `kernel/turn/limits.py` 的 `DEFAULT_*` 必须逐一相等**，
-#: 由 `test_turn_defaults_match_the_limits_module` 盯着。
-#:
-#: 这里重写字面量而不是 import 那些常量，是为了不把 turn 引擎拖上配置路径：import
-#: `kernel.turn.limits` 会执行 `kernel/turn/__init__.py`，连带 engine / scheduling /
-#: folding 与 asyncio 一起进来，而 `nm config show` 与诊断只需要六个整数。
-DEFAULT_MAX_ITERATIONS: Final = 16
-DEFAULT_MAX_TOOL_CALLS_PER_TURN: Final = 48
-DEFAULT_TOOL_TIMEOUT_MS: Final = 120_000
-DEFAULT_TOOL_RESULT_MAX_BYTES: Final = 65_536
-DEFAULT_TURN_TIMEOUT_MS: Final = 900_000
-
-#: 路由的五项默认值。**与 `kernel/routing/` 的同名 `DEFAULT_*` 必须逐一相等**，由
-#: `test_routing_defaults_match_the_routing_package` 盯着。这里同样重写字面量而不是 import：
-#: `kernel.routing` 会把 asyncio 与调度器一起拖上配置路径，而 `nm config show` 不需要它们。
-DEFAULT_COMMAND_PREFIX: Final = "/"
-DEFAULT_SESSION_CONCURRENCY: Final = "queue"
-DEFAULT_QUEUE_MAX_SIZE: Final = 32
-DEFAULT_DEDUP_CAPACITY: Final = 4096
-DEFAULT_DEDUP_TTL_MS: Final = 600_000
-
-#: `session_concurrency` 的合法取值，与 `routing.ConcurrencyPolicy` 的三个取值同名。
-SESSION_CONCURRENCY_CHOICES: Final = ("queue", "merge", "reject")
-
-#: Hook 与 Context Provider 的三项超时（技术方案 §6.6、§10.2 第 7 步 b）。
-#: **与 `kernel/turn/hooks.py` 与 `context_builder.py` 的同名 `DEFAULT_*` 必须逐一相等**，
-#: 由 `test_orchestration_defaults_match_the_turn_package` 盯着。同样重写字面量而不是
-#: import：`kernel.turn` 会把 engine 与 asyncio 拖上配置路径（见上面的注释）。
-DEFAULT_OBSERVER_TIMEOUT_MS: Final = 2_000
-DEFAULT_INTERCEPTOR_TIMEOUT_MS: Final = 5_000
-DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS: Final = 3_000
-
-
 #: 全部已知字段。**这是 `extra="forbid"` 的唯一依据**：不在表里的键即未知字段。
 #: `D11`（secrets）/`D12`（可观测性）/`D19` 在此扩展，不要在别处另开一张表。
 SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
@@ -144,6 +128,7 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
         "enabled": FieldSpec(FieldKind.STR_LIST, ()),
         "disable": FieldSpec(FieldKind.STR_LIST, ()),
         "search_paths": FieldSpec(FieldKind.STR_LIST, ()),
+        "stop_timeout_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_PLUGIN_STOP_TIMEOUT_MS),
     },
     "hooks": {
         "observer_timeout_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_OBSERVER_TIMEOUT_MS),
@@ -249,8 +234,9 @@ class WorkspaceSection:
 class PluginsSection:
     """插件发现与加载的开关，以及逐插件的配置块。
 
-    `enabled` / `disable` / `search_paths` 是**保留键**，`plugins` 小节里其余的键都是
-    插件 id（技术方案 §6.7 的 `plugins.<plugin_id>.config`），形状校验在 `plugin_blocks.py`。
+    `enabled` / `disable` / `search_paths` / `stop_timeout_ms` 是**保留键**，`plugins` 小节里
+    其余的键都是插件 id（技术方案 §6.7 的 `plugins.<plugin_id>.config`），形状校验与那条
+    「保留键为什么撞不上插件 id」的理由都在 `plugin_blocks.py`。
     """
 
     #: 显式启用的插件 id（`D25`，技术方案 §7.1「发现与启用分离」）。**不在这张表里的
@@ -262,6 +248,8 @@ class PluginsSection:
     #: 每条路径下的直接子项：含 `plugin.toml` 的目录，或单个 `.py`。**不含
     #: `InstanceLayout.plugins_dir`**——那是插件的状态目录，不是代码来源。
     search_paths: tuple[str, ...] = ()
+    #: 单个插件的停止预算（`D28`、`EDG-104`）：超时即放弃等待、记事件、继续停其余插件。
+    stop_timeout_ms: int = DEFAULT_PLUGIN_STOP_TIMEOUT_MS
     #: 插件 id -> 它的 `{config, secrets}`。装配根按 id 取，取不到就给空块。
     entries: Mapping[str, PluginEntry] = blocks.NO_PLUGIN_ENTRIES
 
@@ -328,6 +316,7 @@ class NucleaConfig:
                 "enabled": list(self.plugins.enabled),
                 "disable": list(self.plugins.disable),
                 "search_paths": list(self.plugins.search_paths),
+                "stop_timeout_ms": self.plugins.stop_timeout_ms,
                 **blocks.entries_to_json(self.plugins.entries),
             },
             "model": {"provider": self.model.provider, "name": self.model.name},
@@ -487,6 +476,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             enabled=str_tuple_at(plugins, "enabled"),
             disable=str_tuple_at(plugins, "disable"),
             search_paths=str_tuple_at(plugins, "search_paths"),
+            stop_timeout_ms=int_at(plugins, "stop_timeout_ms", DEFAULT_PLUGIN_STOP_TIMEOUT_MS),
             entries=plugin_entries,
         ),
         model=ModelSection(

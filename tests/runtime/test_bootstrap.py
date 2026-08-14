@@ -299,8 +299,12 @@ async def test_the_startup_sequence_is_traceable_through_events(tmp_path: Path) 
         assert names[-1] is EventName.INSTANCE_READY
     finally:
         await instance.stop()
-    tail = [event.name for event in instance.diagnostics.events.events()][-2:]
-    assert tail == [EventName.INSTANCE_STOPPING, EventName.INSTANCE_STOPPED]
+    names = [event.name for event in instance.diagnostics.events.events()]
+    # `D28`：停止序列夹在两条实例事件之间——每个提供方停下来时各发一条
+    # `plugin.deactivated`，因此这里断言的是首尾与包含关系，不是末两条。
+    stopping = names.index(EventName.INSTANCE_STOPPING)
+    assert names[-1] is EventName.INSTANCE_STOPPED
+    assert EventName.PLUGIN_DEACTIVATED in names[stopping:]
 
 
 async def test_external_plugin_discovery_reaches_the_diagnostics(tmp_path: Path) -> None:

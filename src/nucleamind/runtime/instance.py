@@ -39,7 +39,15 @@ from nucleamind.contracts import (
 )
 from nucleamind.kernel.config import InstanceLayout, InstanceLock, LoadedConfig
 from nucleamind.kernel.observability import Diagnostics, EventBus
-from nucleamind.kernel.plugins import LoadOutcome
+from nucleamind.kernel.plugins import (
+    DEFAULT_STOP_TIMEOUT_MS,
+    LoadOutcome,
+    PluginLifecycle,
+    PluginPhase,
+    StopAction,
+    stop_plugins,
+    units_for,
+)
 from nucleamind.kernel.registry import CapabilityRegistry, ResolutionReport
 from nucleamind.kernel.turn import (
     OrchestratorDeps,
@@ -77,6 +85,11 @@ class AgentInstance:
     channels: tuple[tuple[str, Channel], ...] = ()
     outcomes: tuple[LoadOutcome, ...] = ()
     contexts: tuple[RuntimePluginContext, ...] = ()
+    #: 每个提供方的生命周期，与 `contexts` 同序（`D28`）。装配根按加载结果把它们置于
+    #: `LOADED` 或 `FAILED`；`start()` / `stop()` 在这里继续推进。
+    lifecycles: tuple[PluginLifecycle, ...] = ()
+    #: 单个插件的停止预算（配置 `plugins.stop_timeout_ms`，`EDG-104`）。
+    stop_timeout_ms: int = DEFAULT_STOP_TIMEOUT_MS
     runtime: PluginRuntime = field(default_factory=PluginRuntime)
     lock: InstanceLock | None = None
     closers: tuple[Closer, ...] = ()
@@ -91,6 +104,11 @@ class AgentInstance:
         if self._started:
             return
         self._started = True
+        for lifecycle in self.lifecycles:
+            # 加载失败的提供方留在 `FAILED`——它没有被启动，说它 `STARTED` 会让停止流程
+            # 与诊断都相信有东西在跑。
+            if lifecycle.phase is PluginPhase.LOADED:
+                lifecycle.advance(PluginPhase.STARTED)
         for channel_id, channel in self.channels:
             await channel.start()
             self._pumps.append(
@@ -136,15 +154,8 @@ class AgentInstance:
             await asyncio.gather(*self._pumps, return_exceptions=True)
         self._pumps.clear()
 
-        # 插件派生的后台任务与事件桥（`EDG-104`、`EDG-105`）：先取消，再等一轮回收。
-        pending: list[asyncio.Task[None]] = []
-        for ctx in self.contexts:
-            pending.extend(ctx.tasks)
-            pending.extend(ctx.bridge.tasks)
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        # 插件的停止（`D28`）：逆加载序、逐个、各有独立超时（`PLG-005`、`EDG-104`）。
+        await self._stop_plugins()
 
         self.bus.publish(EventName.INSTANCE_STOPPED)
         for closer in self.closers:
@@ -153,6 +164,35 @@ class AgentInstance:
             self.lock.release()
 
     # ------------------------------------------------------------------ 内部
+
+    async def _stop_plugins(self) -> None:
+        """按逆加载序停掉每个提供方，并把结果发成事件（`D28`）。
+
+        **停止顺序不在这里算**（`PLG-005`）：`contexts` 是装配根按 `_wire()` 的
+        manifest 顺序追加的，而那个顺序对外部插件就是 `LoadPlan.order`（内建在前）。
+        `units_for()` 把它翻过来，因此「被依赖者后停」与「被依赖者先起」共用同一个序，
+        没有第二次拓扑排序。
+
+        每个插件各有独立超时：一个停不下来的插件只让自己记一条
+        `TIMEOUT_PLUGIN_STOP`，不会连累后面的插件或扣住进程退出（`EDG-104`）。
+        """
+        actions: dict[str, StopAction] = {ctx.plugin_id: ctx.shutdown for ctx in self.contexts}
+        units = units_for(
+            tuple(ctx.plugin_id for ctx in self.contexts),
+            actions,
+            {lifecycle.plugin_id: lifecycle for lifecycle in self.lifecycles},
+        )
+        for outcome in await stop_plugins(units, timeout_ms=self.stop_timeout_ms):
+            if outcome.error is None:
+                self.bus.publish(
+                    EventName.PLUGIN_DEACTIVATED, payload={"plugin": outcome.plugin_id}
+                )
+                continue
+            self.bus.publish(
+                EventName.PLUGIN_FAILED,
+                payload={"plugin": outcome.plugin_id, "timed_out": outcome.timed_out},
+                error=outcome.error,
+            )
 
     def _report_orphans(self) -> None:
         """停止时报告孤儿工具任务（`EDG-104`，`D14` 留下的那条）。

@@ -43,7 +43,15 @@ def test_reserved_keys_are_not_plugin_ids() -> None:
     assert config.plugins.enabled == ("acme",)
     assert config.plugins.disable == ("a",)
     assert config.plugins.entries == {}
-    assert set(RESERVED_PLUGIN_KEYS) == {"enabled", "disable", "search_paths"}
+    assert set(RESERVED_PLUGIN_KEYS) == {
+        "enabled",
+        "disable",
+        "search_paths",
+        "stop_timeout_ms",
+    }
+    # 保留键与插件 id 共用一个命名空间，但撞不上：插件 id 不允许下划线，而带下划线的
+    # 保留键因此永远不是一个合法的 id（`sdk/manifest.py` 的 `_ID_CHARS`）。
+    assert all(key.islower() and " " not in key for key in RESERVED_PLUGIN_KEYS)
 
 
 def test_an_unknown_top_level_field_is_still_rejected() -> None:

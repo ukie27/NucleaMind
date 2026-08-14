@@ -46,7 +46,7 @@ from nucleamind.contracts import (
     TurnControl,
 )
 from nucleamind.kernel.config import resolve_text
-from nucleamind.kernel.observability import EventBus
+from nucleamind.kernel.observability import EventBus, Subscription
 from nucleamind.kernel.plugins import PluginGrants
 from nucleamind.sdk import FileAccess, HttpAccess, PluginContext, ShellAccess
 
@@ -90,7 +90,7 @@ class PluginEventBridge:
         self._bus = bus
         self._plugin_id = plugin_id
         self._handlers: dict[EventName, list[Callable[[RuntimeEvent], Awaitable[None]]]] = {}
-        self._subscribed = False
+        self._subscription: Subscription | None = None
         #: 没有事件循环时被丢弃的投递数。查得到才排查得动。
         self.dropped = 0
         #: 已派生的任务，实例停止时由装配根一并取消。
@@ -101,9 +101,23 @@ class PluginEventBridge:
         if handler in handlers:
             return
         handlers.append(handler)
-        if not self._subscribed:
-            self._bus.subscribe(self._deliver, name=f"plugin:{self._plugin_id}")
-            self._subscribed = True
+        if self._subscription is None:
+            self._subscription = self._bus.subscribe(
+                self._deliver, name=f"plugin:{self._plugin_id}"
+            )
+
+    def close(self) -> None:
+        """退订并停止接受新的投递（`EDG-105` 的「取消其事件订阅」）。
+
+        **握着 `Subscription` 就是为了这一刻**：`bus.subscribe()` 返回的句柄是退订的唯一
+        途径，丢掉它，一个已停止的插件的 handler 会跟着实例活到进程结束。
+        handler 表一并清空——`cancel()` 之后 bus 不再扇出，但清掉它让「停过了」在这个
+        对象自己身上也是可判定的。
+        """
+        if self._subscription is not None:
+            self._subscription.cancel()
+            self._subscription = None
+        self._handlers.clear()
 
     def _deliver(self, event: RuntimeEvent) -> None:
         handlers = self._handlers.get(event.name)
@@ -143,6 +157,9 @@ class RuntimePluginContext:
     config_path: Path | None = None
     #: 经 `spawn_task()` 派生的任务。实例停止时由装配根取消（`EDG-104`、`EDG-105`）。
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
+    #: 是否已进入停止流程。进去之后 `spawn_task()` 一律拒绝——`sdk/api.py` 写死的约定，
+    #: 否则一个在 `instance.shutdown` Hook 里派生任务的插件会正好逃过刚刚那轮取消。
+    stopping: bool = False
 
     @property
     def plugin_id(self) -> str:
@@ -172,8 +189,17 @@ class RuntimePluginContext:
         """在实例的事件循环上派生一个后台任务。
 
         **异常约定**：没有运行中的事件循环时抛 `KERNEL_INVARIANT_VIOLATED`——`setup()`
-        在装配期同步执行，那时派生后台任务就是在赌一个还不存在的循环。
+        在装配期同步执行，那时派生后台任务就是在赌一个还不存在的循环。插件已进入停止
+        流程时同样抛它（`sdk/api.py` 的约定）：那时派生的任务不在任何一轮取消的覆盖
+        范围里，而「停干净了」不能有例外（`EDG-105`）。
         """
+        if self.stopping:
+            _close_unawaited(coro)
+            raise NucleaError(
+                ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                "插件已进入停止流程，不能再派生后台任务。",
+                detail={"plugin": self.plugin_id_, "task": name},
+            )
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as exc:
@@ -278,6 +304,29 @@ class RuntimePluginContext:
         # 免得一个直接写死的密钥因为「没有引用」而以明文出现在日志里。
         return resolved if isinstance(resolved, SecretStr) else SecretStr(resolved)
 
+    async def shutdown(self) -> None:
+        """本插件的停止动作（`D28`）：退订事件、取消后台任务、等它们回收。
+
+        `EDG-105` 的三项里这里做两项。**第三项「注销能力」不在这里，也不在运行期**：
+        registry 解析后只读（`NFR-403`），而首版不热更新（技术方案 §10.4）——一个被
+        `plugins.disable` 关掉的插件在**下一次启动**时连 `setup()` 都不会跑，它的能力
+        因此从来没进过 registry。运行期把已冻结的能力表改掉是另一件事（P2 的热更新），
+        在它存在之前，这句诚实声明比一个只在测试里成立的 `unregister()` 有用。
+
+        **不设自己的超时**：预算由 `stop_plugins()` 统一施加（`EDG-104`），两处各判一次
+        会让「到底等了多久」取决于两个数的最小值，而配置里只有一个。
+
+        **异常约定**：不抛。`gather(return_exceptions=True)` 吃掉任务自己的异常——一个
+        插件的后台任务崩了不该让它的清理半途而废。
+        """
+        self.stopping = True
+        self.bridge.close()
+        pending = [*self.tasks, *self.bridge.tasks]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     @property
     def instance(self) -> InstanceView:
         view = self.runtime.instance_view
@@ -303,6 +352,16 @@ class RuntimePluginContext:
 async def _as_coroutine(awaitable: Awaitable[None]) -> None:
     """`spawn_task` 收的是 `Awaitable`（契约签名），而 `create_task` 只吃协程。"""
     await awaitable
+
+
+def _close_unawaited(awaitable: Awaitable[None]) -> None:
+    """关掉一个不会被跑的协程，免得解释器在 GC 时刷 "was never awaited"。
+
+    只对协程成立（别的 awaitable 没有 `close()`），因此是 `getattr` 而不是直接调用。
+    """
+    close = getattr(awaitable, "close", None)
+    if callable(close):
+        close()
 
 
 def build_plugin_context(
