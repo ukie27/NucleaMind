@@ -189,7 +189,9 @@ pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests", "src/nucleamind/legacy/channels"]
+# examples/plugins/ 各自带 tests/：示例插件是完整独立发行包，它们的契约测试
+# 与本仓库一起跑（D30）。它们要求那两个包已 editable 装进环境。
+testpaths = ["tests", "src/nucleamind/legacy/channels", "examples/plugins"]
 
 [tool.coverage.run]
 source = ["src/nucleamind"]

@@ -43,11 +43,14 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   六阶段状态机、停止顺序、每插件停止预算；镜像常量拆出 `kernel/config/defaults.py`），
   `D29` 已落地插件 CLI 与诊断输出（`runtime/{config_edit,inspect}.py` +
   `runtime/cli/commands/{plugins,capabilities}.py`，`nm plugins` / `nm capabilities`），
-  **阶段 7 推进中**，下一步 `D30`。
+  `D30` 已落地示例插件与 Plugin Runtime 验收（`examples/plugins/` 两个独立发行包 +
+  `tests/e2e/{test_plugin_runtime,test_plugin_docs}.py` + `docs/plugin-development.md`，
+  并把 `on_disable` 从「留给以后」变成真的判定：`runtime/plugin_disable.py` +
+  registry 的按能力抑制），**阶段 7 收口、需求 §16.2 达成**，下一步 `D31`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
-  `first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、`inspect.py`、
-  `config_edit.py`、`access/` 与 `cli/`，
+  `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
+  `inspect.py`、`config_edit.py`、`access/` 与 `cli/`，
   `embed/` 已落地薄门面，`kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、
   `routing/` 与 `plugins/`。
   `nm init` / `nm run` / `nm config show` / `nm session` / `nm permissions` /
@@ -301,6 +304,31 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   被禁用的提供方在下一次启动时连 `setup()` 都不跑。别为了让一条测试好写而给冻结的
   registry 开一个 `unregister()`：已经被 `ToolExecutor` 取走的实现体它也收不回来。
 
+`runtime/plugin_disable.py` + `examples/plugins/`（`D30`）是插件体系的收口，五条：
+
+- **`on_disable` 是拒绝隐式恢复的那道判定**（`BAS-004`、§10.4）。禁用一个声明过
+  `overrides` 的插件时，`plugins.<id>.on_disable` **必须**显式写 `restore_builtin` 或
+  `leave_missing`，不写即 `CONFIG_INVALID` 并指向那一个键。默认值是刻意没有的——不做
+  判定的话被禁用的插件根本不注册、覆盖关系不存在，内建就自动复活了，而那正是 `BAS-004`
+  禁止的隐式恢复。**没声明过覆盖的插件不要求表态**，否则这个键会变成噪声。
+- **`leave_missing` 走 registry 的按能力抑制**（`resolve(suppressed=...)`），不是
+  `keep`。分界线是「作用在解析还是注册上」：被抑制的能力**照常注册**、照常出现在
+  `ResolutionReport.disabled` 段里，只是不生效——`nm capabilities` 因此答得出「它为什么
+  不在」，而一项从未注册过的能力在报告里连一行都没有。按提供方禁用（`disabled=`）与按
+  能力抑制（`suppressed=`）在 `_partition_disabled` 一处合并判定，后果完全相同。
+- **被 `disable` 关掉的插件仍然读一次 manifest，前提是它在 `enabled` 里**
+  （`inventory._disabled`）。读它只为知道它覆盖过什么。§7.1 的「未启用即零导入开销」
+  一个字没松动：`plugins.enabled` 仍是「会不会被读」的唯一闸门，`disable` 只决定
+  「读了之后跑不跑」。读不出来时记进 `failures` 并按禁用处理，不为一个已经被关掉的插件
+  让实例起不来。
+- **示例插件必须真的装进环境**（entry point 没有第二条发现路径）。因此
+  `tests/runtime/conftest.py` 有一条 autouse 夹具把 entry point 清空——那一层的用例
+  一直依赖着「开发环境里没装任何插件」这个它们没有声明的前提，`D30` 把它显式化了。
+  要在那一层验真实 entry point 的用例自己传 `entry_points=`。
+- **`docs/plugin-development.md` 的代码块由 `tests/e2e/test_plugin_docs.py` 直接执行**
+  （Python `exec`、JSON/TOML 解析），外加「文档列出的 9 个注册方法 == `NucleaAPI` 上真有
+  的那 9 个」。比对片段挡不住这类漂移：复制粘贴来的文档在实现改名之后仍然长得一模一样。
+
 `runtime/inspect.py`（`D29`）是全部只读诊断的入口，四条：
 
 - **只读查询不走 `bootstrap()`**：`inspect_plugins()` / `inspect_capabilities()` /
@@ -419,7 +447,12 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 ```bash
 # Python：单测 / lint
 .venv\Scripts\python.exe -m pytest tests/legacy/test_openai_api.py::test_function -v
-.venv\Scripts\python.exe -m ruff check src/ plugins/
+.venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
+
+# 示例插件（D30）：经 entry point 被发现，因此必须真的装进环境才跑得起来。
+# tests/e2e/test_plugin_runtime.py 与 examples/plugins/*/tests/ 都要求它们在位。
+.venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
+.venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 
 # legacy/ 债务指标（只允许下降）
 .venv\Scripts\python.exe scripts/legacy_debt.py

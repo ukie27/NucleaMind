@@ -6,4 +6,18 @@
 与 `plugins/` 的区别：`plugins/` 是要发行的官方能力，这里的示例只用于阅读和
 验收插件加载路径，不承诺功能。
 
-本目录当前为空，示例插件由开发方案 `D30` 落地。
+| 目录 | 演示 |
+| --- | --- |
+| [`nucleamind-plugin-echo-tool`](./nucleamind-plugin-echo-tool) | 新增一项能力（TOOL），不声明任何权限 |
+| [`nucleamind-plugin-session-memory`](./nucleamind-plugin-session-memory) | 覆盖一项内建能力（SINGLETON 的 SESSION_STORE），以及 `on_disable` 语义 |
+
+两者都是完整独立发行包（`pyproject.toml` + `src/` + `tests/`），经 entry point 组
+`nucleamind.plugins` 被发现。**它们必须真的装进环境才会被发现**，仓库的测试套件
+（`tests/e2e/test_plugin_runtime.py` 与各插件自己的 `tests/`）因此要求：
+
+```bash
+pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
+pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
+```
+
+写自己的插件请从 [`docs/plugin-development.md`](../../docs/plugin-development.md) 开始。

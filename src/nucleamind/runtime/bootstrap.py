@@ -74,7 +74,7 @@ from nucleamind.kernel.plugins import (
     model_providers_from,
     session_store_from,
 )
-from nucleamind.kernel.registry import CapabilityRegistry
+from nucleamind.kernel.registry import CapabilityRegistry, SuppressedCapabilities
 from nucleamind.kernel.routing import (
     ConcurrencyPolicy,
     DedupCache,
@@ -98,6 +98,7 @@ from .instance import AgentInstance, Closer
 from .introspection import build_instance_view, build_turn_control
 from .inventory import PluginInventory
 from .plugin_context import PluginRuntime, RuntimePluginContext, build_plugin_context
+from .plugin_disable import suppressed_capabilities
 from .plugin_plan import (
     ExternalPlan,
     correct_inventory,
@@ -121,6 +122,7 @@ __all__ = [
     "plan_external",
     "require_sessions",
     "select_manifests",
+    "suppressed_capabilities",
     "wire_all",
 ]
 
@@ -393,6 +395,7 @@ async def wire_all(
     *,
     builtin_cli_only: bool = False,
     external_ids: Collection[str] = (),
+    suppressed: SuppressedCapabilities | None = None,
     halt_on_critical: bool = True,
 ) -> Wiring:
     """跑一次注册。`builtin_cli_only=True` 时只让内建提供 CLI 入口（`EDG-108` 的回落）。
@@ -445,6 +448,7 @@ async def wire_all(
         context_for=context_for,
         provider_for=provider_for,
         keep=keep_with_cli,
+        suppressed=suppressed,
         halt_on_critical=halt_on_critical,
     )
 
@@ -541,6 +545,10 @@ async def _bootstrap_locked(
         inventory, config, layout, loaded.workspace_root, bus, selected
     )
     external_ids = [manifest.id for manifest in plan.manifests]
+    # 3d 被禁用的覆盖者留下的空缺：`BAS-004` 不允许内建在这里**隐式**复活，因此用户必须
+    # 对每一条 `on_disable` 表态（`D30`）。判定在配置层与注册之间——它是配置错误，不该等到
+    # 一次白跑的 `setup()` 之后才报出来。
+    suppressed = suppressed_capabilities(inventory, config)
     # 内建在前、外部插件按拓扑序在后。顺序只保证「被依赖者先 setup」，覆盖由 manifest 的
     # `overrides` 决定（`EDG-102`）。
     all_manifests = (*selected, *plan.manifests)
@@ -562,6 +570,7 @@ async def _bootstrap_locked(
         contexts,
         ledger,
         external_ids=external_ids,
+        suppressed=suppressed,
     )
     if cli_entry_from(wiring.registry) is None and any(
         decl.kind is CapabilityKind.CLI_ENTRY
@@ -583,6 +592,7 @@ async def _bootstrap_locked(
             ledger,
             builtin_cli_only=True,
             external_ids=external_ids,
+            suppressed=suppressed,
         )
     # 账本只在真的变了时落盘（`save()` 自己判 `dirty`）。写在注册之后：`setup()` 抛异常
     # 时那个提供方的授权记录同样值得留下——下一次启动它不该被当成首次而重新全授。

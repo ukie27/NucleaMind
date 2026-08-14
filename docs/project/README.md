@@ -1,7 +1,8 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-14
-- 当前阶段：阶段 7 Plugin Runtime 推进中（`D00`–`D29` 均已完成，下一步 `D30`）
+- 当前阶段：阶段 7 Plugin Runtime **已收口**（`D00`–`D30` 均已完成，需求 §16.2 达成；
+  下一步 `D31` 旧路径切换与清理）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1491,6 +1492,37 @@
     恒为空——被禁用的提供方在 `select_manifests` 就被摘掉了，根本到不了解析器）。
     真实 `nm plugins list/enable/disable/uninstall/purge` 与 `nm capabilities`
     在开发机上跑通。
+- **`D30` 示例插件与 Plugin Runtime 验收 ★**（`examples/plugins/` 两个独立发行包约
+  400 行 + `tests/e2e/{test_plugin_runtime,test_plugin_docs}.py` 30 个用例 +
+  `docs/plugin-development.md` + `runtime/plugin_disable.py`）：
+  - **本轮唯一需要拍板的事是 `on_disable`**，它在此之前一直写着「留给 `D25`/`D27`」而
+    两轮都没做。现象是：`plugins.disable` 掉一个覆盖了内建会话存储的插件之后，内建会
+    **自动**复活——因为被禁用的插件根本不读 manifest、不注册，覆盖关系于是不存在。
+    那正是 `BAS-004` 禁止的「隐式恢复」，而且它不是无害的：用户可能正是因为不想让对话
+    落盘才装的那个插件。三种落法里选了**最严的一种**：只有当被禁用的插件**声明过
+    `overrides`** 时才要求表态，没写即 `CONFIG_INVALID` 并指向 `/plugins/<id>/on_disable`。
+    没有默认值是刻意的——两个方向都会替用户做一个关于他数据的决定。
+  - **`leave_missing` 走 registry 的按能力抑制**（`resolve(suppressed=...)`），而不是
+    `D20` 那条 `keep` 声明过滤。分界线是「作用在解析还是注册上」：被抑制的能力照常注册、
+    照常出现在 `ResolutionReport.disabled` 段里，只是不生效——`nm capabilities` 因此答得出
+    「它为什么不在」。走 `keep` 则那项能力从报告里彻底消失，用户无从判断是没装还是被关了；
+    而且内建的 `setup()` 仍会注册它，`CapabilityHost.finish()` 会以「未声明的注册」拒绝。
+  - **被 `disable` 关掉的插件现在会读一次 manifest**（`inventory._disabled`），前提是它
+    也在 `plugins.enabled` 里。读它只为知道它覆盖过什么。§7.1 的「未启用即零导入开销」
+    没有松动：`enabled` 仍是「会不会被读」的唯一闸门，`disable` 只决定「读了之后跑不跑」。
+    读不出来时记进 `failures` 并按禁用处理——不为一个已经被关掉的插件让实例起不来。
+  - **示例插件必须真的装进环境**才会被发现（entry point 没有第二条路）。代价是
+    `tests/runtime/` 那一层的用例开始看见它们：三个文件的 5 条用例一直依赖着「开发环境
+    里没装任何插件」这个它们没有声明的前提。修法是 `tests/runtime/conftest.py` 加一条
+    autouse 夹具把 entry point 清空（patch `importlib.metadata.entry_points`，因为
+    `build_inventory` 的形参默认值在定义时就绑好了）。这不是回归，是一个隐含前提被显式化。
+  - **文档防漂移是执行而不是比对**：`tests/e2e/test_plugin_docs.py` 把
+    `docs/plugin-development.md` 里每个 Python 块 `exec` 一遍、每个 JSON/TOML 块解析一遍，
+    外加「文档列出的 9 个注册方法 == `NucleaAPI` 上真有的那 9 个」。比对片段挡不住这类
+    漂移——复制粘贴来的文档在实现改名之后仍然长得一模一样。
+  - 验收：需求 §16.2 的八条逐条一个分节，全部通过（30 个用例）；两个示例插件各自的
+    `tests/` 继承 `sdk.testing` 的契约测试基类（`ToolContract` / `SessionStoreContract`），
+    其中 `SessionStoreContract` 与内建 `session_jsonl` 用的是**同一个基类**。
 
 
 ## 正在进行
@@ -1557,7 +1589,12 @@
   `D29` 已完成，`nm plugins list|enable|disable|uninstall|purge` 与 `nm capabilities`
   落地（`runtime/config_edit.py` 是 `config.json` 唯一的**修改**点，
   `runtime/inspect.py` 是不取锁、不写账本的只读诊断路径），`/plugins` 的状态从此叠上
-  `D28` 的生命周期投影，**阶段 7 只剩 `D30`**。
+  `D28` 的生命周期投影。
+  `D30` 已完成，`examples/plugins/` 的两个示例插件（`echo-tool` 新增一项工具、
+  `session-memory` 覆盖内建会话存储）经 entry point 真的被发现、被加载、参与真实 turn，
+  `on_disable` 从「留给以后」变成真的判定（`runtime/plugin_disable.py` +
+  registry 的按能力抑制），插件开发入门文档就位且其代码块由测试直接执行，
+  **阶段 7 收口、需求 §16.2 达成**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1611,15 +1648,35 @@
 
 ## 下一步工作
 
-1. **`D30` 示例插件与 Plugin Runtime 验收 ★**（阶段 7 收官，需求 §16.2 的八个里程碑）：
-   `examples/plugins/nucleamind-plugin-echo-tool/`（新增一个 TOOL 能力）与
-   `nucleamind-plugin-session-memory/`（覆盖内建 `SESSION_STORE`，专门验 SINGLETON 的
-   覆盖路径与 `on_disable` 语义），两者都是完整独立发行包、经 entry point 被发现；
-   外加 `tests/e2e/test_plugin_runtime.py` 与插件开发入门文档。
-   写模板与文档时记住 `D25` 那条：**entry point 的 name 必须等于 manifest 的 `id`**。
-2. `D31` 删除 `legacy/agent/` 与 `legacy/cli/`（连同 `tests/baseline/` 与 `R6` 白名单）。
+1. **`D31` 遗留 Agent 路径切换与删除**（阶段 8）：删除 `legacy/agent/` 与 `legacy/cli/`、
+   `nm legacy` 子命令、`runtime/legacy_entry.py` 与 `D01` 里对应的 `R6` 白名单条目、
+   `tests/baseline/` 与对应的 `tests/legacy/` 用例；`legacy/api/server.py` 与 WebUI
+   gateway 改为调用新 Kernel。`legacy/agent/AgentLoop` 的 4 个调用方逐个处置，见
+   [`开发方案`](./development-plan.md) §12。
 
-`D29` 留下的、`D30`/`D31` 必须用到的事实：
+`D30` 留下的、`D31` 必须用到的事实：
+
+- **`on_disable` 是 `plugins.<id>` 条目的第三个键**（`config` / `secrets` / `on_disable`，
+  `kernel/config/plugin_blocks.py::ENTRY_KEYS`）。`on_override_failure` 仍未落地，仍不放行
+  ——放行一个没人读的键等于让它看起来生效了。取值写错时**不回落到任何一个**。
+- **判定只在 `runtime/plugin_disable.py::suppressed_capabilities()` 一处**，由
+  `bootstrap` 在步骤 3d（发现之后、注册之前）调用，`inspect_capabilities()` 也调同一个
+  ——两条路印出来的生效集合必须是同一份。它是 `R5` 的又一个落点（manifest 的 `overrides`
+  在 `sdk/`，registry 的抑制表在 `kernel/`）。
+- **`resolve()` 现在有两个禁用输入**：`disabled`（按提供方）与 `suppressed`（按能力，
+  `(kind, provider, name) -> 原因`），在 `_partition_disabled` 一处合并判定，后果相同——
+  既不生效也不参与冲突判定，但都留在报告的 `disabled` 段里。**按能力抑制不是给覆盖开的
+  后门**：它只能让一项能力消失，不能让某一方赢。
+- **`tests/runtime/conftest.py` 有一条 autouse 夹具把 entry point 清空**。示例插件在开发
+  环境里是真的装着的，那一层的用例不该看见它们。要在那一层验真实 entry point 的用例自己
+  传 `entry_points=`——夹具挡不住那条显式路径，那正是它可注入的理由。
+- **`pytest` 的 `testpaths` 多了 `examples/plugins`**，且那两个包必须先
+  `pip install --no-deps -e` 装上（CI 有独立一步，`AGENTS.md` 的开发命令里也记了）。
+  没装时 `tests/e2e/test_plugin_runtime.py` 的第一条用例会以一句能照做的话失败。
+- **`docs/plugin-development.md` 是对外的插件开发入口**，代码块由
+  `tests/e2e/test_plugin_docs.py` 直接执行。`D31` 改动 SDK 表面时那套测试会先失败。
+
+`D29` 留下的、`D31` 必须用到的事实：
 
 - **`config.json` 现在有两个写入点，分工是硬的**：`runtime/first_run.py` 只用
   `O_CREAT|O_EXCL` 建**新**文件（既有文件一个字节都不动、没有 `--force`）；
@@ -2257,8 +2314,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅  D29 ✅
-D30– ⬜（尚未开始）
+D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅  D29 ✅  D30 ✅
+D31 ⬜（尚未开始）
 
 ## 本目录文档分类
 

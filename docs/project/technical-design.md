@@ -1620,6 +1620,22 @@ nm capabilities                                 # 报告中可见 provider 与 s
 禁用后是否恢复内建实现由 `plugins.<id>.on_disable`（`restore_builtin` / `leave_missing`）
 显式决定，Kernel 不隐式回退（`BAS-004`、`8.3` 第 5 条）。
 
+`D30` 落地时把「显式」定成了硬的：**这个键没有默认值**。被禁用的插件在 manifest 里声明过
+`overrides` 而配置里没写 `on_disable` 时，启动以 `CONFIG_INVALID` 失败并指向
+`/plugins/<id>/on_disable`。理由是两个方向都会替用户做一个关于他数据的决定——不做判定时
+内建**自动**复活（被禁用的插件不注册，覆盖关系于是不存在），那正是 `BAS-004` 禁止的隐式
+恢复。没声明过覆盖的插件不要求表态，否则这个键会变成噪声。
+
+`leave_missing` 的实现是 registry 的**按能力抑制**（`resolve(suppressed=...)`）而不是声明
+过滤：被抑制的能力照常注册、照常留在 `ResolutionReport.disabled` 段里，只是不生效——
+`nm capabilities` 因此答得出「它为什么不在」，而一项从未注册过的能力在报告里连一行都没有。
+判定只在 `runtime/plugin_disable.py::suppressed_capabilities()` 一处，启动路径与
+`nm capabilities` 的只读路径调的是同一个。
+
+代价是**被 `plugins.disable` 关掉、但仍列在 `plugins.enabled` 里的插件要读一次 manifest**
+（只读声明，绝不 import `setup`）——不读就不知道它覆盖过什么。§7.1 的「未启用即零导入
+开销」没有松动：`plugins.enabled` 仍是「会不会被读」的唯一闸门。
+
 ### 10.5 卸载与数据
 
 `nm plugins uninstall <id>` 只移除启用状态与代码引用，**默认保留**

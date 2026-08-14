@@ -40,6 +40,7 @@ from nucleamind.kernel.registry import (
     CapabilityRegistry,
     RegistrationBatch,
     ResolutionReport,
+    SuppressedCapabilities,
     resolve_into,
 )
 from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginContext, PluginManifest
@@ -134,6 +135,7 @@ async def wire_capabilities(
     provider_for: Callable[[PluginManifest], ProviderId] = builtin_provider,
     resolve_setup: Callable[[str], SetupFn] = import_setup,
     disabled: Mapping[ProviderId, str] | None = None,
+    suppressed: SuppressedCapabilities | None = None,
     keep: CapabilityFilter | None = None,
     halt_on_critical: bool = True,
 ) -> Wiring:
@@ -150,6 +152,11 @@ async def wire_capabilities(
     `keep` 按配置裁掉本次不生效的能力声明（`TOL-006`，见 `to_load_request()`）。它对
     每一份 manifest 一视同仁——`D21` 的 `tools_shell` 与第三方工具插件走同一条路，不存在
     「tools_fs 专用」的裁剪。
+
+    `suppressed` 按**能力**抑制（`D30` 的 `on_disable=leave_missing`，见
+    `runtime/plugin_disable.py`）。与 `keep` 的区别是它作用在解析而不是注册上：那项能力
+    照常注册、照常出现在报告里，只是标着「被禁用」而不生效。这是刻意的——`nm capabilities`
+    要答得出「它为什么不在」，而一项从未注册过的能力在报告里连一行都没有。
 
     `halt_on_critical=False` 把每一份请求都当作非关键（`D29` 的只读诊断路径用）：
     `nm capabilities` 要在**凭据还没导出**时也答得出「哪项能力由谁提供」，而
@@ -190,5 +197,5 @@ async def wire_capabilities(
     outcomes = await load_into(
         registry, requests, host_for=host_for, resolve_setup=resolve_setup
     )
-    report = resolve_into(registry, disabled=disabled)
+    report = resolve_into(registry, disabled=disabled, suppressed=suppressed)
     return Wiring(registry=registry, report=report, outcomes=outcomes)

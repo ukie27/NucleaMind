@@ -23,6 +23,7 @@ marketing guides have intentionally been removed during the refactoring phase.
 | Understand session and runtime concepts | [`concepts.md`](./concepts.md) |
 | Read or migrate the built-in session storage format | [`session-storage.md`](./session-storage.md) |
 | Understand the plugin permission model | [`permissions.md`](./permissions.md) |
+| Write a plugin | [`plugin-development.md`](./plugin-development.md) |
 | Inspect WebSocket behavior | [`websocket.md`](./websocket.md) |
 | Inspect the current Python SDK | [`python-sdk.md`](./python-sdk.md) |
 
@@ -35,6 +36,11 @@ Same exception for [`permissions.md`](./permissions.md): it documents the **new*
 plugin permission model (`kernel/plugins/permissions.py`, `runtime/access/`), including the
 `permissions.json` file format and the explicit statement that application-level permissions
 are **not** process isolation.
+
+Same exception for [`plugin-development.md`](./plugin-development.md): it is the getting-started
+guide for the **new** kernel's plugin system, written against `sdk/` and the two examples under
+`examples/plugins/`. Its code blocks are executed by `tests/e2e/test_plugin_docs.py`, so they
+cannot drift from the implementation.
 
 ## Current Feature References
 

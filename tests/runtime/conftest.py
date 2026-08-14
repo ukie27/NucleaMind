@@ -1,7 +1,8 @@
-"""装配根测试的公共闸门：断言它们不碰真实网络（`D23` 验收）。
+"""装配根测试的公共闸门：断言它们不碰真实网络，也不看见开发环境里装了什么插件。
 
-职责：一条 autouse 夹具，把出站连接与名字解析拦掉。`D23` 的用例装的是**真实**内建清单
-的一个变体（模型换成 Fake），本夹具是「装配一次实例不会连出去」这件事的可执行断言。
+职责：两条 autouse 夹具——把出站连接与名字解析拦掉，以及把 entry point 发现清空。
+`D23` 的用例装的是**真实**内建清单的一个变体（模型换成 Fake），前者是「装配一次实例
+不会连出去」这件事的可执行断言。
 不负责：限制文件访问（用例只写 `tmp_path`）。
 
 **为什么不整体拦掉 `socket.socket` 的构造**：Windows 上 asyncio 的 `ProactorEventLoop`
@@ -17,6 +18,8 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+
+from nucleamind.kernel.plugins import ENTRY_POINT_GROUP
 
 #: 允许的目标。事件循环的 self-pipe 只连这几个。
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", "", None})
@@ -55,4 +58,31 @@ def no_real_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_plugins(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """本层用例看到的 entry point 恒为空（`D30` 加）。
+
+    `examples/plugins/` 的两个示例插件在开发环境里是**真的装着的**（`tests/e2e/` 那套
+    里程碑用例要求如此），于是「没装任何插件」这个前提在这一层就不再成立——`nm plugins
+    list` 会印出两条，`diagnostics.plugins()` 也不再是空元组。那不是回归，是这些用例
+    一直依赖着一个它们没有声明的环境事实。
+
+    **patch 的是 `importlib.metadata.entry_points`**：`installed_entry_points()` 在函数
+    体内 import 它，因此换掉它就够了；而 `build_inventory` 的 `entry_points` 形参默认值
+    在函数定义时就绑好了，改模块属性影响不到那条路。要在这一层验真实 entry point 的用例
+    自己传 `entry_points=`，本夹具挡不住那条显式路径——那正是它可注入的理由。
+    """
+    import importlib.metadata
+
+    real = importlib.metadata.entry_points
+
+    def entry_points(**kwargs: Any) -> Any:  # boundary: stdlib 的重载签名
+        if kwargs.get("group") == ENTRY_POINT_GROUP:
+            return ()
+        return real(**kwargs)
+
+    monkeypatch.setattr(importlib.metadata, "entry_points", entry_points)
     yield

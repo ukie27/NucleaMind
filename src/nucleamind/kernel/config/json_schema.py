@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, Mapping
 
 from .fields import FieldKind, FieldSpec
-from .plugin_blocks import CONFIG_KEY, PLUGINS_SECTION, SECRETS_KEY
+from .plugin_blocks import CONFIG_KEY, ON_DISABLE_KEY, PLUGINS_SECTION, SECRETS_KEY, OnDisable
 from .schema import SCHEMA_KEY, SECTION_SPECS
 
 if TYPE_CHECKING:
@@ -50,14 +50,22 @@ _KIND_SCHEMAS: Final[Mapping[FieldKind, Mapping[str, JsonValue]]] = {
 }
 
 #: `plugins` 小节里每个插件条目的形状（`kernel/config/plugin_blocks.py` 的可执行形态）。
-#: `config` 放任何键：逐字段校验要等 `D25` 的 manifest `config_schema`。
+#: `config` 放任何键：逐字段校验用的是 manifest 自带的 `config_schema`（`D25` 阶段 A），
+#: 而编辑器在打开 `config.json` 时并不知道装了哪些插件。
 #: `secrets` 的值只能是字符串——那是 `${VAR}` 引用，不是嵌套结构。
+#: `on_disable` 的两个取值直接从枚举取，这样加一个取值不会漏掉这份派生物。
 _PLUGIN_ENTRY_SCHEMA: Final[Mapping[str, JsonValue]] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         CONFIG_KEY: {"type": "object"},
         SECRETS_KEY: {"type": "object", "additionalProperties": {"type": "string"}},
+        ON_DISABLE_KEY: {
+            "type": "string",
+            "enum": [member.value for member in OnDisable],
+            "description": "这个插件被 plugins.disable 关掉后，它覆盖过的能力怎么办。"
+            "只在该插件声明了 overrides 时需要写。",
+        },
     },
 }
 

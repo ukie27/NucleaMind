@@ -51,6 +51,7 @@ from .bootstrap import (
 )
 from .inventory import PluginInventory
 from .plugin_context import PluginRuntime, RuntimePluginContext
+from .plugin_disable import suppressed_capabilities
 from .plugin_plan import discover_plugins
 
 __all__ = ["Inspection", "inspect_capabilities", "inspect_plugins", "open_session_store"]
@@ -197,6 +198,9 @@ async def inspect_capabilities(
             contexts,
             PermissionLedger.load(layout.permissions_path),
             external_ids=[manifest.id for manifest in plan.manifests],
+            # `on_disable=leave_missing` 抑制掉的能力在这里同样要缺席，否则
+            # `nm capabilities` 印出来的生效集合与真正启动时的不是同一份（`D30`）。
+            suppressed=suppressed_capabilities(inventory, loaded.config),
             # 关键提供方失败也只记不抛：凭据还没导出时，`model-openai` 的 `setup()` 会
             # 取不到密钥，而那正是最需要看一眼能力表的时刻（见 `wire_capabilities`）。
             halt_on_critical=False,
