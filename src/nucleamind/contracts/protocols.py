@@ -445,7 +445,16 @@ class Channel(Protocol):
         `message.is_complete_answer` 为假时必须附加明确标记，不得渲染成完整回答
         （`EDG-304`）。
 
+        **它可能被并发调用**（`D33`）：Channel 泵按 conversation 扇出之后，不同
+        conversation 的 turn 会同时跑到这一步。**同一 conversation 内不会并发**——
+        lane 与 `SessionScheduler` 双重串行保证了这一点，因此按 conversation 分片的
+        缓冲（流式 edit-in-place 那类）不需要加锁。
+
         **异常约定**：投递失败抛 `EXTERNAL_CHANNEL` 并如实标注 `retryable`。
+        **但两个现存实现都选择不抛**（`builtins/cli_entry/console.py`、官方插件
+        `openai-api`）：`emit_outbound` 没有 try/except，真抛出去会把一次成功的 turn
+        变成失败，而 `EDG-204` 要的恰恰是「投递失败时 turn 继续到终态并完整持久化」。
+        这条矛盾如实记在这里，等 `channel.delivery_failed` 事件落地时一并解决。
         **取消语义**：不接受取消——投递是 turn 的最后一步，此时取消只会让用户什么也收不到。
         """
         ...

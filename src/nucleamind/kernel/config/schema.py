@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Final, Mapping
 from ...contracts import ErrorCode, NucleaError
 from . import plugin_blocks as blocks
 from .defaults import (
+    DEFAULT_CHANNEL_CONCURRENCY,
+    DEFAULT_CHANNEL_QUEUE_MAX_SIZE,
     DEFAULT_COMMAND_PREFIX,
     DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     DEFAULT_DEDUP_CAPACITY,
@@ -124,6 +126,10 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
         "queue_max_size": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_QUEUE_MAX_SIZE),
         "dedup_capacity": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_DEDUP_CAPACITY),
         "dedup_ttl_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_DEDUP_TTL_MS),
+        "channel_concurrency": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_CHANNEL_CONCURRENCY),
+        "channel_queue_max_size": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_CHANNEL_QUEUE_MAX_SIZE
+        ),
     },
     "plugins": {
         "enabled": FieldSpec(FieldKind.STR_LIST, ()),
@@ -198,6 +204,11 @@ class RoutingSection:
     queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE
     dedup_capacity: int = DEFAULT_DEDUP_CAPACITY
     dedup_ttl_ms: int = DEFAULT_DEDUP_TTL_MS
+    #: 一条 Channel 上同时活跃的 conversation 上限（`D33`）。它是**饱和护栏**而不是
+    #: 调优旋钮，因此没有「不限」哨兵。
+    channel_concurrency: int = DEFAULT_CHANNEL_CONCURRENCY
+    #: 单个 conversation 在 Channel 泵里的排队上限；超出即拒绝并回音（`EDG-202`）。
+    channel_queue_max_size: int = DEFAULT_CHANNEL_QUEUE_MAX_SIZE
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,39 +301,14 @@ class NucleaConfig:
     logging: LoggingSection = field(default_factory=LoggingSection)
 
     def to_json(self) -> dict[str, JsonValue]:
-        """诊断视图。元组转列表，保证真能被 `json.dumps` 编码。"""
-        return {
-            "turn": {
-                "max_iterations": self.turn.max_iterations,
-                "max_tool_calls_per_turn": self.turn.max_tool_calls_per_turn,
-                "tool_timeout_ms": self.turn.tool_timeout_ms,
-                "tool_result_max_bytes": self.turn.tool_result_max_bytes,
-                "turn_timeout_ms": self.turn.turn_timeout_ms,
-                "context_max_tokens": self.turn.context_max_tokens,
-            },
-            "workspace": {"root": self.workspace.root},
-            "routing": {
-                "command_prefix": self.routing.command_prefix,
-                "session_concurrency": self.routing.session_concurrency,
-                "queue_max_size": self.routing.queue_max_size,
-                "dedup_capacity": self.routing.dedup_capacity,
-                "dedup_ttl_ms": self.routing.dedup_ttl_ms,
-            },
-            "hooks": {
-                "observer_timeout_ms": self.hooks.observer_timeout_ms,
-                "interceptor_timeout_ms": self.hooks.interceptor_timeout_ms,
-            },
-            "context": {"provider_timeout_ms": self.context.provider_timeout_ms},
-            "plugins": {
-                "enabled": list(self.plugins.enabled),
-                "disable": list(self.plugins.disable),
-                "search_paths": list(self.plugins.search_paths),
-                "stop_timeout_ms": self.plugins.stop_timeout_ms,
-                **blocks.entries_to_json(self.plugins.entries),
-            },
-            "model": {"provider": self.model.provider, "name": self.model.name},
-            "logging": {"level": self.logging.level, "file_enabled": self.logging.file_enabled},
-        }
+        """诊断视图。实现在 `document.py`——它是这张字段表的**派生物**而不是第二份真相。
+
+        **函数内 import** 是为了绕开 `document` → `schema` 的模块级环（`to_limits()` 的
+        同一个做法）：渲染器需要小节的类型，而小节住在这里。
+        """
+        from .document import config_to_json
+
+        return config_to_json(self)
 
 
 def defaults() -> dict[str, JsonValue]:
@@ -459,6 +445,12 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             queue_max_size=int_at(routing, "queue_max_size", DEFAULT_QUEUE_MAX_SIZE),
             dedup_capacity=int_at(routing, "dedup_capacity", DEFAULT_DEDUP_CAPACITY),
             dedup_ttl_ms=int_at(routing, "dedup_ttl_ms", DEFAULT_DEDUP_TTL_MS),
+            channel_concurrency=int_at(
+                routing, "channel_concurrency", DEFAULT_CHANNEL_CONCURRENCY
+            ),
+            channel_queue_max_size=int_at(
+                routing, "channel_queue_max_size", DEFAULT_CHANNEL_QUEUE_MAX_SIZE
+            ),
         ),
         hooks=HooksSection(
             observer_timeout_ms=int_at(

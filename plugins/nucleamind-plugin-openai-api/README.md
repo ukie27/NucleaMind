@@ -61,9 +61,10 @@ nm serve --port 9000           # 覆盖
 
 ## 已知边界
 
-- **同一 Channel 的 turn 是串行的**：装配根的 Channel 泵要等上一条跑完才取下一条，
-  因此两个并发客户端会排队，即使会话不同。这是相对旧实现的一处能力回退，
-  修它要动 `runtime/instance.py` 并重新回答 `EDG-202` 的严格 FIFO 断言。
+- **同一 `conversation` 的请求串行，不同 `conversation` 并发**（`D33` 之后）：装配根的
+  Channel 泵按 conversation 扇出。打同一个会话的并发客户端仍会排队——那是
+  `EDG-202` 要求的严格 FIFO，不是限制。上界由 `routing.channel_concurrency`（默认 64）
+  与 `routing.channel_queue_max_size`（默认 32）控制，撞上时返回明确的忙碌错误。
 - **`usage` 是整条 turn 之和**（含工具往返），不是最后一次模型调用——与 OpenAI 的
   单次调用语义不同，但那才是用户真正付的数。拿不到用量时**省略该字段**而不是报零。
 - **能连上这个端点的调用方能驱动实例的全部工具**，包括 `shell.exec`。默认只绑回环；

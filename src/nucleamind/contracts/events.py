@@ -48,12 +48,19 @@ class EventName(StrEnum):
     `TURN_STOPPED_BY_LIMIT` 是 `D12` 按 `NFR-104` 评审后补入的（`D09` 的
     `TurnStoppedByLimit` 在此原本没有落点）：用 `TURN_COMPLETED` 承载会让「模型自己
     说完了」与「撞上预算上限被拦下」在事件流里不可区分，而 `EDG-304` 要求终态可区分。
+
+    `INSTANCE_INPUT_DROPPED` 是 `D33` 补入的：Channel 泵按 conversation 扇出之后，
+    一条消息可能在**进 orchestrator 之前**就因为 lane 队列或并发上界满而被拒。
+    它刻意**不是** `TURN_REJECTED`——那条消息从未进过 orchestrator，而 turn 事件只有
+    orchestrator 一个发布点；给它发一条 turn 事件等于在事件流里凭空造一条 orchestrator
+    没见过的 turn，`OBS-002` 的按序重放随之作废。背压是**实例级**现象，因此落 INSTANCE 族。
     """
 
     INSTANCE_STARTING = "instance.starting"
     INSTANCE_READY = "instance.ready"
     INSTANCE_STOPPING = "instance.stopping"
     INSTANCE_STOPPED = "instance.stopped"
+    INSTANCE_INPUT_DROPPED = "instance.input_dropped"
 
     PLUGIN_DISCOVERED = "plugin.discovered"
     PLUGIN_LOADED = "plugin.loaded"

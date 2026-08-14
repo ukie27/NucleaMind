@@ -329,11 +329,32 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   content 部件一律 400——静默丢掉它们会让客户端相信自己设了一个没生效的东西；而
   `temperature` / `max_tokens` 这类归模型配置与 `TurnLimits` 管，为它们报错会让现成客户端
   全都不可用。**只提交最后一条 user 消息**，历史归会话存储。
-- **两条如实记着的边界**：① 同一 Channel 的 turn **是串行的**（装配根的泵要等上一条跑完
-  才取下一条），并发客户端会排队，这是相对旧实现的能力回退，修它要动
-  `runtime/instance.py` 并重新回答 `EDG-202` 的严格 FIFO 断言；② 五种权限里**没有
+- **一条如实记着的边界**（原来的两条，第一条已被 `D33` 消除）：五种权限里**没有
   「监听端口」**这一种（`net` 判的是出站），因此这个插件声明不出与它实际行为对应的权限。
   默认只绑回环，绑非回环地址时没配 `api_key` 直接以 `CONFIG_INVALID` 拒绝启动。
+  ~~同一 Channel 的 turn 是串行的~~——`D33` 起泵按 conversation 扇出，只有打同一个
+  `conversation` 的客户端才排队，而那是 `EDG-202` 要求的严格 FIFO 不是限制。
+
+`kernel/routing/fanout.py` + `runtime/instance.py::_fanout_for`（`D33`）是 Channel 泵的
+按 conversation 扇出，四条：
+
+- **同一 conversation 一条 lane，lane 内严格按到达顺序串行、lane 之间并发。**
+  `EDG-202` 因此逐字成立而不是「大概成立」：在一条 Channel 上 `channel_id` 与 `scope`
+  都是常量，`conversation_id ↔ SessionKey` 是**双射**，「每 conversation 一个 worker」
+  与「每 session 一个 worker」是同一句话。
+- **刻意不是「每条消息 `create_task`」。** 那样同会话两条消息进 `SessionScheduler` 的顺序
+  取决于事件循环 ready 队列的排空顺序——那与 `Lock` 的唤醒顺序是同一档的 CPython 实现
+  细节，而 `session_lock.py` 的 docstring 已经为拒绝依赖它付过一次钱。
+- **lane 队列空即退出，没有 idle TTL**（`SessionScheduler._discard_if_idle` 的同一条
+  判据）：`lanes()` 恒等于此刻有活儿的 conversation 数，没有后台计时器也没有泄漏。
+  两个上界（`routing.channel_concurrency` 64 / `channel_queue_max_size` 32）**不与
+  scheduler 的 `queue_max_size` 串联**——lane 串行意味着同 session 在 scheduler 里至多
+  一个来自泵的等待者，因此 lane 队列是 Channel 流量唯一生效的界，没有 `D28` 那个
+  「等了多久取决于两个数的最小值」的陷阱。
+- **被扇出拒掉的消息发 `instance.input_dropped` 而不是 `turn.rejected`**：它从未进过
+  orchestrator，而 turn 事件只有那一个发布点。回音仍走**未改动的** `_rejection()`，
+  因此两条背压路径在 Channel 侧长得一模一样。**`Channel.deliver` 因此可能被并发调用**
+  （同 conversation 内仍不会），这条已写进 `contracts/protocols.py`。
 
 `plugins/nucleamind-plugin-anthropic/`（`D32`，M5 五步法的第一次完整应用）六条：
 

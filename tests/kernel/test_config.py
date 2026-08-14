@@ -377,6 +377,13 @@ class TestSchema:
         assert routing.queue_max_size == routing_package.DEFAULT_QUEUE_MAX_SIZE
         assert routing.dedup_capacity == routing_package.DEFAULT_DEDUP_CAPACITY
         assert routing.dedup_ttl_ms == routing_package.DEFAULT_DEDUP_TTL_MS
+        assert routing.channel_concurrency == routing_package.DEFAULT_CHANNEL_CONCURRENCY
+        assert (
+            routing.channel_queue_max_size == routing_package.DEFAULT_CHANNEL_QUEUE_MAX_SIZE
+        )
+        # lane 队列接替（而不是叠加）scheduler 的界成为 Channel 流量的唯一上限，
+        # 两者取同一个数是刻意的（`D33`）——积压容量与串行泵时代一个字没变。
+        assert routing.channel_queue_max_size == routing.queue_max_size
         # 策略字面量与枚举取值同名，否则配置里写的 `queue` 会转不成 `ConcurrencyPolicy`。
         assert set(SESSION_CONCURRENCY_CHOICES) == {
             policy.value for policy in session_lock.ConcurrencyPolicy

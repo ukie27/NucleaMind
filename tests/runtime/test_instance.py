@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,16 @@ from nucleamind.kernel.turn import CancelToken
 from nucleamind.runtime.cli.commands.run import _Interrupts
 from nucleamind.runtime.instance import AgentInstance
 
-from ._support import SCRIPT, TEST_MANIFESTS, text_response, write_config
+from ._support import (
+    MULTI_CHANNEL_ID,
+    SCRIPT,
+    TEST_MANIFESTS,
+    ScriptedChannel,
+    inbound,
+    manifests_with_multi_channel,
+    text_response,
+    write_config,
+)
 from .test_bootstrap import _boot
 
 
@@ -257,3 +267,171 @@ def test_ctrl_c_with_nothing_running_is_a_quit() -> None:
         interrupts()
     assert cancel.requested
     assert orchestrator.cancelled == []
+
+
+# ---------------------------------------------------------- 泵的按 conversation 扇出（`D33`）
+
+
+def multi_channel(instance: AgentInstance) -> ScriptedChannel:
+    channel = dict(instance.channels)[MULTI_CHANNEL_ID]
+    assert isinstance(channel, ScriptedChannel)
+    return channel
+
+
+def _answered(channel: ScriptedChannel, conversation: str) -> bool:
+    """该会话是否已经拿到一条**完整答案**。
+
+    不能只看「有没有出站消息」：流式的 `STARTED` / `DELTA` 也在 `delivered` 里，用它判
+    会把「turn 刚开始」当成「turn 结束了」。
+    """
+    return any(
+        m.conversation_id == conversation and m.is_complete_answer for m in channel.delivered
+    )
+
+
+async def _wait_for(predicate: Callable[[], bool], *, timeout: float = 3.0) -> None:
+    """等一个条件成立。**不 `sleep` 固定时长**：断言的是「发生了」而不是「多久之内」。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError("等待的条件在超时前没有成立")
+        await asyncio.sleep(0)
+
+
+async def test_two_conversations_on_one_channel_do_not_block_each_other(
+    tmp_path: Path,
+) -> None:
+    """`D33` 的收益断言：一个用户的慢 turn 不再卡住同一个 bot 上所有人。
+
+    在扇出之前，泵的 `await` 在 `async for` 里面——第二条消息要等第一条整条 turn 跑完才
+    被取走，这条用例会超时。
+    """
+    write_config(tmp_path)
+    SCRIPT[:] = [text_response("答案"), text_response("答案")]
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    try:
+        await instance.start()
+        channel = multi_channel(instance)
+        blocked = asyncio.Event()
+        slow_entered = asyncio.Event()
+        provider = instance.deps.model
+        original_complete = provider.complete
+        original_stream = provider.stream
+
+        def is_slow(request: object) -> bool:
+            return any("慢" in message.content for message in request.messages)  # type: ignore[attr-defined]
+
+        async def gated_complete(request: object, cancel: object) -> object:
+            if is_slow(request):
+                slow_entered.set()
+                await blocked.wait()
+            return await original_complete(request, cancel)  # type: ignore[arg-type]
+
+        def gated_stream(request: object, cancel: object) -> object:
+            async def run() -> object:
+                if is_slow(request):
+                    slow_entered.set()
+                    await blocked.wait()
+                async for chunk in original_stream(request, cancel):  # type: ignore[arg-type]
+                    yield chunk
+
+            return run()
+
+        # **两条路都要拦**：走 `complete` 还是 `stream` 由装配决定，只拦一条会让这条用例
+        # 的结论取决于「谁先跑完」而不是「有没有被挡住」。
+        provider.complete = gated_complete  # type: ignore[assignment, method-assign]
+        provider.stream = gated_stream  # type: ignore[assignment, method-assign]
+
+        channel.push(inbound("slow", "慢一点"))
+        channel.push(inbound("fast", "快一点"))
+
+        # 先确认慢会话真的卡在模型上，再断言快会话已经答完——否则断言的是时序巧合。
+        await asyncio.wait_for(slow_entered.wait(), timeout=3)
+        await _wait_for(lambda: _answered(channel, "fast"))
+        assert not _answered(channel, "slow")
+        blocked.set()
+        await _wait_for(lambda: _answered(channel, "slow"))
+    finally:
+        await instance.stop()
+
+
+async def test_the_same_conversation_still_enters_the_scheduler_in_arrival_order(
+    tmp_path: Path,
+) -> None:
+    """`EDG-202` 的逐字断言：同 conversation 严格 FIFO、单写者。
+
+    事件流里第二条 turn 的 `turn.started` 一定在第一条的终态之后——这就是「同一时刻至多
+    一个写者」在事件层面的形状。扇出没有放松它，只是让**别的** conversation 不必等。
+    """
+    write_config(tmp_path)
+    SCRIPT[:] = [text_response("一"), text_response("二")]
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    seen: list[str] = []
+    instance.bus.subscribe(lambda event: seen.append(event.name.value))
+    try:
+        await instance.start()
+        channel = multi_channel(instance)
+        channel.push(inbound("same", "一"))
+        channel.push(inbound("same", "二"))
+        await _wait_for(
+            lambda: len([m for m in channel.delivered if m.is_complete_answer]) == 2
+        )
+    finally:
+        await instance.stop()
+
+    starts = [i for i, name in enumerate(seen) if name == EventName.TURN_STARTED.value]
+    completions = [i for i, name in enumerate(seen) if name == EventName.TURN_COMPLETED.value]
+    assert len(starts) == 2 and len(completions) == 2
+    assert starts[0] < completions[0] < starts[1] < completions[1]
+
+
+async def test_a_full_lane_echoes_session_busy_and_publishes_input_dropped(
+    tmp_path: Path,
+) -> None:
+    """背压要**明确拒绝**而不是静默丢弃，而且回音与 scheduler 拒绝时长得一样。"""
+    write_config(tmp_path, routing={"channel_queue_max_size": 1})
+    SCRIPT[:] = [text_response("好") for _ in range(6)]
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    dropped: list[str] = []
+
+    def watch(event: object) -> None:
+        if event.name is EventName.INSTANCE_INPUT_DROPPED:  # type: ignore[attr-defined]
+            dropped.append(event.name.value)  # type: ignore[attr-defined]
+
+    instance.bus.subscribe(watch)
+    try:
+        await instance.start()
+        channel = multi_channel(instance)
+        blocked = asyncio.Event()
+        provider = instance.deps.model
+        original = provider.complete  # type: ignore[union-attr]
+
+        async def gated(request: object, cancel: object) -> object:
+            await blocked.wait()
+            return await original(request, cancel)  # type: ignore[arg-type]
+
+        provider.complete = gated  # type: ignore[union-attr, assignment, method-assign]
+
+        for index in range(5):
+            channel.push(inbound("busy", str(index), message_id=f"m{index}"))
+        await _wait_for(lambda: bool(dropped))
+        rejected = [m for m in channel.delivered if m.stream_state is StreamState.FAILED]
+        assert rejected, "被拒的消息必须有回音"
+        assert "未受理" in rejected[0].content
+        blocked.set()
+    finally:
+        await instance.stop()
+
+
+async def test_stop_drains_every_lane(tmp_path: Path) -> None:
+    """停止之后不能留下任何在跑的 lane——否则一次正常退出会挂着后台任务。"""
+    write_config(tmp_path)
+    SCRIPT[:] = [text_response("好") for _ in range(4)]
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    await instance.start()
+    channel = multi_channel(instance)
+    for index in range(3):
+        channel.push(inbound(f"c{index}", "在吗", message_id=f"s{index}"))
+    await instance.stop()
+    assert all(fanout.lanes() == 0 for fanout in instance._fanouts) or not instance._fanouts  # noqa: SLF001

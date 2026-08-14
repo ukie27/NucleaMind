@@ -12,6 +12,11 @@ Channel 泵可能在提交返回之前就已经把 delta 投递回来了。
 `SessionScheduler` 保证同一 session 的严格 FIFO（`EDG-202`），因此「最老的那个」
 一定就是当前正在跑的那个。turn_id 从第一条投递里学到之后记在等待者上，供
 断连时取消用。
+
+**`D33` 的泵扇出没有动摇这条**，这一点值得写下来而不是让下一个人重新推一遍：扇出是按
+`conversation_id` 分 lane 的，而 `_waiting` 也是按 `conversation_id` 索引的 deque——
+两条并发 turn 只可能来自不同 conversation，因此永远不碰同一个 deque；同 conversation 内
+仍由 lane 与 scheduler 双重串行。本模块因此一行都没改。
 """
 
 from __future__ import annotations

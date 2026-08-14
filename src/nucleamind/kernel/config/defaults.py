@@ -1,6 +1,6 @@
 """配置默认值里那些**镜像自别处**的字面量（技术方案 §6.7）。
 
-职责：把 turn 六项预算、routing 五项、hooks/context 三项超时与插件停止预算的默认值集中
+职责：把 turn 六项预算、routing 七项、hooks/context 三项超时与插件停止预算的默认值集中
 成一处常量，供 `schema.SECTION_SPECS` 引用。
 不负责：定义有哪些字段（`schema.py` 的那张表）、校验（`fields.py`）、读取任何来源
 （`sources.py`）；本模块只有字面量，没有逻辑。
@@ -23,6 +23,8 @@ from __future__ import annotations
 from typing import Final
 
 __all__ = [
+    "DEFAULT_CHANNEL_CONCURRENCY",
+    "DEFAULT_CHANNEL_QUEUE_MAX_SIZE",
     "DEFAULT_COMMAND_PREFIX",
     "DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS",
     "DEFAULT_DEDUP_CAPACITY",
@@ -48,13 +50,19 @@ DEFAULT_TOOL_TIMEOUT_MS: Final = 120_000
 DEFAULT_TOOL_RESULT_MAX_BYTES: Final = 65_536
 DEFAULT_TURN_TIMEOUT_MS: Final = 900_000
 
-#: 路由五项。**与 `kernel/routing/` 的同名 `DEFAULT_*` 必须逐一相等**，由
+#: 路由七项。**与 `kernel/routing/` 的同名 `DEFAULT_*` 必须逐一相等**，由
 #: `test_routing_defaults_match_the_routing_package` 盯着。
 DEFAULT_COMMAND_PREFIX: Final = "/"
 DEFAULT_SESSION_CONCURRENCY: Final = "queue"
 DEFAULT_QUEUE_MAX_SIZE: Final = 32
 DEFAULT_DEDUP_CAPACITY: Final = 4096
 DEFAULT_DEDUP_TTL_MS: Final = 600_000
+#: Channel 泵的扇出两项（`D33`）。`DEFAULT_CHANNEL_QUEUE_MAX_SIZE` 与
+#: `DEFAULT_QUEUE_MAX_SIZE` **恰好相等不是巧合**：lane 队列接替（而不是叠加）
+#: `SessionScheduler` 的界成为 Channel 流量的唯一上限，取同一个数是为了让用户可见的
+#: 积压容量与串行泵时代一个字没变。
+DEFAULT_CHANNEL_CONCURRENCY: Final = 64
+DEFAULT_CHANNEL_QUEUE_MAX_SIZE: Final = 32
 
 #: `session_concurrency` 的合法取值，与 `routing.ConcurrencyPolicy` 的三个取值同名。
 SESSION_CONCURRENCY_CHOICES: Final = ("queue", "merge", "reject")

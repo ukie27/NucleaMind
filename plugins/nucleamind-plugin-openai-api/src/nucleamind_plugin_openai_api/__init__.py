@@ -17,11 +17,11 @@ Channel 拿得到**——`AgentInstance.submit()` 要等整条 turn 跑完才返
 
 **已知的诚实边界**，都在 docstring 与 README 里写着而不是留给用户发现：
 
-- **同一 Channel 的 turn 是串行的**。装配根的 Channel 泵是
-  `async for message in channel.receive(): await orchestrator.handle(message)`——
-  它要等这一条跑完才取下一条。因此两个并发客户端会排队，即使它们的 conversation
-  不同。这是本插件相对 `legacy/api/server.py` 的一处**能力回退**，修它要动
-  `runtime/instance.py` 的泵并重新回答 `EDG-202` 的严格 FIFO 断言，不是本轮的事。
+- **同一 conversation 的 turn 是串行的，不同 conversation 并发**（`D33` 之后）。装配根的
+  Channel 泵按 `conversation_id` 扇出：每个 conversation 一条 lane，lane 内严格按到达顺序
+  串行（`EDG-202`），lane 之间互不阻塞。因此**并发客户端只在打同一个 `conversation` 时才
+  排队**。`D31`–`D32` 期间它是完全串行的，那条能力回退已经消除。
+  同 conversation 内的串行正是下面 `SessionHub` 那套「最老等待者」关联仍然成立的前提。
 - **五种权限里没有「监听端口」这一种**（`fs:read` / `fs:write` / `net` / `shell` /
   `secret`，其中 `net` 判的是**出站**）。因此本插件除 `secret` 外一条权限都声明不出来，
   而它确实会绑一个端口。这是权限模型当前的一个空档，如实记在这里，不擅自扩它。

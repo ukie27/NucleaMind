@@ -9,15 +9,23 @@ Channel、跑 CLI 入口、按相反顺序停止一切并释放实例锁。
 `channel.receive()` 来、经 `orchestrator.handle()`、出站经 `deliver` 路由回
 `channel.deliver()`。CLI 与未来任何平台走的是同一段代码，没有第二条路径（`MSG-007`）。
 
+**泵按 conversation 扇出**（`D33`）：机制在 `kernel/routing/fanout.py`，这里只负责接线。
+同一 conversation 内严格按到达顺序串行（`EDG-202` 因此逐字成立——在一条 Channel 上
+`conversation_id ↔ SessionKey` 是双射），跨 conversation 并发。在此之前一条 Channel
+同时只跑一条 turn，一个用户的慢 turn 会卡住同一个 bot 上所有人。
+
 **被拒的 turn 也要有回音**：去重命中或队列拒绝时 `TurnReceipt.admitted=False`，
 orchestrator 不会发终态出站消息（那条 turn 从未开始）。泵因此自己合成一条
 `stream_state=FAILED` 的出站消息——否则 CLI 会永远等一个不会到来的终态。
-合成的仍是 `OutboundMessage`，不是绕过契约的旁路。
+合成的仍是 `OutboundMessage`，不是绕过契约的旁路。**扇出层的拒绝走同一条合成路径**，
+只是那条消息连 orchestrator 都没进过，因此发的是 `instance.input_dropped` 而不是
+turn 事件。
 """
 
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -49,6 +57,11 @@ from nucleamind.kernel.plugins import (
     units_for,
 )
 from nucleamind.kernel.registry import CapabilityRegistry, ResolutionReport
+from nucleamind.kernel.routing import (
+    DEFAULT_CHANNEL_CONCURRENCY,
+    DEFAULT_CHANNEL_QUEUE_MAX_SIZE,
+    ConversationFanout,
+)
 from nucleamind.kernel.turn import (
     OrchestratorDeps,
     ToolExecutor,
@@ -90,10 +103,14 @@ class AgentInstance:
     lifecycles: tuple[PluginLifecycle, ...] = ()
     #: 单个插件的停止预算（配置 `plugins.stop_timeout_ms`，`EDG-104`）。
     stop_timeout_ms: int = DEFAULT_STOP_TIMEOUT_MS
+    #: Channel 泵的扇出上界（配置 `routing.channel_*`，`D33`）。
+    channel_concurrency: int = DEFAULT_CHANNEL_CONCURRENCY
+    channel_queue_max_size: int = DEFAULT_CHANNEL_QUEUE_MAX_SIZE
     runtime: PluginRuntime = field(default_factory=PluginRuntime)
     lock: InstanceLock | None = None
     closers: tuple[Closer, ...] = ()
     _pumps: list[asyncio.Task[None]] = field(default_factory=list, init=False)
+    _fanouts: list[ConversationFanout] = field(default_factory=list, init=False)
     _started: bool = field(default=False, init=False)
     _stopped: bool = field(default=False, init=False)
 
@@ -111,8 +128,10 @@ class AgentInstance:
                 lifecycle.advance(PluginPhase.STARTED)
         for channel_id, channel in self.channels:
             await channel.start()
+            fanout = self._fanout_for(channel)
+            self._fanouts.append(fanout)
             self._pumps.append(
-                asyncio.create_task(self._pump(channel), name=f"pump:{channel_id}")
+                asyncio.create_task(fanout.run(channel.receive()), name=f"pump:{channel_id}")
             )
         await self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_READY))
         self.bus.publish(
@@ -153,6 +172,10 @@ class AgentInstance:
         if self._pumps:
             await asyncio.gather(*self._pumps, return_exceptions=True)
         self._pumps.clear()
+        # 顺序不能反：先停泵再排干 lane。反过来泵会在 lane 已经被清掉之后再建一条新的。
+        for fanout in self._fanouts:
+            await fanout.drain(cancel=True)
+        self._fanouts.clear()
 
         # 插件的停止（`D28`）：逆加载序、逐个、各有独立超时（`PLG-005`、`EDG-104`）。
         await self._stop_plugins()
@@ -233,16 +256,55 @@ class AgentInstance:
             },
         )
 
-    async def _pump(self, channel: Channel) -> None:
-        """一条 Channel 的入站泵。`receive()` 结束即泵结束。"""
-        async for message in channel.receive():
-            try:
-                receipt = await self.orchestrator.handle(message)
-            except Exception as exc:  # noqa: BLE001 - 泵不能因为一条消息而死掉
-                self.bus.publish(EventName.PLUGIN_FAILED, error=_as_nuclea(exc))
-                continue
+    def _fanout_for(self, channel: Channel) -> ConversationFanout:
+        """给一条 Channel 建扇出。
+
+        `handle` 做的事与串行泵时代的循环体**逐字相同**——那是这次改动没有顺手改别的
+        东西的证据；变的只是「谁在什么时候调它」。
+        """
+
+        async def handle(message: InboundMessage) -> None:
+            receipt = await self.orchestrator.handle(message)
             if not receipt.admitted:
                 await self._safe(channel.deliver(_rejection(message, receipt)))
+
+        async def dropped(message: InboundMessage, error: NucleaError) -> None:
+            await self._dropped(channel, message, error)
+
+        return ConversationFanout(
+            handle,
+            on_failure=self._pump_failure,
+            on_dropped=dropped,
+            concurrency=self.channel_concurrency,
+            queue_max_size=self.channel_queue_max_size,
+        )
+
+    def _pump_failure(self, exc: Exception) -> None:
+        """一条消息在 lane 里炸掉。只记不抛——泵与 lane 都不能因为一条消息而死掉。"""
+        self.bus.publish(EventName.PLUGIN_FAILED, error=_as_nuclea(exc))
+
+    async def _dropped(
+        self, channel: Channel, message: InboundMessage, error: NucleaError
+    ) -> None:
+        """一条消息在**进 orchestrator 之前**就被扇出拒了（lane 队列或并发上界满）。
+
+        给它铸一个 `turn_id` 再走 `_rejection()`：`orchestrator.handle()` 被 scheduler
+        拒绝时做的正是同一件事，用户拿到的因此仍是 `[未受理：…]` + `FAILED`，两条背压
+        路径在 Channel 侧长得一模一样。
+
+        **发的是 `instance.input_dropped` 而不是 `turn.rejected`**：这条消息从未进过
+        orchestrator，而 turn 事件只有那一个发布点。理由写在 `contracts/events.py`。
+        """
+        receipt = TurnReceipt(turn_id=TurnId(uuid.uuid4().hex), admitted=False, error=error)
+        await self._safe(channel.deliver(_rejection(message, receipt)))
+        self.bus.publish(
+            EventName.INSTANCE_INPUT_DROPPED,
+            payload={
+                "channel": message.channel_id,
+                "conversation": message.conversation_id,
+            },
+            error=error,
+        )
 
     async def _safe(self, awaitable: Awaitable[object]) -> None:
         """跑一件收尾/投递，异常只记不抛（`NFR-204`）。`BaseException` 放行。"""

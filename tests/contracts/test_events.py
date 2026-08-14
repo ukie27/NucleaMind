@@ -66,11 +66,15 @@ def test_event_names_are_unique() -> None:
 #: `capability.permission_granted` 由 `D26` 补入（技术方案 §7.5 点名，`NFR-301` 的可审计
 #: 要求授予变更看得见）。授予 / 撤销 / 待批准共用它，靠载荷的 `decision` 区分——一次授权
 #: 状态变化不值得发明三个事件名。
+#: `instance.input_dropped` 由 `D33` 补入：Channel 泵按 conversation 扇出之后，一条消息
+#: 可能在**进 orchestrator 之前**就被 lane 队列或并发上界拒掉。它刻意不是 `turn.rejected`
+#: ——那条消息从未进过 orchestrator，而 turn 事件只有那一个发布点。
 EVENT_NAME_SNAPSHOT = (
     "instance.starting",
     "instance.ready",
     "instance.stopping",
     "instance.stopped",
+    "instance.input_dropped",
     "plugin.discovered",
     "plugin.loaded",
     "plugin.load_failed",

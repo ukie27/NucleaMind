@@ -15,11 +15,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS
-from nucleamind.contracts import CapabilityKind, JsonValue, ModelResponse
+from nucleamind.contracts import (
+    CapabilityKind,
+    InboundMessage,
+    InstanceId,
+    JsonValue,
+    ModelResponse,
+    OutboundMessage,
+    Sender,
+)
 from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginManifest
 from nucleamind.sdk.testing import (
     FAKE_MODEL_ID,
@@ -30,10 +41,15 @@ from nucleamind.sdk.testing import (
 
 __all__ = [
     "FAKE_MODEL_ID",
+    "MULTI_CHANNEL_ID",
     "SCRIPT",
     "TEST_MANIFESTS",
+    "ScriptedChannel",
+    "inbound",
+    "manifests_with_multi_channel",
     "manifests_without",
     "setup_fake_model",
+    "setup_multi_channel",
     "text_response",
     "tool_call_response",
     "write_config",
@@ -80,3 +96,83 @@ def write_config(root: Path, **sections: JsonValue) -> Path:
     path = root / "config.json"
     path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+# --------------------------------------------------------------- 多会话 Channel（`D33`）
+
+#: 这条假 Channel 的 `channel_id`。内建 CLI 只有一个 conversation，验不了按 conversation
+#: 扇出——那正是本 Channel 存在的理由。
+MULTI_CHANNEL_ID: str = "multi"
+
+
+def inbound(conversation: str, text: str, *, message_id: str | None = None) -> InboundMessage:
+    """造一条入站消息。`message_id` 默认唯一，避免撞上去重。"""
+    return InboundMessage(
+        message_id=message_id or f"{conversation}-{text}",
+        instance_id=InstanceId("test"),
+        channel_id=MULTI_CHANNEL_ID,
+        conversation_id=conversation,
+        sender=Sender(user_id="u1"),
+        content=text,
+        timestamp=datetime.now(UTC),
+    )
+
+
+class ScriptedChannel:
+    """一条由用例驱动的 Channel：想推几条推几条，投递结果全留在 `delivered` 里。
+
+    `receive()` 在 `close()` 之前不会结束——真实平台的连接就是这样，而「泵还活着」
+    正是并发用例需要的前提。
+    """
+
+    def __init__(self) -> None:
+        self.delivered: list[OutboundMessage] = []
+        self.started = 0
+        self.stopped = 0
+        self._inbox: asyncio.Queue[InboundMessage | None] = asyncio.Queue()
+
+    @property
+    def channel_id(self) -> str:
+        return MULTI_CHANNEL_ID
+
+    def push(self, message: InboundMessage) -> None:
+        self._inbox.put_nowait(message)
+
+    def close(self) -> None:
+        self._inbox.put_nowait(None)
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+        self.close()
+
+    async def receive(self) -> AsyncIterator[InboundMessage]:
+        while True:
+            message = await self._inbox.get()
+            if message is None:
+                return
+            yield message
+
+    async def deliver(self, message: OutboundMessage) -> None:
+        self.delivered.append(message)
+
+
+#: 装配根按 manifest 索引交配置块，因此这条 Channel 也要有自己的 manifest。
+#: 用例通过 `dict(instance.channels)["multi"]` 拿到实例，直接往里推消息。
+MULTI_CHANNEL: PluginManifest = PluginManifest(
+    id="multi-channel",
+    version="0.1.0",
+    sdk_range=">=0.1.0,<0.2.0",
+    setup="tests.runtime._support:setup_multi_channel",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=MULTI_CHANNEL_ID),),
+)
+
+
+def setup_multi_channel(api: NucleaAPI) -> None:
+    api.register_channel(MULTI_CHANNEL_ID, ScriptedChannel())
+
+
+def manifests_with_multi_channel() -> tuple[PluginManifest, ...]:
+    return (*TEST_MANIFESTS, MULTI_CHANNEL)
