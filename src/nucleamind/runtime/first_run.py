@@ -5,8 +5,10 @@
 不负责：决定什么时候调它（`nm init` 显式调、`nm run` 在配置缺失时调一次）、加载配置
 （`kernel/config/loader.py`）、装配实例（`bootstrap.py`）。
 
-**这里是 `config.json` 全项目唯一的写入点**。`kernel/config/` 一个字节都不写（`EDG-501`），
-它只以 `"rb"` 读；生成属于装配层的职责，因此落在 `runtime/`。
+**这里是 `config.json` 的创建点，`config_edit.py` 是它唯一的修改点**（`D29` 起）。
+`kernel/config/` 一个字节都不写（`EDG-501`），它只以 `"rb"` 读；生成属于装配层的职责，
+因此落在 `runtime/`。分工是硬的：本模块只用 `O_CREAT|O_EXCL` 建**新**文件、既有文件一个
+字节都不动；`nm plugins enable` 那种「已经有了，改其中一个列表」走另一边。
 
 **用 `O_CREAT|O_EXCL` 而不是「先判断存不存在再写」**：`EDG-501` 要的是「不得静默覆盖
 原文件」，而 exists-then-write 之间有一个窗口——两个 `nm init` 同时跑就会有一个把另一个

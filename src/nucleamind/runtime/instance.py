@@ -168,7 +168,7 @@ class AgentInstance:
     async def _stop_plugins(self) -> None:
         """按逆加载序停掉每个提供方，并把结果发成事件（`D28`）。
 
-        **停止顺序不在这里算**（`PLG-005`）：`contexts` 是装配根按 `_wire()` 的
+        **停止顺序不在这里算**（`PLG-005`）：`contexts` 是装配根按 `wire_all()` 的
         manifest 顺序追加的，而那个顺序对外部插件就是 `LoadPlan.order`（内建在前）。
         `units_for()` 把它翻过来，因此「被依赖者后停」与「被依赖者先起」共用同一个序，
         没有第二次拓扑排序。

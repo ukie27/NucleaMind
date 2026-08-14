@@ -23,7 +23,7 @@ basedpyright 配置是 `include = ["src/nucleamind"]` + `exclude = ["**/tests"]`
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS
 from nucleamind.contracts import Builtin, ProviderId
@@ -135,6 +135,7 @@ async def wire_capabilities(
     resolve_setup: Callable[[str], SetupFn] = import_setup,
     disabled: Mapping[ProviderId, str] | None = None,
     keep: CapabilityFilter | None = None,
+    halt_on_critical: bool = True,
 ) -> Wiring:
     """注册全部 manifest 声明的能力 → 解析覆盖 → 冻结，返回装配产物。
 
@@ -150,8 +151,16 @@ async def wire_capabilities(
     每一份 manifest 一视同仁——`D21` 的 `tools_shell` 与第三方工具插件走同一条路，不存在
     「tools_fs 专用」的裁剪。
 
-    **异常约定**：`critical=True` 的提供方加载失败时原样抛出；其余失败记进
-    `Wiring.outcomes`。覆盖冲突不抛，进 `report.failures` 由调用方处置。
+    `halt_on_critical=False` 把每一份请求都当作非关键（`D29` 的只读诊断路径用）：
+    `nm capabilities` 要在**凭据还没导出**时也答得出「哪项能力由谁提供」，而
+    `model-openai` 是 `critical=True` 且它的 `setup()` 会去取密钥——照常抛出会让最需要
+    看一眼能力表的那一刻恰好看不到。失败照样进 `Wiring.outcomes`，由调用方印出来。
+    **这是「失败的后果由装配根决定」（`PLG-004`）的一次应用**，不是把 `critical` 改掉：
+    那个标志在 manifest 里一个字都没动，只是这一次调用不据它中止。
+
+    **异常约定**：`critical=True` 的提供方加载失败时原样抛出（`halt_on_critical=False`
+    时不抛）；其余失败记进 `Wiring.outcomes`。覆盖冲突不抛，进 `report.failures`
+    由调用方处置。
     """
     registry = CapabilityRegistry()
     requests: list[LoadRequest] = []
@@ -161,6 +170,8 @@ async def wire_capabilities(
     origin: dict[int, PluginManifest] = {}
     for manifest in manifests:
         request = to_load_request(manifest, provider_for(manifest), keep=keep)
+        if not halt_on_critical:
+            request = replace(request, critical=False)
         origin[id(request)] = manifest
         requests.append(request)
 

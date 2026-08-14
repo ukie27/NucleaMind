@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
 - 更新时间：2026-08-14
-- 当前阶段：阶段 7 Plugin Runtime 推进中（`D00`–`D28` 均已完成，下一步 `D29`）
+- 当前阶段：阶段 7 Plugin Runtime 推进中（`D00`–`D29` 均已完成，下一步 `D30`）
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1429,6 +1429,70 @@
     首次启动多一次 `permissions.json` 落盘（`fsync`，冷路径上几十 ms 量级，一次性）。
     真实 `nm permissions list/grant/revoke` 在开发机上跑通。
 
+- **`D29` `nm plugins` 命令与诊断输出**（`runtime/{config_edit,inspect}.py` +
+  `runtime/cli/commands/{plugins,capabilities}.py` 约 700 行 + `runtime/wiring.py` 与
+  `bootstrap.py` 各一处 + `tests/runtime/{test_config_edit,test_inspect}.py` 与
+  `tests/runtime/cli/test_plugins_cli.py` 共 43 个新用例）：
+  - **本轮拍板的四件事**，逐条记在下面。
+  - **① `config.json` 有了第二个写入点**（`runtime/config_edit.py`）。`D24` 立的规矩是
+    「`first_run.py` 是唯一写入点，`O_CREAT|O_EXCL`、没有 `--force`」，而
+    `nm plugins enable` 按定义就是改用户的配置，它不可能走 `O_EXCL`。分工因此定成硬的：
+    **`first_run.py` 负责「没有就建」，`config_edit.py` 负责「已经有了，改其中一个列表」**。
+    三条约束让它不违背 `EDG-501` 与 `CFG-003`：**只读写 `config.json` 那一层**（写回合并树
+    会把四十多个默认值、env 与 `--set` 一并物化，`nm config show --origins` 从此答不出
+    「我改过什么」）；**从不解析 secret**，因此写回时没有别的东西可写，`${VAR}` 字面量
+    原样留着（`D11` 的 `prepare_for_write()` 是给「解析过又要落盘」准备的闸门，这条路上
+    解析从未发生）；**原子替换**（临时文件 → `fsync` → `os.replace`）。
+    `config.json` 不存在时**不生成**而是让用户先 `nm init`（退出码 3）——写一份只有
+    `plugins.enabled` 的配置会绕过首次运行的模板与 `config.schema.json`。
+  - **② 只读诊断不走 `bootstrap()`**（`runtime/inspect.py`）。直接调它有三个不能接受的
+    副作用：取实例锁（看一眼装了什么不该与正在跑的实例互斥）、写 `permissions.json`
+    （`D26` 定死只读路径判定照做但没人 `save()`）、跑步骤 8 的必需能力校验（一个还没配
+    模型的实例会让 `nm capabilities` 以「没有指定要用哪个模型」失败，而那恰恰是最需要看
+    能力表的时刻）。于是 `inspect_plugins()` / `inspect_capabilities()` 复用 `bootstrap`
+    的 `select_manifests` / `plan_external` / `wire_all`（本轮从下划线名提升为公开名），
+    **不重写装配逻辑**；`D23` 的 `open_session_store()` 也一并搬进来——它本来就是同一类
+    「只读的部分装配」。`plan_external` 多一个 `strict=False`：关键插件在阶段 A 失败时
+    只记不抛，因为 `nm plugins list` 的全部意义就是把那条失败印出来。
+  - **③ `wire_capabilities(halt_on_critical=False)`**：`model-openai` 是 `critical=True`
+    且它的 `setup()` 会取密钥，凭据没导出时照常抛出会让 `nm capabilities` 直接死掉。
+    这是「失败的后果由装配根决定」（`PLG-004`）的一次应用，**manifest 里的 `critical`
+    一个字都没动**，只是这一次调用不据它中止；失败落进 `Wiring.outcomes`，由命令印成
+    「加载失败的提供方」一节——那些提供方的能力**从来没进过** registry，与「冲突」
+    （进了又被判出局）是两件事，因此分两段印。
+  - **④ `/plugins` 的状态接上了生命周期**（`bootstrap._plugin_statuses`）。`D28` 的
+    `PluginLifecycle` 一直挂在 `AgentInstance` 上，而 `Diagnostics.plugins_source` 仍是
+    `inventory.statuses`——于是一个跑完 `setup()` 的插件在 `/plugins` 里仍显示
+    `discovered`。现在按 id 用 `lifecycle.state`（`PHASE_STATES` 那张唯一的投影表）覆盖，
+    **不另造一份映射**；已记下的失败不被「后来它又被加载了」盖掉，内建不进这张表。
+  - **`enable` 会顺手把 id 从 `disable` 里摘掉**：`disable` 压过 `enabled`（`D25`），
+    不摘就等于让一条明确的「启用」静默失效。摘掉了什么印在输出里——这条命令不做用户看不见
+    的改动。反过来 `disable` **不动 `enabled`**，这样 `enable` 才是它的逆操作。
+  - **`uninstall` 不碰已安装的发行包**（那是 pip 的事），只移除配置里的引用并**保留**
+    `<instance>/plugins/<id>/`（`EDG-505`），顺带印出「要一并删除就跑 purge」。
+    `purge` 在 `--confirm` **之前**就打印路径与体积——一句「确定吗」不足以让用户知道自己
+    将要失去什么，而这是这套命令唯一不可撤销的动作。没有 `--confirm` 时一个字节都不删
+    （退出码 3）。
+  - **跳过原因的文案只有一份**：CLI 直接印 `PluginStatus.reason`（来自
+    `inventory._SKIP_REASONS`），没有在渲染侧再写一遍（`D25` 点名的那条）。
+  - **交付清单的两处偏差**：① 开发方案写的测试落点是 `tests/plugins/test_cli_plugins.py`，
+    本仓库的 CLI 用例在 `tests/runtime/cli/`，按仓库惯例落在那里；② 开发方案的交付里有
+    「`builtins/commands_core/` 扩展」，但 `/plugins` 与 `/capabilities` 在 `D22` 就已交付
+    且渲染齐全，本轮**没动它**——要动的是它的数据源（见 ④）。
+  - **`bootstrap.py` 撞上 800 行上限**（非 `kernel/` 的阈值），因此把 `open_session_store`
+    搬进 `inspect.py`：它与那两个新查询是同一类东西（不取锁、不 `save()` 账本、
+    不装 orchestrator），这不是为了腾行数而随手挪的。
+  - 验收：新层十个测试目录共 **2238 个用例全绿**（`D26` 收口时 2117）。`ruff check`
+    （src + plugins + tests）、`basedpyright`（新层 0 报错，legacy 仍是既有 4 个）、
+    `legacy_debt --check` 未变、`check_startup_cost --check` 通过（`startup_ms` 仍是
+    `D24` 记的那条 `import httpx` 告警）。语句覆盖率 `runtime/inspect.py` **100%**、
+    `config_edit.py` **99%**、`cli/commands/plugins.py` **99%**、`capabilities.py` **93%**
+    （未覆盖的是渲染的防御性分支与 `rmtree` 的 `OSError`；`disabled` 段在当前装配路径上
+    恒为空——被禁用的提供方在 `select_manifests` 就被摘掉了，根本到不了解析器）。
+    真实 `nm plugins list/enable/disable/uninstall/purge` 与 `nm capabilities`
+    在开发机上跑通。
+
+
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
@@ -1490,12 +1554,16 @@
   `RuntimePluginContext.shutdown()` 成为退订与取消任务的唯一落点；顺带把
   `kernel/config/schema.py` 里那批镜像常量拆到 `kernel/config/defaults.py`（它撞上了
   `kernel/` 的 500 行上限）。
+  `D29` 已完成，`nm plugins list|enable|disable|uninstall|purge` 与 `nm capabilities`
+  落地（`runtime/config_edit.py` 是 `config.json` 唯一的**修改**点，
+  `runtime/inspect.py` 是不取锁、不写账本的只读诊断路径），`/plugins` 的状态从此叠上
+  `D28` 的生命周期投影，**阶段 7 只剩 `D30`**。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
   `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
   `bootstrap.py`、`first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、
-  `access/` 与 `cli/`；`embed/` 已落地薄门面。
+  `inspect.py`、`config_edit.py`、`access/` 与 `cli/`；`embed/` 已落地薄门面。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1543,14 +1611,43 @@
 
 ## 下一步工作
 
-1. **`D29` `nm plugins` 命令与诊断输出**（阶段 7 第六步）：
-   `nm plugins list / enable / disable / uninstall / purge`、`nm capabilities` 打印
-   shadowed 关系、`purge` 需 `--confirm` 且先打印将删除的路径与体积（`EDG-505`）。
-   数据源已经齐了（`AgentInstance.diagnostics`，`/plugins` 同时列得出发现阶段与校验阶段
-   的失败），与会话内的 `/plugins` 共用；`D28` 之后 `PluginLifecycle.state` 是把运行期
-   阶段投影成 `PluginState` 的唯一途径，渲染时不要再造一份映射。
-2. `D30` 插件里程碑验收（需求 §16.2）。
+1. **`D30` 示例插件与 Plugin Runtime 验收 ★**（阶段 7 收官，需求 §16.2 的八个里程碑）：
+   `examples/plugins/nucleamind-plugin-echo-tool/`（新增一个 TOOL 能力）与
+   `nucleamind-plugin-session-memory/`（覆盖内建 `SESSION_STORE`，专门验 SINGLETON 的
+   覆盖路径与 `on_disable` 语义），两者都是完整独立发行包、经 entry point 被发现；
+   外加 `tests/e2e/test_plugin_runtime.py` 与插件开发入门文档。
+   写模板与文档时记住 `D25` 那条：**entry point 的 name 必须等于 manifest 的 `id`**。
+2. `D31` 删除 `legacy/agent/` 与 `legacy/cli/`（连同 `tests/baseline/` 与 `R6` 白名单）。
 
+`D29` 留下的、`D30`/`D31` 必须用到的事实：
+
+- **`config.json` 现在有两个写入点，分工是硬的**：`runtime/first_run.py` 只用
+  `O_CREAT|O_EXCL` 建**新**文件（既有文件一个字节都不动、没有 `--force`）；
+  `runtime/config_edit.py` 只**改**既有文件里的一个字符串列表。要再加一条「改配置」的
+  命令就走后者，别在别处第三次拼写「读 → 改 → 写」。它只读写 `config.json` 那一层、
+  从不解析 secret、原子替换，三条缺一条 `CFG-003` 或 `CFG-005` 就有一条不再成立。
+- **只读诊断走 `runtime/inspect.py`，不走 `bootstrap()`**：`inspect_plugins()`（到阶段 A
+  为止）、`inspect_capabilities()`（跑一次注册拿 `ResolutionReport`）与
+  `open_session_store()`（`D23` 搬来的）共用同一套承诺——不取实例锁、不 `save()` 权限
+  账本、不装 orchestrator、不做步骤 8 的必需能力判定、不 `raise_if_failed()`。
+  `nm plugins` / `nm capabilities` / `nm session` 都从这里取数。
+- **`plan_external(strict=False)` 与 `wire_capabilities(halt_on_critical=False)` 是诊断
+  路径专用的两个旋钮**：前者让关键插件在阶段 A 的失败只记不抛，后者让关键提供方的
+  `setup()` 失败只记不抛。**它们都不改 manifest 里的 `critical`**——那是「失败的后果由
+  装配根决定」（`PLG-004`）的应用，启动路径的默认值仍是 `True`。
+- **`/plugins` 的状态 = 清单 + 生命周期投影**（`bootstrap._plugin_statuses`）：
+  `PluginState` 由 `lifecycle.state` 给出（`PHASE_STATES` 是唯一那张表），因此一个跑完
+  `setup()` 的插件显示 `loaded`、`start()` 之后显示 `activated`。**已记下的失败不被覆盖**，
+  内建不进这张表（它们是 `Builtin()` 提供方而不是插件）。
+- **跳过原因的文案只有一份**（`inventory._SKIP_REASONS` → `PluginStatus.reason`）。
+  `D30` 写文档时如果要解释「为什么我的插件没被加载」，引用那张表而不是重写一遍。
+- **`bootstrap.py` 已经贴着 800 行上限**（本轮 784 行）。再往装配根加东西之前先想清楚
+  它属不属于「装配」——只读查询归 `inspect.py`，改配置归 `config_edit.py`。
+- **`nm` 现在有七个子命令**：`init` / `run` / `config show` / `session` / `permissions` /
+  `plugins` / `capabilities`。全部在 `main.py` 里**延迟导入**（`nm --version` 不该付装配根
+  那条 import 链的代价），加子命令时照抄这条。
+
+`D28` 留下的、`D29`–`D31` 必须用到的事实：
 `D28` 留下的、`D29`–`D31` 必须用到的事实：
 
 - **停止顺序只有一个来源，且它是加载顺序的逆序**：`stop_order(LoadPlan.order)`。
@@ -2160,8 +2257,8 @@
 
 当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
 D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅
-D29– ⬜（尚未开始）
+D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅  D29 ✅
+D30– ⬜（尚未开始）
 
 ## 本目录文档分类
 

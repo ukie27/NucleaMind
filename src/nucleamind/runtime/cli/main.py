@@ -3,7 +3,7 @@
 职责：解析顶层 argv 与实例选择参数，把控制权交给 `run` / `config` / `session` 三个子命令，
 并把未捕获的异常折成可读诊断与非零退出码。
 不负责：装配实例（`runtime/bootstrap.py`）、实现交互（`builtins/cli_entry/`）、
-插件子命令（`D29` 的 `nm plugins` / `nm capabilities`）。
+各子命令的正文（`runtime/cli/commands/`）。
 
 **入口与能力是两件事**（开发方案 `D23` 的要点）：`builtins/cli_entry/` 是可被插件覆盖的
 **能力**（把 stdin 变成 `InboundMessage`），本模块是不可被覆盖的**进程入口**——它决定
@@ -34,6 +34,8 @@ _USAGE: Final = """用法：nm <命令> [参数...]
   session list       列出本实例的会话
   session show <id>  打印一个会话的摘要
   permissions ...    查看与修改插件权限（list / grant / revoke / forget）
+  plugins ...        列出插件、启用 / 禁用 / 移除 / 清理状态目录
+  capabilities       打印覆盖解析报告（生效 / 被覆盖 / 已禁用 / 冲突）
   legacy <参数...>   迁移期的遗留 CLI（随 legacy/agent/ 一并删除）
 
 选项：
@@ -140,6 +142,14 @@ def app(argv: list[str] | None = None) -> int:
         from .commands.permissions import permissions_command
 
         return _guard(lambda: permissions_command(options))
+    if command == "plugins":
+        from .commands.plugins import plugins_command
+
+        return _guard(lambda: plugins_command(options))
+    if command == "capabilities":
+        from .commands.capabilities import capabilities_command
+
+        return _guard(lambda: capabilities_command(options))
 
     sys.stderr.write(f"nm: 未知命令 {command!r}\n\n{_USAGE}")
     return 2

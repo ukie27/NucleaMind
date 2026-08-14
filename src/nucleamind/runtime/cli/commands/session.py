@@ -3,7 +3,7 @@
 职责：把生效的 `SessionStore`（可能被插件覆盖）里的会话列出来，或读一个会话的快照。
 不负责：删除或压缩会话（那是有副作用的操作，要单独的确认流程）、装配完整实例。
 
-**只装会话存储那一条能力**（`bootstrap.open_session_store`）：一条只读诊断不该因为模型
+**只装会话存储那一条能力**（`inspect.open_session_store`）：一条只读诊断不该因为模型
 凭据没导出而失败，也不该跟正在跑的实例抢实例锁。
 """
 
@@ -14,7 +14,7 @@ import sys
 
 from nucleamind.contracts import ErrorCode, NucleaError, SessionKey, SessionStore
 
-from ...bootstrap import open_session_store
+from ...inspect import open_session_store
 from ..main import Options
 
 __all__ = ["session_command"]

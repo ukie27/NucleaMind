@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -56,6 +57,8 @@ from nucleamind.kernel.observability import (
     EventBus,
     JsonlFileSink,
     MemoryRingSink,
+    PluginState,
+    PluginStatus,
     write_config_error,
 )
 from nucleamind.kernel.plugins import (
@@ -95,7 +98,13 @@ from .instance import AgentInstance, Closer
 from .introspection import build_instance_view, build_turn_control
 from .inventory import PluginInventory
 from .plugin_context import PluginRuntime, RuntimePluginContext, build_plugin_context
-from .plugin_plan import ExternalPlan, discover_plugins, plan_plugins
+from .plugin_plan import (
+    ExternalPlan,
+    correct_inventory,
+    discover_plugins,
+    plan_external_plugins,
+    plan_plugins,
+)
 from .wiring import Wiring, wire_capabilities
 
 #: `PluginManifest` 从这里再导出一次：`embed/` 只能 import `contracts/` 与 `runtime/`
@@ -108,7 +117,11 @@ __all__ = [
     "builtin_config_blocks",
     "capability_filter",
     "declared_grants",
-    "open_session_store",
+    "load_config_or_report",
+    "plan_external",
+    "require_sessions",
+    "select_manifests",
+    "wire_all",
 ]
 
 #: 「这一项能力这次还注册吗」——按插件 id 索引的裁剪器（`TOL-006`）。三份内建导出的
@@ -224,30 +237,53 @@ def approve(
     return decision
 
 
-def _plan_external(
+def plan_external(
     inventory: PluginInventory,
     config: NucleaConfig,
     layout: InstanceLayout,
     workspace: Path,
     bus: EventBus,
     builtins: Sequence[PluginManifest],
+    *,
+    strict: bool = True,
 ) -> tuple[ExternalPlan, PluginInventory]:
     """把阶段 A 需要的两个「只有装配根知道」的东西交给 `plugin_plan.plan_plugins()`。
 
     校验用的配置块与 `setup()` 拿到的是**同一份**（都走 `config_block_for`）——校验一份、
     执行另一份等于没校验。状态目录同样只有布局说得出（`R4` 挡着插件自己够到它）。
+
+    `strict=False` 是只读诊断路径（`D29` 的 `runtime/inspect.py`）用的：关键插件在阶段 A
+    失败时**不抛**，如实记进清单——`nm plugins list` 的全部意义就是把那条失败印出来，
+    而不是跟着它一起死掉。两条路共用这里的两个 lambda，因此「校验的那份配置块」在诊断
+    路径上与启动路径完全一致。
     """
     derived = builtin_config_blocks(config, layout, workspace)
-    return plan_plugins(
-        inventory,
-        bus,
-        config_for=lambda manifest: config_block_for(manifest, config, derived),
-        state_dir_for=lambda plugin_id: layout.plugins_dir / plugin_id,
-        provided=[manifest.id for manifest in builtins],
+
+    def config_for(manifest: PluginManifest) -> Mapping[str, JsonValue]:
+        return config_block_for(manifest, config, derived)
+
+    def state_dir_for(plugin_id: str) -> Path:
+        return layout.plugins_dir / plugin_id
+
+    provided = [manifest.id for manifest in builtins]
+    if strict:
+        return plan_plugins(
+            inventory,
+            bus,
+            config_for=config_for,
+            state_dir_for=state_dir_for,
+            provided=provided,
+        )
+    plan = plan_external_plugins(
+        inventory.discovered,
+        config_for=config_for,
+        state_dir_for=state_dir_for,
+        provided=provided,
     )
+    return plan, correct_inventory(inventory, plan)
 
 
-def _select_manifests(
+def select_manifests(
     manifests: Sequence[PluginManifest], config: NucleaConfig
 ) -> tuple[PluginManifest, ...]:
     """§10.1 步骤 3：跳过被禁用项，**CLI_ENTRY 除外**。
@@ -275,7 +311,7 @@ def _select_manifests(
     return tuple(kept)
 
 
-def _load_config_or_report(
+def load_config_or_report(
     layout: InstanceLayout,
     *,
     env: Mapping[str, str] | None,
@@ -329,7 +365,7 @@ def _pick_model(
     return chosen.value, model_id, chosen.value.describe(model_id)
 
 
-def _require_sessions(registry: CapabilityRegistry) -> SessionStore:
+def require_sessions(registry: CapabilityRegistry) -> SessionStore:
     binding = session_store_from(registry)
     if binding is None:
         raise _missing("SESSION_STORE", "没有会话存储，历史无处可写（SES-003）。")
@@ -344,7 +380,7 @@ def _missing(kind: str, why: str) -> NucleaError:
     )
 
 
-async def _wire(
+async def wire_all(
     manifests: Sequence[PluginManifest],
     config: NucleaConfig,
     layout: InstanceLayout,
@@ -357,6 +393,7 @@ async def _wire(
     *,
     builtin_cli_only: bool = False,
     external_ids: Collection[str] = (),
+    halt_on_critical: bool = True,
 ) -> Wiring:
     """跑一次注册。`builtin_cli_only=True` 时只让内建提供 CLI 入口（`EDG-108` 的回落）。
 
@@ -408,6 +445,7 @@ async def _wire(
         context_for=context_for,
         provider_for=provider_for,
         keep=keep_with_cli,
+        halt_on_critical=halt_on_critical,
     )
 
 
@@ -476,7 +514,7 @@ async def _bootstrap_locked(
 ) -> AgentInstance:
     """步骤 2–8。拆出来只为让 `bootstrap()` 的锁释放路径是一条 `try`。"""
     # 2 配置
-    loaded = _load_config_or_report(layout, env=env, overrides=overrides, home=home)
+    loaded = load_config_or_report(layout, env=env, overrides=overrides, home=home)
     config = loaded.config
     instance_id = InstanceId(layout.root.name)
 
@@ -493,13 +531,13 @@ async def _bootstrap_locked(
     bus.publish(EventName.INSTANCE_STARTING, payload={"instance": str(instance_id)})
 
     # 3 内建清单（跳过被禁用项，CLI 入口除外）
-    selected = _select_manifests(manifests, config)
+    selected = select_manifests(manifests, config)
 
     # 3b 外部插件发现（`D25`）：未列入 `plugins.enabled` 的候选连 manifest 都不读。
     inventory = discover_plugins(config, layout, bus)
     # 3c 阶段 A 的剩余三步与拓扑排序（`D27`）。产出接到诊断上，`/plugins` 因此列得出
     # 候选、跳过原因与两个阶段的失败。
-    plan, inventory = _plan_external(
+    plan, inventory = plan_external(
         inventory, config, layout, loaded.workspace_root, bus, selected
     )
     external_ids = [manifest.id for manifest in plan.manifests]
@@ -513,7 +551,7 @@ async def _bootstrap_locked(
     # 权限账本：`permissions.json` 的批准叠在 manifest 声明之前（`D26`）。读不懂那份文件
     # 是**启动失败**而不是「当成空账本」——后者等于一次静默的全部重新授予。
     ledger = PermissionLedger.load(layout.permissions_path)
-    wiring = await _wire(
+    wiring = await wire_all(
         all_manifests,
         config,
         layout,
@@ -533,7 +571,7 @@ async def _bootstrap_locked(
         # `EDG-108`/`BAS-010`：覆盖 CLI 的提供方没交出实现，强制回落到内建实现。
         # 重装一次而不是打补丁——半装好的 registry 已经冻结，改它比重来更容易出错。
         contexts.clear()
-        wiring = await _wire(
+        wiring = await wire_all(
             all_manifests,
             config,
             layout,
@@ -559,7 +597,7 @@ async def _bootstrap_locked(
 
     # 8 必需能力
     registry = wiring.registry
-    sessions = _require_sessions(registry)
+    sessions = require_sessions(registry)
     model, model_id, model_info = _pick_model(registry, config)
     cli = cli_entry_from(registry)
     if cli is None:
@@ -584,6 +622,35 @@ async def _bootstrap_locked(
         closers=closers,
     )
     return instance
+
+
+def _plugin_statuses(
+    inventory: PluginInventory, lifecycles: Sequence[PluginLifecycle]
+) -> Callable[[], Sequence[PluginStatus]]:
+    """`/plugins` 的数据源：发现清单叠上运行期状态（`D28` + `D29`）。
+
+    清单本身只知道「已发现 / 已跳过 / 已失败」——它在 `setup()` 跑之前就产出了，因此一个
+    已经在跑的插件在那里仍然写着 `discovered`。运行期的真相在 `PluginLifecycle` 上，
+    **状态由它的 `state` 投影给出**（`PHASE_STATES` 是唯一那张表，这里不另写一份映射）。
+
+    只覆盖清单里已有的 id：`lifecycles` 同时含内建，而内建不是插件（见调用点的注释）。
+    每次调用重算一次——生命周期是可变的，缓存一份快照会让 `/plugins` 永远停在启动那一刻。
+    """
+    by_id = {lifecycle.plugin_id: lifecycle for lifecycle in lifecycles}
+
+    def statuses() -> Sequence[PluginStatus]:
+        rows: list[PluginStatus] = []
+        for status in inventory.statuses():
+            lifecycle = by_id.get(str(status.plugin_id))
+            if lifecycle is None or status.state is PluginState.FAILED:
+                # 阶段 A 落榜的插件根本没有生命周期，而已经记下的失败不该被一个
+                # 「后来它又被加载了」的状态盖掉。
+                rows.append(status)
+                continue
+            rows.append(replace(status, state=lifecycle.state))
+        return tuple(rows)
+
+    return statuses
 
 
 def _closer(fn: Callable[[], None]) -> Closer:
@@ -678,7 +745,7 @@ def _assemble(
         capabilities_source=lambda: wiring.report,
         # `D25`：`/plugins` 的数据源。内建不出现在这里——它们是 `Builtin()` 提供方而不是
         # 插件，`/capabilities` 才是回答「这项能力谁提供的」的地方。
-        plugins_source=inventory.statuses,
+        plugins_source=_plugin_statuses(inventory, lifecycles),
     )
     # `D22` 的两个门面：命令索引与配置文档都用 callable 取，理由见 `introspection.py`。
     # 配置文档交的是 `${VAR}` 字面量那一棵树（`/config` 的脱敏靠这条结构性保证）。
@@ -717,62 +784,3 @@ def _config_document(loaded: LoadedConfig) -> Mapping[str, JsonValue]:
     """`/config` 看到的那棵树。`to_json()` 的 `config` 段就是它。"""
     document = loaded.to_json()["config"]
     return document if isinstance(document, Mapping) else {}
-
-
-async def open_session_store(
-    *,
-    instance_dir: Path | str | None = None,
-    instance: str | None = None,
-    env: Mapping[str, str] | None = None,
-    home: Path | None = None,
-    manifests: Sequence[PluginManifest] = BUILTIN_MANIFESTS,
-) -> tuple[LoadedConfig, SessionStore]:
-    """只把会话存储装起来（`nm session` 用）。**不取实例锁、不装 orchestrator。**
-
-    只加载声明了 `SESSION_STORE` 的 manifest，因此不会因为「模型还没配」而让一条只读的
-    诊断命令失败——但它仍然走同一条注册路径，插件覆盖了会话存储时 `nm session` 看到的
-    就是插件那一份。直接 `new JsonlSessionStore(...)` 会让这条命令永远只认内建实现。
-    """
-    layout = InstanceLayout.resolve(
-        instance_dir=instance_dir, instance=instance, env=env, home=home
-    )
-    loaded = _load_config_or_report(layout, env=env, overrides=None, home=home)
-    builtins = _select_manifests(manifests, loaded.config)
-    selected = tuple(
-        manifest
-        for manifest in builtins
-        if any(decl.kind is CapabilityKind.SESSION_STORE for decl in manifest.capabilities)
-    )
-    bus = EventBus(InstanceId(layout.root.name))
-    # 外部插件走同一条路（`D27`）：覆盖了会话存储的插件，`nm session` 看到的就是它那一份。
-    # 同样只取声明了 `SESSION_STORE` 的那些——一条只读命令不该因为「模型还没配」而失败。
-    plan, _ = _plan_external(
-        discover_plugins(loaded.config, layout, bus),
-        loaded.config,
-        layout,
-        loaded.workspace_root,
-        bus,
-        builtins,
-    )
-    external = tuple(
-        manifest
-        for manifest in plan.manifests
-        if any(decl.kind is CapabilityKind.SESSION_STORE for decl in manifest.capabilities)
-    )
-    wiring = await _wire(
-        (*selected, *external),
-        loaded.config,
-        layout,
-        loaded.workspace_root,
-        bus,
-        PluginRuntime(),
-        env,
-        [],
-        # **只读路径不落盘**：`nm session` 不取实例锁，让它改写 `permissions.json` 会与
-        # 正在跑的实例抢同一个文件。判定照做（会话存储插件的授权语义不能两套），
-        # 但这个账本从头到尾没人调 `save()`。
-        PermissionLedger.load(layout.permissions_path),
-        external_ids=[manifest.id for manifest in external],
-    )
-    wiring.report.raise_if_failed()
-    return loaded, _require_sessions(wiring.registry)

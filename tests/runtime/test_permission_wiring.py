@@ -20,7 +20,8 @@ from nucleamind.contracts import ErrorCode, EventName, InstanceId, NucleaError, 
 from nucleamind.kernel.observability import EventBus
 from nucleamind.kernel.plugins import Decision, PermissionLedger
 from nucleamind.runtime.access import GuardedFileAccess
-from nucleamind.runtime.bootstrap import bootstrap, declared_grants, open_session_store
+from nucleamind.runtime.bootstrap import bootstrap, declared_grants
+from nucleamind.runtime.inspect import open_session_store
 from nucleamind.runtime.instance import AgentInstance
 from nucleamind.runtime.plugin_context import PluginRuntime, build_plugin_context
 from nucleamind.sdk import PermissionDecl, PluginManifest

@@ -39,7 +39,13 @@ from nucleamind.sdk import PluginManifest
 
 from .inventory import DiscoveredPlugin, PluginFailure, PluginInventory, build_inventory
 
-__all__ = ["ExternalPlan", "discover_plugins", "plan_external_plugins", "plan_plugins"]
+__all__ = [
+    "ExternalPlan",
+    "correct_inventory",
+    "discover_plugins",
+    "plan_external_plugins",
+    "plan_plugins",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +85,7 @@ def discover_plugins(
     for item in inventory.discovered:
         bus.publish(
             EventName.PLUGIN_DISCOVERED,
-            # 载荷的第一个键与内建那次发布同名（`bootstrap._wire` 里的 `plugin`）：同一个
+            # 载荷的第一个键与内建那次发布同名（`bootstrap.wire_all` 里的 `plugin`）：同一个
             # 事件名出现两种形状，按事件回放的诊断就要为它写两个分支。
             payload={
                 "plugin": item.manifest.id,
@@ -127,13 +133,23 @@ def plan_plugins(
         )
     if plan.critical_failure is not None:
         raise plan.critical_failure.error
+    return plan, correct_inventory(inventory, plan)
+
+
+def correct_inventory(inventory: PluginInventory, plan: ExternalPlan) -> PluginInventory:
+    """把阶段 A 落榜的插件从 `discovered` 移进 `failures`。
+
+    单独成函数是因为它有**两个**调用方：`plan_plugins()`（启动路径）与 `D29` 的
+    `runtime/inspect.py`（只读诊断路径，它不能用前者——关键插件失败时前者抛异常，
+    而一条「列出全部插件及其失败原因」的命令恰恰要把那条失败印出来而不是死掉）。
+    两处各写一遍会让「已发现 = 真的会被加载的那一批」在其中一处慢慢失真。
+    """
     planned = {manifest.id for manifest in plan.manifests}
-    corrected = replace(
+    return replace(
         inventory,
         discovered=tuple(item for item in inventory.discovered if item.manifest.id in planned),
         failures=(*inventory.failures, *plan.failures),
     )
-    return plan, corrected
 
 
 def plan_external_plugins(

@@ -147,7 +147,9 @@ async def test_an_enabled_plugin_is_loaded_and_registers_as_itself(tmp_path: Pat
         assert "alpha.ping" in tool_names(instance)
         providers = {ref.provider for ref in instance.report.active}
         assert Plugin(PluginId("alpha")) in providers
-        assert statuses(instance)["alpha"] is PluginState.DISCOVERED
+        # `D29`：清单的状态叠上了生命周期的投影，因此一个跑完 `setup()` 的插件不再显示
+        # `discovered`（实例尚未 `start()`，所以还不是 `activated`）。
+        assert statuses(instance)["alpha"] is PluginState.LOADED
     finally:
         await instance.stop()
 

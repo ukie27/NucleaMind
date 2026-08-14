@@ -41,13 +41,17 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`kernel/plugins/loader.py` + `runtime/plugin_plan.py`，外部插件与内建合并进同一次
   `wire_capabilities()`），`D28` 已落地插件生命周期（`kernel/plugins/lifecycle.py`：
   六阶段状态机、停止顺序、每插件停止预算；镜像常量拆出 `kernel/config/defaults.py`），
-  **阶段 7 推进中**，下一步 `D29`。
+  `D29` 已落地插件 CLI 与诊断输出（`runtime/{config_edit,inspect}.py` +
+  `runtime/cli/commands/{plugins,capabilities}.py`，`nm plugins` / `nm capabilities`），
+  **阶段 7 推进中**，下一步 `D30`。
   遗留实现全部位于 `src/nucleamind/legacy/`，通过 `nm legacy` 可正常运行；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
-  `first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、`access/` 与 `cli/`，
+  `first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、`inspect.py`、
+  `config_edit.py`、`access/` 与 `cli/`，
   `embed/` 已落地薄门面，`kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、
   `routing/` 与 `plugins/`。
-  `nm init` / `nm run` / `nm config show` / `nm session` / `nm permissions` 已可用。
+  `nm init` / `nm run` / `nm config show` / `nm session` / `nm permissions` /
+  `nm plugins` / `nm capabilities` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
 - 愿景与开发原则详见 [`docs/project/开发背景.md`](./docs/project/开发背景.md)。
 
@@ -172,7 +176,9 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **`kernel/config/` 全包不写任何文件**（`EDG-501`）：`config.json` 只以 `"rb"` 打开且只在
   `sources.read_config_file` 一处。`D24` 的 `scaffold.py` / `json_schema.py` 也不例外——
   它们只**渲染**，落盘在 `runtime/first_run.py`（`O_CREAT|O_EXCL`，没有 `--force`，
-  既有配置一个字节都不动）。写日志是 `D12`。
+  既有配置一个字节都不动）。**修改**既有 `config.json` 只有 `runtime/config_edit.py`
+  一处（`D29`，`nm plugins enable` 用）：只读写 `config.json` 那一层、从不解析 secret、
+  原子替换。写日志是 `D12`。
 - **顶层 `$schema` 是 `validate_config()` 唯一放行的非小节键**（`schema.IGNORED_TOP_LEVEL_KEYS`）。
   它必须是**具名的一条**，不是「`$` 开头就放行」——后者会让拼错成 `$turn` 的小节静默消失。
   这是全项目第二处对未知键让路的地方，第一处是 `plugins` 小节里的插件 id。
@@ -294,6 +300,22 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   「注销能力」**不在运行期**——registry 解析后只读（`NFR-403`）且首版不热更新（§10.4），
   被禁用的提供方在下一次启动时连 `setup()` 都不跑。别为了让一条测试好写而给冻结的
   registry 开一个 `unregister()`：已经被 `ToolExecutor` 取走的实现体它也收不回来。
+
+`runtime/inspect.py`（`D29`）是全部只读诊断的入口，四条：
+
+- **只读查询不走 `bootstrap()`**：`inspect_plugins()` / `inspect_capabilities()` /
+  `open_session_store()` 共用同一套承诺——不取实例锁、不 `save()` 权限账本、不装
+  orchestrator、不做步骤 8 的必需能力判定、不 `raise_if_failed()`。它们复用装配根的
+  `select_manifests` / `plan_external` / `wire_all`，**不重写装配逻辑**。
+- **两个诊断专用旋钮**：`plan_external(strict=False)`（关键插件阶段 A 失败只记不抛）与
+  `wire_capabilities(halt_on_critical=False)`（关键提供方 `setup()` 失败只记不抛）。
+  两者都**不改 manifest 里的 `critical`**，启动路径的默认值仍是 `True`——那是
+  `PLG-004`「失败的后果由装配根决定」的应用。
+- **`/plugins` 的状态 = 清单 + `lifecycle.state` 投影**（`bootstrap._plugin_statuses`），
+  已记下的失败不被覆盖，内建不进这张表。跳过原因的文案只有 `inventory._SKIP_REASONS`
+  一份，CLI 侧直接印 `PluginStatus.reason`。
+- **`bootstrap.py` 贴着 800 行上限**：只读查询归 `inspect.py`、改配置归 `config_edit.py`，
+  往装配根加东西之前先确认它真的属于「装配」。
 
 `kernel/plugins/permissions.py` + `runtime/access/`（`D26`）是权限的唯一来源。六条：
 
@@ -472,7 +494,7 @@ nm legacy gateway
 ### 入口点
 
 - **`nm`（唯一命令）**：`src/nucleamind/runtime/cli/main.py`，子命令 `init` / `run` /
-  `config show` / `session`（`plugins` / `capabilities` 见 `D29`）
+  `config show` / `session` / `permissions` / `plugins` / `capabilities`（全部延迟导入）
 - **遗留 CLI**：`nm legacy` -> `src/nucleamind/runtime/legacy_entry.py` -> `legacy/cli/commands.py`
 - **遗留 Python SDK**：`legacy/nanobot.py`（新层门面 `embed/` 为重写，不移植旧实现）
 
