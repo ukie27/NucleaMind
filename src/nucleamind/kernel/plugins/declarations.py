@@ -44,12 +44,18 @@ class CapabilityDeclaration:
     `overrides` 保持**原始串**（`"builtin:fs.read"` / `"plugin:<id>:<name>"`），与
     `Registration.overrides` 同形：解码只用 `contracts.parse_capability_target()` 一处
     实现，两侧不会出现两套对不上的正则。
+
+    **`namespace=True` 时 `name` 是前缀而不是能力名**（`D38-A`）：本条声明放行提供方注册
+    任意多条 `<name>.<后缀>` 的能力，`finish()` 也不要求它至少注册一条。它是为
+    「能力名要连上外部服务才知道」这类插件开的（MCP 的远端工具名）。约束的判定在
+    `sdk/manifest.py`——`R2` 禁止 kernel 认识 manifest，本层只按标志位分派。
     """
 
     kind: CapabilityKind
     name: str
     overrides: str | None = None
     priority: int | None = None
+    namespace: bool = False
 
     def __post_init__(self) -> None:
         # 名字的形状借 `CapabilityRef` 校验——与 manifest 侧同一份实现（`sdk/manifest.py`
@@ -68,6 +74,16 @@ class CapabilityDeclaration:
     def slot(self) -> tuple[CapabilityKind, str]:
         """`(kind, name)`，Host 回查声明表用的键。与 `sdk.CapabilityDecl.slot` 同形。"""
         return (self.kind, self.name)
+
+    def covers(self, kind: CapabilityKind, name: str) -> bool:
+        """本条**命名空间**声明是否放行 `(kind, name)` 这次注册。
+
+        判据是 `<前缀>.` 开头，因此 `mcp` 放行 `mcp.fs.read` 但**不**放行 `mcpx.read`：
+        前缀比较必须落在分隔符边界上，否则一个更长的名字会被误判成后代
+        （`builtins/tools_fs/paths.py` 的路径前缀比较是同一条道理）。
+        非命名空间声明恒为假——精确匹配走 `slot`。
+        """
+        return self.namespace and kind is self.kind and name.startswith(f"{self.name}.")
 
 
 @dataclass(frozen=True, slots=True)

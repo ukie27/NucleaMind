@@ -88,3 +88,36 @@ def test_the_same_name_under_two_kinds_is_not_a_duplicate() -> None:
         ),
     )
     assert len(request.declarations) == 2
+
+
+# --------------------------------------------------------------- 命名空间声明（`D38-A`）
+
+
+def test_a_namespace_declaration_covers_names_under_its_prefix() -> None:
+    decl = CapabilityDeclaration(kind=CapabilityKind.TOOL, name="mcp", namespace=True)
+    assert decl.covers(CapabilityKind.TOOL, "mcp.fs.read") is True
+
+
+@pytest.mark.parametrize("name", ["mcp", "mcpx.read", "other.read"])
+def test_a_namespace_declaration_covers_nothing_else(name: str) -> None:
+    """前缀比较必须落在分隔符边界上，而前缀本身不是它放行的名字之一。"""
+    decl = CapabilityDeclaration(kind=CapabilityKind.TOOL, name="mcp", namespace=True)
+    assert decl.covers(CapabilityKind.TOOL, name) is False
+
+
+def test_a_namespace_declaration_does_not_cross_kinds() -> None:
+    decl = CapabilityDeclaration(kind=CapabilityKind.TOOL, name="mcp", namespace=True)
+    assert decl.covers(CapabilityKind.COMMAND, "mcp.list") is False
+
+
+def test_a_plain_declaration_covers_nothing() -> None:
+    """精确匹配走 `slot`，`covers()` 恒为假——两条路不该有重叠。"""
+    decl = CapabilityDeclaration(kind=CapabilityKind.TOOL, name="mcp")
+    assert decl.covers(CapabilityKind.TOOL, "mcp.a") is False
+    assert decl.covers(CapabilityKind.TOOL, "mcp") is False
+
+
+def test_a_namespace_declaration_keeps_its_slot() -> None:
+    """`slot` 仍是 `(kind, 前缀)`：`LoadRequest` 的重复检测据此工作。"""
+    decl = CapabilityDeclaration(kind=CapabilityKind.TOOL, name="mcp", namespace=True)
+    assert decl.slot == (CapabilityKind.TOOL, "mcp")

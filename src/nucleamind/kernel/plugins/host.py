@@ -73,7 +73,7 @@ class CapabilityHost(Generic[_ContextT]):
     `EDG-103`「中途抛异常整批丢弃」要求提交发生在那之后。
     """
 
-    __slots__ = ("_batch", "_critical", "_ctx", "_declared", "_hook_counts", "_used")
+    __slots__ = ("_batch", "_critical", "_ctx", "_declared", "_hook_counts", "_namespaces", "_used")
 
     def __init__(
         self,
@@ -86,7 +86,17 @@ class CapabilityHost(Generic[_ContextT]):
         self._batch = batch
         self._ctx = ctx
         self._critical = critical
-        self._declared = {declaration.slot: declaration for declaration in declarations}
+        #: **精确声明表，命名空间不在其中**（`D38-A`）。分成两张表是为了让规则只有一条：
+        #: 一条命名空间声明放行的**恰好是** `<前缀>.<后缀>`，前缀本身不在内。让它同时
+        #: 落进精确表，就等于一条声明有两套判据，而其中一套没写在任何地方。
+        self._declared = {
+            declaration.slot: declaration
+            for declaration in declarations
+            if not declaration.namespace
+        }
+        self._namespaces = tuple(
+            declaration for declaration in declarations if declaration.namespace
+        )
         self._used: set[tuple[CapabilityKind, str]] = set()
         self._hook_counts: dict[HookName, int] = {}
 
@@ -177,15 +187,20 @@ class CapabilityHost(Generic[_ContextT]):
 
         `slot_name` 只有 HOOK 用得上（登记名带序号、声明名不带）。`priority` 参数同样只有
         HOOK 传，其余 kind 的优先级只能来自声明。
+
+        **回查是两步：先精确、再命名空间**（`D38-A`）。顺序不可颠倒——一条精确声明与一条
+        命名空间声明可能同时匹配（`mcp.probe` 与前缀 `mcp`），静默挑一个就等于让
+        「哪条声明生效」取决于表的遍历顺序。
         """
-        declaration = self._declared.get((kind, slot_name or name))
+        lookup = slot_name or name
+        declaration = self._declared.get((kind, lookup)) or self._namespace_for(kind, lookup)
         if declaration is None:
             raise NucleaError(
                 ErrorCode.PLUGIN_LOAD_FAILED,
                 "注册了 manifest 未声明的能力。",
                 detail={
                     "provider": str(self._batch.provider),
-                    "capability": f"{kind.value}:{slot_name or name}",
+                    "capability": f"{kind.value}:{lookup}",
                     "declared": sorted(f"{k.value}:{n}" for k, n in self._declared),
                 },
             )
@@ -198,8 +213,37 @@ class CapabilityHost(Generic[_ContextT]):
             overrides=declaration.overrides,
         )
 
+    def _namespace_for(
+        self, kind: CapabilityKind, name: str
+    ) -> CapabilityDeclaration | None:
+        """找放行这次注册的命名空间声明。
+
+        **两条同时匹配是错误而不是择一**：`mcp` 与 `mcp.remote` 两个前缀都能放行
+        `mcp.remote.read`，选哪一条会决定它拿到哪个 `priority`。静默择一正是
+        `EDG-102`「覆盖永不由加载顺序决定」在这一层的对应物。
+        """
+        matches = [decl for decl in self._namespaces if decl.covers(kind, name)]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise NucleaError(
+                ErrorCode.PLUGIN_LOAD_FAILED,
+                "同一次注册被多条命名空间声明放行，无法判定用哪一条。",
+                detail={
+                    "provider": str(self._batch.provider),
+                    "capability": f"{kind.value}:{name}",
+                    "namespaces": sorted(decl.name for decl in matches),
+                },
+            )
+        return matches[0]
+
     def finish(self) -> None:
         """核对每条声明都真的被注册过。由 loader 在 `setup` 正常返回后、提交之前调用。
+
+        **命名空间声明豁免**（`D38-A`）：它表达的是「本提供方可以注册这个前缀下的能力」，
+        不是「一定会注册」。一个 MCP server 连不上时该插件注册零条工具，那是它如实反映
+        外部状态，不该被判成「声明了却没注册」。这条豁免是结构性的——`_declared` 里
+        本来就没有命名空间声明。
 
         **异常约定**：有声明未兑现抛 `PLUGIN_LOAD_FAILED`，`detail["unfulfilled"]` 列出
         全部缺项——一次报全，与 `validate_config()` 同构。

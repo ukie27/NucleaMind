@@ -32,6 +32,7 @@ from nucleamind.contracts import (
     Plugin,
     PluginId,
     ProviderId,
+    ToolSpec,
 )
 from nucleamind.kernel.plugins import (
     CapabilityDeclaration,
@@ -336,3 +337,96 @@ def test_registering_after_commit_raises() -> None:
     with pytest.raises(NucleaError) as excinfo:
         host.register_model_provider("model", FakeModelProvider())
     assert excinfo.value.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+
+
+# --------------------------------------------------------------- 命名空间声明（`D38-A`）
+#
+# 这套机制是为「能力名要连上外部服务才知道」开的（MCP 的远端工具名只有 `list_tools`
+# 之后才可知，而 manifest 是静态的）。形状照 `on()` 那条已有的先例：一条声明、N 次注册。
+
+
+def namespace(kind: CapabilityKind, prefix: str, **kwargs: object) -> CapabilityDeclaration:
+    return CapabilityDeclaration(kind=kind, name=prefix, namespace=True, **kwargs)  # type: ignore[arg-type]
+
+
+def _tool(name: str) -> ToolSpec:
+    return ToolSpec(name=name, description="x", parameters={"type": "object"})
+
+
+def test_a_namespace_declaration_admits_any_name_under_the_prefix() -> None:
+    registry, batch, host = make_host(namespace(CapabilityKind.TOOL, "mcp"))
+    host.register_tool(_tool("mcp.fs.read"), EchoTool())
+    host.register_tool(_tool("mcp.git.status"), EchoTool())
+    host.finish()
+    batch.commit()
+    assert sorted(r.ref.name for r in registry.registrations) == ["mcp.fs.read", "mcp.git.status"]
+
+
+def test_a_namespace_does_not_admit_the_bare_prefix() -> None:
+    """前缀本身不是它放行的名字之一——要注册 `mcp` 就再写一条精确声明。"""
+    _, _, host = make_host(namespace(CapabilityKind.TOOL, "mcp"))
+    with pytest.raises(NucleaError) as excinfo:
+        host.register_tool(_tool("mcp"), EchoTool())
+    assert excinfo.value.code is ErrorCode.PLUGIN_LOAD_FAILED
+
+
+def test_the_prefix_comparison_lands_on_a_separator() -> None:
+    """否则 `mcpx.read` 会被判成 `mcp` 的后代（`WorkspaceGuard` 的路径前缀同一条道理）。"""
+    _, _, host = make_host(namespace(CapabilityKind.TOOL, "mcp"))
+    with pytest.raises(NucleaError):
+        host.register_tool(_tool("mcpx.read"), EchoTool())
+
+
+def test_a_namespace_only_admits_its_own_kind() -> None:
+    _, _, host = make_host(namespace(CapabilityKind.TOOL, "mcp"))
+    with pytest.raises(NucleaError):
+        host.register_command(CommandSpec(name="mcp.list", description="x"), _NullCommand())
+
+
+def test_an_exact_declaration_wins_over_a_namespace() -> None:
+    """两条都匹配时静默挑一个，就等于让「哪条声明生效」取决于表的遍历顺序。"""
+    registry, batch, host = make_host(
+        namespace(CapabilityKind.TOOL, "mcp"),
+        declare(CapabilityKind.TOOL, "mcp.probe", priority=7),
+    )
+    host.register_tool(_tool("mcp.probe"), EchoTool())
+    host.finish()
+    batch.commit()
+    assert registry.registrations[0].priority == 7
+
+
+def test_two_namespaces_matching_the_same_name_is_an_error() -> None:
+    """`mcp` 与 `mcp.remote` 都能放行 `mcp.remote.read`，而它们的 `priority` 可能不同。"""
+    _, _, host = make_host(
+        namespace(CapabilityKind.TOOL, "mcp"),
+        namespace(CapabilityKind.TOOL, "mcp.remote"),
+    )
+    with pytest.raises(NucleaError) as excinfo:
+        host.register_tool(_tool("mcp.remote.read"), EchoTool())
+    assert excinfo.value.code is ErrorCode.PLUGIN_LOAD_FAILED
+    assert excinfo.value.detail["namespaces"] == ["mcp", "mcp.remote"]
+
+
+def test_a_namespace_that_registers_nothing_still_passes_finish() -> None:
+    """一个 MCP server 连不上时该插件注册零条工具，那是它如实反映外部状态。"""
+    _, _, host = make_host(namespace(CapabilityKind.TOOL, "mcp"))
+    host.finish()
+
+
+def test_an_exact_declaration_alongside_a_namespace_is_still_required() -> None:
+    """豁免只给命名空间那一条，精确声明仍然必须兑现。"""
+    _, _, host = make_host(
+        namespace(CapabilityKind.TOOL, "mcp"),
+        declare(CapabilityKind.TOOL, "mcp.probe"),
+    )
+    with pytest.raises(NucleaError) as excinfo:
+        host.finish()
+    assert excinfo.value.detail["unfulfilled"] == ["tool:mcp.probe"]
+
+
+def test_a_namespaced_registration_inherits_the_declared_priority() -> None:
+    registry, batch, host = make_host(namespace(CapabilityKind.TOOL, "mcp", priority=3))
+    host.register_tool(_tool("mcp.a"), EchoTool())
+    host.finish()
+    batch.commit()
+    assert registry.registrations[0].priority == 3

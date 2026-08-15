@@ -11,7 +11,14 @@ from typing import Final
 import pytest
 from pydantic import ValidationError
 
-from nucleamind.contracts import Builtin, CapabilityKind, ErrorCode, NucleaError, PermissionKind
+from nucleamind.contracts import (
+    Builtin,
+    CapabilityArity,
+    CapabilityKind,
+    ErrorCode,
+    NucleaError,
+    PermissionKind,
+)
 from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest, parse_manifest
 from nucleamind.sdk.version import SDK_VERSION
 
@@ -166,3 +173,60 @@ def test_direct_construction_still_validates_semantics() -> None:
             setup="a.b:c",
             capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="a.b"),),
         )
+
+
+# --------------------------------------------------------------- 命名空间声明（`D38-A`）
+#
+# 它是为「能力名要连上外部服务才知道」开的（MCP 的远端工具名只有 `list_tools` 之后才可知，
+# 而 manifest 是静态的）。两条限制在这里判死，kernel 侧只按标志位分派（`R2`）。
+
+
+@pytest.mark.parametrize(
+    "kind", sorted(k for k in CapabilityKind if k.arity is CapabilityArity.MULTI_UNIQUE)
+)
+def test_every_multi_unique_kind_may_declare_a_namespace(kind: CapabilityKind) -> None:
+    """判据取自 `CAPABILITY_ARITY` 而不是一张手写名单——用例也照着那张表遍历，
+    因此往表里加 kind 时这条会自动覆盖到它。"""
+    assert CapabilityDecl(kind=kind, name="ns", namespace=True).namespace is True
+
+
+@pytest.mark.parametrize(
+    "kind", sorted(k for k in CapabilityKind if k.arity is not CapabilityArity.MULTI_UNIQUE)
+)
+def test_no_other_kind_may_declare_a_namespace(kind: CapabilityKind) -> None:
+    """SINGLETON 的槽位按定义只有一个，给它开前缀等于让「唯一」失去判定对象；
+    MULTI 类本来就允许同一提供方注册多条同名能力，不需要这个机制。"""
+    with pytest.raises(NucleaError) as caught:
+        CapabilityDecl(kind=kind, name="ns", namespace=True)
+    assert caught.value.code is ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED
+
+
+def test_a_namespace_may_not_also_declare_overrides() -> None:
+    """一条声明能注册出任意多个名字，哪一个才是覆盖者无从判定——静默挑一个正是
+    `EDG-102`「覆盖永不由加载顺序决定」要堵的路。"""
+    with pytest.raises(NucleaError) as caught:
+        CapabilityDecl(
+            kind=CapabilityKind.TOOL,
+            name="mcp",
+            namespace=True,
+            overrides="builtin:fs.read",
+        )
+    assert caught.value.code is ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED
+
+
+def test_overrides_without_a_namespace_is_still_fine() -> None:
+    decl = CapabilityDecl(
+        kind=CapabilityKind.TOOL, name="fs.read", overrides="builtin:fs.read"
+    )
+    assert decl.namespace is False
+
+
+def test_the_default_is_not_a_namespace() -> None:
+    """加一个默认为真的字段会让每一份既有 manifest 的语义悄悄改变。"""
+    assert CapabilityDecl(kind=CapabilityKind.TOOL, name="a.b").namespace is False
+
+
+def test_a_namespace_prefix_still_obeys_the_capability_name_shape() -> None:
+    """前缀也是名字：形状仍由 `CapabilityRef` 校验，不因为它是前缀就放宽。"""
+    with pytest.raises(NucleaError):
+        CapabilityDecl(kind=CapabilityKind.TOOL, name="Bad Name", namespace=True)

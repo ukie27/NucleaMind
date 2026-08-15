@@ -93,6 +93,7 @@ def to_declaration(decl: CapabilityDecl) -> CapabilityDeclaration:
         name=decl.name,
         overrides=decl.overrides,
         priority=decl.priority if stated else None,
+        namespace=decl.namespace,
     )
 
 

@@ -39,6 +39,7 @@ from pydantic import (
 
 from nucleamind.contracts import (
     Builtin,
+    CapabilityArity,
     CapabilityKind,
     CapabilityRef,
     ErrorCode,
@@ -124,6 +125,18 @@ class CapabilityDecl(BaseModel):
     `kind` + `name` 定位能力，`overrides` 是**唯一**的覆盖来源——覆盖永不由加载顺序
     决定（`EDG-102`）。`priority` 只对 MULTI 类能力（CONTEXT / HOOK）有意义，其余 kind
     的排序由 arity 语义决定，填了也不会被用来打破唯一性。
+
+    **`namespace=True` 时 `name` 是前缀而不是能力名**（`D38-A`）：本条声明放行提供方注册
+    任意多条 `<name>.<后缀>` 的能力。它是为「能力名要连上外部服务才知道」这类插件开的——
+    MCP 的远端工具名只有 `list_tools` 之后才可知，而 manifest 是静态的。做成显式布尔而不是
+    `name="mcp.*"` 这样的通配串，是因为后者会让「名字」这个字段有两种含义，
+    而 `CapabilityRef` 的形状校验对通配串又不成立（原则 7「显式优于魔法」）。
+
+    形状先例就在 `kernel/plugins/host.py::on()`：Hook 早就是「一条声明、N 次注册」
+    （`<hook>.2` / `.3` 派生名按基名回查声明）。命名空间是同一形状的推广。
+
+    两条限制（`_check_namespace`）：只允许 arity 为 MULTI_UNIQUE 的 kind，且不得同时声明
+    `overrides`——一个前缀覆盖不到一个具体目标，`EDG-102` 的判定会无从进行。
     """
 
     model_config = MANIFEST_MODEL_CONFIG
@@ -132,6 +145,7 @@ class CapabilityDecl(BaseModel):
     name: str
     overrides: str | None = None
     priority: int = 100
+    namespace: bool = False
 
     @field_validator("name")
     @classmethod
@@ -175,6 +189,39 @@ class CapabilityDecl(BaseModel):
     def slot(self) -> tuple[CapabilityKind, str]:
         """同一 manifest 内的唯一性键。"""
         return (self.kind, self.name)
+
+    @model_validator(mode="after")
+    def _check_namespace(self) -> CapabilityDecl:
+        """命名空间声明的两条限制。
+
+        **只允许 arity 为 MULTI_UNIQUE 的 kind**：SINGLETON 的槽位按定义只有一个，
+        给它开一个前缀等于让「唯一」失去判定对象；MULTI 类（CONTEXT / HOOK）本来就允许
+        同一提供方注册多条同名能力，不需要这个机制。判据取自 `CAPABILITY_ARITY` 而不是
+        一张手写的 kind 名单——那张表已经是**全部冲突语义的唯一来源**，在这里另写一份
+        必然与它分叉。
+
+        **不得与 `overrides` 并存**：`overrides` 指向一个具体的 `(提供方, 能力名)`，
+        而一条声明能注册出任意多个名字——哪一个才是覆盖者无从判定，而静默挑一个正是
+        `EDG-102`「覆盖永不由加载顺序决定」要堵的路。
+        """
+        if not self.namespace:
+            return self
+        if self.kind.arity is not CapabilityArity.MULTI_UNIQUE:
+            raise _fail(
+                ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED,
+                "只有可并存且按名字唯一的能力才能声明命名空间。",
+                field="namespace",
+                kind=self.kind.value,
+                arity=self.kind.arity.value,
+            )
+        if self.overrides is not None:
+            raise _fail(
+                ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED,
+                "命名空间声明不能同时声明 overrides。",
+                field="overrides",
+                name=self.name,
+            )
+        return self
 
 
 class PermissionDecl(BaseModel):

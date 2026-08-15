@@ -26,13 +26,21 @@ from pathlib import Path
 import pytest
 
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS
-from nucleamind.contracts import Builtin, CapabilityKind, ErrorCode, NucleaError, Plugin, PluginId
+from nucleamind.contracts import (
+    Builtin,
+    CapabilityKind,
+    ErrorCode,
+    NucleaError,
+    Plugin,
+    PluginId,
+    ToolSpec,
+)
 from nucleamind.kernel.plugins import SetupFn, model_providers_from
 from nucleamind.kernel.registry import BUILTIN_BASE_PRIORITY, PLUGIN_BASE_PRIORITY
 from nucleamind.runtime import wiring
 from nucleamind.runtime.wiring import to_declaration, to_load_request, wire_capabilities
 from nucleamind.sdk import CapabilityDecl, PluginContext, PluginManifest, parse_manifest
-from nucleamind.sdk.testing import FakeModelProvider, FakePluginContext
+from nucleamind.sdk.testing import EchoTool, FakeModelProvider, FakePluginContext
 
 # ------------------------------------------------------------------------------------ 夹具
 
@@ -231,3 +239,68 @@ async def test_each_manifest_gets_its_own_context() -> None:
         manifests=[first, second], context_for=spy, resolve_setup=resolver()
     )
     assert seen == ["alpha", "beta"]
+
+
+# --------------------------------------------------------------- 命名空间声明（`D38-A`）
+
+
+def _namespaced_manifest() -> PluginManifest:
+    return parse_manifest(
+        {
+            "id": "probe",
+            "version": "1.0.0",
+            "sdk_range": ">=0.1.0",
+            "setup": "probe.module:setup",
+            "capabilities": [{"kind": "tool", "name": "probe", "namespace": True}],
+        },
+        origin="test",
+    )
+
+
+def test_the_namespace_flag_crosses_the_layer_boundary() -> None:
+    """`R2` 决定翻译只能在 `runtime/wiring.py` 一处——漏掉这个字段的后果是插件在
+    `setup()` 里注册第一条工具时就被判成「未声明」。"""
+    decl = _namespaced_manifest().capabilities[0]
+    assert to_declaration(decl).namespace is True
+
+
+def test_a_plain_declaration_stays_non_namespaced() -> None:
+    assert to_declaration(manifest().capabilities[0]).namespace is False
+
+
+async def test_a_namespaced_provider_can_register_names_it_never_declared() -> None:
+    """整条路的端到端形态：manifest 只声明一个前缀，`setup()` 注册两条派生名，
+    两条都进 registry 且都归这个提供方。"""
+
+    def setup_two(api: object) -> None:
+        for name in ("probe.alpha", "probe.beta"):
+            api.register_tool(  # type: ignore[attr-defined]
+                ToolSpec(name=name, description="x", parameters={"type": "object"}),
+                EchoTool(),
+            )
+
+    wiring = await wire_capabilities(
+        manifests=(_namespaced_manifest(),),
+        context_for=context_for,
+        provider_for=lambda source: Plugin(PluginId(source.id)),
+        resolve_setup=resolver(setup_two),  # type: ignore[arg-type]
+    )
+
+    active = {entry["name"] for entry in wiring.report.to_json()["active"]}
+    assert {"probe.alpha", "probe.beta"} <= active
+
+
+async def test_a_namespaced_provider_that_registers_nothing_still_loads() -> None:
+    """外部服务连不上时该插件注册零条工具，那不是「声明了却没注册」。"""
+
+    def setup_nothing(api: object) -> None:
+        del api
+
+    wiring = await wire_capabilities(
+        manifests=(_namespaced_manifest(),),
+        context_for=context_for,
+        provider_for=lambda source: Plugin(PluginId(source.id)),
+        resolve_setup=resolver(setup_nothing),  # type: ignore[arg-type]
+    )
+
+    assert all(outcome.error is None for outcome in wiring.outcomes)

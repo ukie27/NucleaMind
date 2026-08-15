@@ -211,6 +211,45 @@ DECL = CapabilityDecl(
 不写就报错看起来严格，但它兑现的是「内建默认能力被禁用或覆盖后，Kernel 不得隐式恢复」。
 用户可能正是因为不想要那份内建实现才装的你的插件。
 
+## 7.5 能力名要连上外部服务才知道：命名空间声明
+
+manifest 是**静态**的，而 `CapabilityHost.finish()` 要求声明的 `(kind, name)` 与实际注册的
+**逐条相等**。桥接类插件（MCP、远端工具网关）撞得上这条：远端工具名要连上 server、
+`list_tools` 之后才可知。
+
+对这种情况声明一个**命名空间**：
+
+```python
+from nucleamind.contracts import CapabilityKind
+from nucleamind.sdk import CapabilityDecl
+
+DECL = CapabilityDecl(
+    kind=CapabilityKind.TOOL,
+    # `namespace=True` 时 name 是**前缀**：本条声明放行注册任意多条 `mcp.<后缀>`。
+    name="mcp",
+    namespace=True,
+)
+```
+
+`setup(api)` 里就可以注册任意多条 `mcp.` 开头的工具，名字不必事先写进 manifest。
+**`setup` 可以是 `async` 的**，因此「连上去、拿到工具表、逐条注册」全在它里面完成——
+registry 在解析之后只读，没有第二个注册时机。
+
+五条规矩：
+
+1. **只放行 `<前缀>.<后缀>`**。前缀本身（`mcp`）不在内，`mcpx.read` 也不在内——
+   前缀比较落在分隔符边界上。要注册前缀本身就再写一条普通声明。
+2. **精确声明优先**。同时匹配时用精确的那条；两条命名空间同时匹配则是
+   `PLUGIN_LOAD_FAILED`——静默挑一个等于让加载顺序说了算。
+3. **零注册是合法的**。远端服务连不上时你注册零条工具，那是如实反映外部状态，
+   不算「声明了却没注册」。
+4. **不能与 `overrides` 并存**。一条声明能注册出任意多个名字，哪一个是覆盖者无从判定。
+5. **只有可并存且按名字唯一的能力**（`tool` / `command` / `model` / `channel` / `memory`）
+   能声明命名空间。SINGLETON 的槽位只有一个，给它开前缀等于让「唯一」失去判定对象。
+
+冲突语义一个字没变：registry 仍按精确 `(kind, name)` 判，`nm capabilities` 印的是**实际
+注册的**名字。权限也一样——命名空间不放宽任何权限，manifest 的 `permissions` 照常是全集。
+
 ## 8. 测试：继承契约测试基类
 
 `nucleamind.sdk.testing` 发布了 5 个契约测试基类与一批 Fake。内建实现与你的插件**继承
