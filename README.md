@@ -3,97 +3,93 @@
 NucleaMind is an independent Agent Kernel project derived from
 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) under the MIT license.
 
-The repository currently retains much of nanobot's runtime, channels, tools,
-memory, and WebUI while the architecture is being reworked. The target is a
-small, stable kernel whose optional capabilities are supplied by plugins.
+The goal is a small, stable kernel whose optional capabilities are supplied by
+plugins. `D35` removed the last of the inherited nanobot implementation, so the
+repository now contains only the new architecture.
 
 ## Current Status
 
-NucleaMind is in an architecture and large-scale refactoring phase.
+The kernel is complete and usable: contracts, turn engine, configuration,
+observability, routing, plugin runtime, six built-in capabilities, and the `nm`
+CLI. Remaining work is capability plugins — Memory, extended tools, and
+cron/automation.
 
-- The Python package, import paths, CLI command, and local data directory still
-  use the `nanobot` name.
-- The project is developed independently and does not submit changes back to
-  the upstream nanobot repository.
-- NucleaMind is not currently published as a separate PyPI package.
-- Installing or upgrading `nanobot-ai` from PyPI installs the upstream project,
-  not this repository.
-- Existing nanobot features remain available only as the current implementation
-  baseline. Their presence does not mean they will remain part of the kernel.
+- The Python package is `nucleamind`, the distribution is `nucleamind`, and the
+  only CLI command is `nm`. No `nanobot` alias is kept.
+- Instance data lives in `~/.nucleamind/<instance>/`; configuration is
+  snake_case and validated against a generated JSON Schema.
+- The project is developed independently and does not submit changes back to the
+  upstream nanobot repository.
+- NucleaMind is not currently published to PyPI. Installing `nanobot-ai` from
+  PyPI installs the upstream project, not this repository.
 
-Do not introduce a `nucleamind` Python package or mix `nucleamind` imports with
-existing `nanobot` imports until the package migration is designed explicitly.
+## Architecture
 
-## Direction
+Six layers, dependencies flow downward only (rules `R1`–`R5`, enforced by
+`tests/architecture/`):
 
-The kernel is expected to retain only the mechanisms required to run and extend
-an agent:
+```text
+src/nucleamind/
+├── contracts/   # public data contracts, pure types, zero internal deps
+├── kernel/      # mechanism, depends only on contracts
+├── sdk/         # the only surface plugins depend on
+├── builtins/    # default capabilities, same standing as plugins
+├── runtime/     # assembly root + the `nm` executable
+└── embed/       # embedded Python SDK
+```
 
-- agent execution loop;
-- model abstraction;
-- unified message contracts and bus;
-- session management;
-- context interfaces;
-- capability and tool registration;
-- plugin runtime and lifecycle;
-- base configuration.
-
-Feature implementations such as channels, memory backends, browser access, MCP,
-WebUI, automation, workflows, and multi-agent systems are candidates for
-official or third-party plugins.
-
-See [开发背景.md](./docs/project/开发背景.md) for the project vision and
-[AGENTS.md](./AGENTS.md) for repository development rules.
+Capabilities are registered through one `NucleaAPI` implementation; built-ins and
+external plugins share the same load path, permission model, and lifecycle.
+Official plugins live in [`plugins/`](./plugins/README.md); runnable minimal
+examples are in [`examples/plugins/`](./examples/plugins/README.md).
 
 ## Development Setup
 
-Python 3.11 or newer is required. Work from a local checkout and use a virtual
-environment.
-
-On Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m scripts.install_channel_dependencies --all-channels
-```
-
-On Linux or macOS:
+Python 3.11 or newer. Work from a local checkout with a virtual environment.
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -e ".[dev]"
-./.venv/bin/python -m scripts.install_channel_dependencies --all-channels
+python -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+
+# Plugins are discovered through entry points, so they must actually be
+# installed. `--no-deps` keeps platform SDKs out of the test environment on
+# purpose: no plugin's test tree may depend on its vendor SDK.
+.venv/bin/python -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
+.venv/bin/python -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-discord
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-feishu
 ```
 
-The repository does not provide a supported one-command installer during the
-refactoring phase.
+On Windows use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
 
 ## Common Commands
 
 ```bash
-# Focused Python test
-pytest tests/test_openai_api.py::test_function -v
+# Tests
+pytest
+pytest tests/architecture -q          # layer guards, run as a separate CI job
 
 # Lint. Do not run ruff format.
-ruff check nanobot/
+ruff check src/ plugins/ examples/ scripts/ tests/
 
 # Strict type checking
 uv sync --all-extras --dev
-uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run --no-sync basedpyright
 
-# WebUI
-cd webui
-bun run dev
-bun run build
-bun run test
+# First run, then a turn
+nm init
+nm run
 
-# Current gateway command
-nanobot gateway
+# Headless: serve every enabled Channel plugin
+nm serve
+
+# Diagnostics
+nm capabilities        # which capabilities actually took effect, and from where
+nm plugins list
+nm permissions
 ```
-
-When `.venv` exists, use its Python executable for Python commands.
 
 ## Documentation
 
@@ -102,12 +98,12 @@ When `.venv` exists, use its Python executable for Python commands.
 - [Architecture constraints](./.agent/design.md)
 - [Security boundaries](./.agent/security.md)
 - [Common implementation gotchas](./.agent/gotchas.md)
-- [Technical documentation index](./docs/README.md)
-- [Current runtime architecture](./docs/architecture.md)
-- [Current configuration reference](./docs/configuration.md)
+- [Documentation index](./docs/README.md)
+- [Writing a plugin](./docs/plugin-development.md)
 
-Documentation under `docs/` describes the inherited implementation where it is
-still useful for analysis. It is not a product promise for the future kernel.
+User-facing documentation (installation, configuration reference, CLI reference,
+deployment) has not been written for the new kernel yet. `nm init` writes a
+config with a `$schema` reference, and `nm --help` lists every subcommand.
 
 ## Attribution
 

@@ -1,10 +1,11 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-14（`D32` 收口）
-- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D33` 均已完成；`D32` 交付了 M5 的
-  第 1 项 Anthropic Model Provider，`D33` 交付了第 4 项 Channel 的第一个——Discord，
-  并顺带放开了 Channel 泵的串行限制；
-  下一步按技术方案 §13 M5 继续：Memory / 扩展 Tool / 其余 Channel / Cron / WebUI）
+- 更新时间：2026-08-15（`D35` 收口）
+- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D35` 均已完成）。
+  **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
+  Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
+  `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
+  下一步是 M5 剩下的三项：**Memory / 扩展 Tool / Cron-Automation**
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -16,15 +17,15 @@
 ## 当前项目状态
 
 - NucleaMind 已与上游 nanobot 的 Git 历史和协作流程分离。
-- **`D00` 已落地**：包名 `nucleamind`，发行名 `nucleamind`，CLI 命令只有 `nm`。
-  仓库为 `src/` 布局：`src/nucleamind/{contracts,kernel,sdk,builtins,runtime,embed}/`
-  为空骨架，遗留实现全部在 `src/nucleamind/legacy/`（352 个 Python 文件 / 133317 行，
-  债务基线）；顶层新增 `plugins/`、`examples/plugins/`、`deploy/`，
-  原 `tests/` 移到 `tests/legacy/`。
-- nanobot 原有的 Agent Runtime、Channels、Tools、Memory、WebUI 等能力仍保留，
-  通过 `nm legacy <原参数>` 运行；`legacy/` 内部继续使用 `NANOBOT_*`、`~/.nanobot/`
-  和 camelCase 配置（迁移期运行契约，不是兼容承诺）。
-- 当前目标是先明确核心边界和扩展机制，再逐步将具体能力迁移为可选插件。
+- 包名 `nucleamind`，发行名 `nucleamind`，CLI 命令只有 `nm`。仓库为 `src/` 布局，
+  包里只有六层：`src/nucleamind/{contracts,kernel,sdk,builtins,runtime,embed}/`。
+- **`D35` 之后仓库里没有遗留实现了**：`legacy/`（218 文件 / 73773 行）、
+  `tests/legacy/`（97 文件）与 `webui/` 全部删除。迁移参考退回 `references/nanobot/`
+  ——那份只读上游副本比 `legacy/` 更全（`D31` 从 `legacy/` 删掉的 `agent/tools/`
+  与 memory 在那里还在）。
+- 宿主的第三方依赖从 36 个降到 4 个（pydantic / httpx / jsonschema / packaging）。
+  **能力所需的包由那个能力自己的发行包声明**，不回到宿主。
+- 当前目标是把剩下三项能力做成插件，Kernel 本身不再扩张。
 - `references/` 保存本地参考源码并被 Git 忽略；其受版本控制的导航文档位于
   [`../references/`](../references/README.md)。
 
@@ -1845,6 +1846,14 @@
   `D33` 已完成，Channel 泵的按 conversation 扇出（`kernel/routing/fanout.py`）与第一个
   Channel 插件 `plugins/nucleamind-plugin-discord/` 一并落地，同 PR 删掉
   `legacy/channels/discord/`；`D31` 推迟的「Channel 泵的并发」至此兑现。
+  `D34` 已完成，官方 Feishu Channel 插件 `plugins/nucleamind-plugin-feishu/` 落地
+  （WS 长连接 + CardKit 流式卡片 + 工具进度提示），并补齐了 legacy 唯一未被文档化的
+  功能丢失——工具提示改由订阅 `tool.call_started` 事件实现，因为出站消息不带工具信息。
+  **`D35` 已完成，`legacy/`（218 文件 / 73773 行）、`tests/legacy/`（97 文件）与
+  `webui/` 全部删除**，`R6` 守卫、`scripts/legacy_debt.py` 与债务棘轮一并退休，
+  宿主第三方依赖从 36 个降到 4 个，`docs/` 里 21 篇描述被继承实现的文档删除。
+  **项目范围本轮收窄**：Model Provider 止步、Channel 只做 feishu、WebUI 不做，
+  剩下三项（Memory / 扩展 Tool / Cron）的迁移参考退回 `references/nanobot/`。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
@@ -1898,767 +1907,67 @@
 
 ## 下一步工作
 
-1. **`D34+` 继续能力插件化**（阶段三 P1）：按技术方案 §13 M5 的顺序与五步法逐个立项
-   （Memory / 扩展 Tool / 其余 Channel / Cron / WebUI），每个模块独立编号、独立验收。
-   `D32` 交了第 1 项（额外 Model Provider）、`D33` 交了第 4 项的第一个（Discord），
-   五步法在本仓库已经跑通两遍——
-   **照它的形状写**：a 步复用 `tests/legacy/` 里既有的行为用例当基线（不为一个要删掉的
-   实现再写一遍），b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
-   剩下的迁移源是 `legacy/channels/` 的其余 14 个（45399 行，**照 `discord` 那个插件的
-   形状写**）与 `legacy/providers/` 的其余部分（13202 行）。每迁完一个模块，同 PR 内删除 `legacy/` 对应目录与其 `tests/legacy/` 用例
-   ——`legacy/` 债务指标不下降即视为该模块未完成。`legacy/` 清空后删除该目录、
-   `R6` 守卫与 `scripts/legacy_debt.py`。
-2. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
+项目范围本轮收窄（见文首）。M5 只剩三项，各自独立编号、独立验收：
+
+| # | 模块 | 迁移参考 | 备注 |
+| --- | --- | --- | --- |
+| `D36?` | **Memory** | `references/nanobot/nanobot/agent/memory/`、`skills/memory/` | 需要 `MemoryProvider` 接口 + `MEM-005` 管理命令 |
+| `D37?` | **扩展 Tool**（web / search / image / mcp） | `references/nanobot/nanobot/agent/tools/`、`providers/image_generation.py`、`providers/transcription.py` | 依赖 `net` / `shell` 权限 |
+| `D38?` | **Cron / Automation** | `references/nanobot/nanobot/cron/` | 依赖后台任务（`ctx.spawn_task`）与 Hook |
+
+**五步法在本仓库已经跑通四遍**（`D32` anthropic、`D33` discord、`D34` feishu，
+`D35` 收尾），照它们的形状写：
+
+- a 步**不新写基线**——`references/nanobot/` 里的实现与它自己的测试就是行为说明书。
+- b 步在 `plugins/` 里**新写**而不是搬运（`AGENTS.md` 原则 5）。那份副本被 Git 忽略、
+  不在包里、也 import 不到，因此「搬」在物理上就不成立。
+- c/d/e 步：`legacy/` 已经没有对应目录可删，因此这三步退化成「切换调用方 + 更新文档」。
+
+写新插件时**从第一天就按守卫的形状切**（`D32`–`D34` 逐条踩出来的）：
+
+- 单文件 ≤800 行、`Any` 须带 `# boundary:`、测试树也不许 import `kernel/`——
+  `tests/architecture/` 的三条守卫对 `plugins/` **全目录**生效，包括测试。
+- **测试模块名要带插件前缀**（`test_feishu_stream.py` / `_feishu_fakes.py`）。
+  `testpaths` 一次收集整个 `plugins/`，而 pytest 按模块名去重：两个插件各有一个
+  `test_stream.py` 时，先导入的会顶掉后一个，另一棵测试树整体 `ImportError`。
+  **单独跑各自的目录看不出来，跑全量才炸**（`D34` 就是这么发现的）。
+- 平台 SDK 只准一两个模块碰，其余对自定义 Protocol 编程；CI 用 `--no-deps` 装插件，
+  因此**测试树在没有平台 SDK 的环境里必须全绿**。
+- 会发 HTTP 的插件照抄零网络闸门那条 autouse 夹具（现在有五份，判据逐条相同、
+  刻意不共享——`R4` 够不着彼此）。
+
+### 两件挂着的独立事项
+
+1. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
    **provider-opaque 块槽位**。Anthropic 要求多轮续写时把 `thinking` 块（含 `signature`）
    原样回传，而契约层现在没有地方放它——`anthropic` 插件因此在「thinking 开启 + 工具调用
-   多轮」这个组合下无法回放思考块，这是相对旧实现的真实能力回退。同一个槽位也是
-   OpenAI Responses API 的续写状态、以及将来多模态输入的落点，因此值得一次性想清楚
+   多轮」这个组合下无法回放思考块。同一个槽位也是多模态输入的落点，值得一次性想清楚
    而不是为某一家开一个字段。
-3. **一件 `D31` 明确推迟、至今仍未做的事**（另一件「Channel 泵的并发」已由 `D33` 完成）：
-   - **WebUI**：`D31` 删掉了它的后端（`legacy/webui/` + gateway + websocket 通道），
-     前端源码 `webui/` 仍在树里但没有服务端可连。
 
-`D33` 留下的、`D34+` 必须用到的事实：
+2. **`Channel.deliver` 的契约 docstring 与 `EDG-204` 有一处未解决的矛盾**（`D33` 提出）：
+   前者写「投递失败抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有 try/except，真抛会把
+   一次成功的 turn 变成失败。四个现存实现（`cli_entry` / `openai-api` / `discord` /
+   `feishu`）都选了不抛。要解决它就要补 `channel.delivery_failed` 事件。
 
-- **Channel 泵按 conversation 扇出**（`kernel/routing/fanout.py`）：同 conversation 严格
-  按到达顺序串行、跨 conversation 并发。因此 **`Channel.deliver()` 可能被并发调用**，
-  按 conversation 分片的状态（流式缓冲那类）不需要加锁，跨 conversation 的共享状态需要。
-  两个上界在 `routing.channel_concurrency`（64）/ `channel_queue_max_size`（32）。
-- **写第二个 Channel 插件时照 `discord` 的形状切**：一个模块独占平台 SDK
-  （`gateway.py`），其余全是纯函数或对自定义 Protocol 编程。收益是可测性——
-  106 个用例里只有一条需要碰 SDK。**不要**用 `pytest.importorskip` 把整棵测试树
-  绑在一个可选依赖上（legacy 就是那样，CI 没装依赖时用例静默全跳）。
-- **`EDG-304` 的标记文本现在有三份**（`cli_entry/console.py`、`plugins/…-discord/
-  outbound.py`，以及将来每个 Channel 一份），逐字相同。`R4` 够不着彼此，因此各写一份 +
-  一条字面量对照测试——两处不一致时「被中断」在不同 Channel 上会读起来不一样。
-- **`Sender.is_operator` 由 Channel 在边界决定**，Kernel 不猜。每个 Channel 插件都要回答
-  「这个平台上谁是 operator」；`discord` 的答案是一个 `operators: string[]` 配置键，
-  默认空。照抄它，**不要**把「能用 bot」与「能看实例怎么装的」并成一件事（`CMD-005`）。
-- **`Channel.deliver` 的契约 docstring 与 `EDG-204` 有一处未解决的矛盾**：前者写「投递失败
-  抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有 try/except，真抛会把一次成功的 turn
-  变成失败。三个现存实现（`cli_entry` / `openai-api` / `discord`）都选了不抛。要解决它
-  就要补 `channel.delivery_failed` 事件，那是独立一项。
-- **`kernel/config/schema.py` 又贴着 500 行**（本轮 483）。再加字段之前先想清楚该挪走什么：
-  已经挪出去的是 `fields.py`（校验积木）、`defaults.py`（镜像常量）、`json_schema.py` 与
-  `document.py`（两个派生视图）。**字段表本身不动**。
-- **`ruff` 的 `per-file-ignores` 现在覆盖 `plugins/*/tests/**`**：插件是独立发行包，
-  测试树不在顶层 `tests/` 下，但适用同一条理由。写新插件的测试时不必再为 `TRY003`
-  把每条断言消息提成常量。
+### `D34`/`D35` 留下的、后续必须用到的事实
 
-`D32` 留下的、`D34+` 必须用到的事实：
-
-- **M5 五步法在本仓库的实际形态**：a 步**不新写基线**——`tests/legacy/` 里既有的用例就是
-  行为说明书（`D07` 的 `tests/baseline/` 已随 `D31` 删除，不为一个要删掉的实现再写一遍）；
-  b 步在 `plugins/` 里**新写**而不是搬运（`AGENTS.md` 原则 5）；d 步「删掉引用与它服务的
-  那段代码，不留空壳」要连带删掉 `registry.py` 的 `ProviderSpec` 与 `config/schema.py` 的
-  字段——留着它们会落进 factory 的 `else` 被另一个 backend 静默错服；e 步对**部分**引用
-  的测试文件是逐个删用例而不是整删（其余用例还在为别的 provider 提供覆盖）。
-- **`tests/architecture/` 的三条守卫对 `plugins/` 全目录生效，包括测试**：`R4`（插件测试
-  也不许 import `kernel/`）、单文件 ≤800 行、`Any` 须带 `# boundary:`。`D32` 的用例文件
-  因此被拆成三个 + 一个 `_support.py`，哨兵用例里的 `prepare_payload` 换成对 `NucleaError`
-  各渲染面的直接断言。**下一个插件从一开始就按这个形状写**，别等守卫来告诉你。
-- **插件目录不在 `basedpyright` 的 `include` 范围内**（`pyproject.toml` 只写了
-  `src/nucleamind`），因此 CI 的类型检查看不到 `plugins/`。单独对插件跑严格检查会在嵌套
-  JSON Schema 字面量上报 `reportArgumentType`（`config_schema` 的值类型是 pydantic 的递归
-  `JsonValue`，而 `dict` 的值类型不变，嵌套字面量怎么标注都推不成它的子类型）——
-  `openai-api` 单独跑有 22 条。要不要把 `plugins/` 纳入检查范围是一个独立决定。
-- **零网络闸门现在有三份**（`tests/builtins/`、`tests/integration/`、
-  `plugins/nucleamind-plugin-anthropic/tests/`），判据逐条相同、刻意不共享：`R4` 够不着，
-  且三棵测试树可以各自独立运行。写第四个会发 HTTP 的插件时照抄，**不要**改成拦
-  `socket.socket` 的构造——Windows 的 `ProactorEventLoop` 用 `socketpair()` 做 self-pipe。
-- **`anthropic` 已不是宿主依赖**。根 `pyproject.toml` 的 `dependencies` 里还剩若干只服务
-  `legacy/` 的第三方包（`openai` / `boto3`（extra）/ `oauth-cli-kit` / `json-repair` /
-  `filelock` 等），每迁完一个模块顺手检查一次「还有没有 `import X`」，有零命中的就摘掉。
-- **`nm plugins list` 对未加载的插件显示 `discovered` 而不是 `loaded`**，这是 `D29` 定的：
-  只读诊断不跑 `setup()`。要确认一个 Model / Channel 插件真的装起来了，看
-  `nm capabilities` 的生效集合里有没有 `<kind>:<name> ← plugin:<id>`。
-
-`D31` 留下的、`D32+` 必须用到的事实：
-
-- **`R6` 自此没有例外**：`runtime/legacy_entry.py` 与那条精确白名单都已删除，
-  守卫的断言从「恰好只有一处新层 → legacy 导入」改成「一处也没有」。
-  迁移期间**不要**为了图快再开一条例外——`legacy/` 里的代码要用就搬到新家并补测试
-  （`AGENTS.md` 原则 5）。
-- **`legacy/` 剩下的是不可达的库代码**（`D32` 之后 224 文件 / 76136 行）：没有任何入口能启动它，
-  `nm legacy`、`legacy/__main__.py` 与 gateway 都不在了。它只有一个用途——`D32+` 的
-  在树迁移参考。`legacy/__init__.py` 的惰性导出表已缩到三个仍有实现可指的名字。
-- **`command/` 被削过**：dream 家族 / `/goal` / `/trigger` 七个处理器随它们服务的子系统
-  （agent 的 memory、goal_permission、triggers/）一并删除，`build_help_text()` 与其余命令
-  保留——`channels/{discord,telegram}` 的 `/help` 靠它。`config/schema.py` 的 `tools` 小节
-  六个按工具切分的子配置也随 `agent/tools/` 一并删除，前向引用的 `model_rebuild` 机制
-  整套移除。
-- **OpenAI 兼容接口现在是插件**（`plugins/nucleamind-plugin-openai-api/`）：它要 `pip
-  install --no-deps -e` 装上才会被 entry point 发现，CI 有独立一步，`pyproject` 的
-  `testpaths` 也加了 `plugins`。**它是第一个官方插件，`D32+` 的 Channel 插件照它的形状写。**
-- **`nm serve` 是通用的**：任何 `CHANNEL` 能力都能用它跑无头模式，不要为某个插件写第二条
-  常驻命令。`--host` / `--port` 是所有网络 Channel 的公分母，翻成
-  `plugins.openai-api.config.*` 的覆盖；其余配置走 `--set`。
-- **`model.response_received` 的载荷多了 `input_tokens` / `output_tokens`**：这是 token
-  用量在进程外的**唯一**公开出口（`TurnOutcome` / `TurnReceipt` 都不带它）。JSONL 事件
-  日志因此也有了用量记录。
-
-`D30` 留下的、`D31` 用到的事实：
-
-- **`on_disable` 是 `plugins.<id>` 条目的第三个键**（`config` / `secrets` / `on_disable`，
-  `kernel/config/plugin_blocks.py::ENTRY_KEYS`）。`on_override_failure` 仍未落地，仍不放行
-  ——放行一个没人读的键等于让它看起来生效了。取值写错时**不回落到任何一个**。
-- **判定只在 `runtime/plugin_disable.py::suppressed_capabilities()` 一处**，由
-  `bootstrap` 在步骤 3d（发现之后、注册之前）调用，`inspect_capabilities()` 也调同一个
-  ——两条路印出来的生效集合必须是同一份。它是 `R5` 的又一个落点（manifest 的 `overrides`
-  在 `sdk/`，registry 的抑制表在 `kernel/`）。
-- **`resolve()` 现在有两个禁用输入**：`disabled`（按提供方）与 `suppressed`（按能力，
-  `(kind, provider, name) -> 原因`），在 `_partition_disabled` 一处合并判定，后果相同——
-  既不生效也不参与冲突判定，但都留在报告的 `disabled` 段里。**按能力抑制不是给覆盖开的
-  后门**：它只能让一项能力消失，不能让某一方赢。
-- **`tests/runtime/conftest.py` 有一条 autouse 夹具把 entry point 清空**。示例插件在开发
-  环境里是真的装着的，那一层的用例不该看见它们。要在那一层验真实 entry point 的用例自己
-  传 `entry_points=`——夹具挡不住那条显式路径，那正是它可注入的理由。
-- **`pytest` 的 `testpaths` 多了 `examples/plugins`**，且那两个包必须先
-  `pip install --no-deps -e` 装上（CI 有独立一步，`AGENTS.md` 的开发命令里也记了）。
-  没装时 `tests/e2e/test_plugin_runtime.py` 的第一条用例会以一句能照做的话失败。
-- **`docs/plugin-development.md` 是对外的插件开发入口**，代码块由
-  `tests/e2e/test_plugin_docs.py` 直接执行。`D31` 改动 SDK 表面时那套测试会先失败。
-
-`D29` 留下的、`D31` 必须用到的事实：
-
-- **`config.json` 现在有两个写入点，分工是硬的**：`runtime/first_run.py` 只用
-  `O_CREAT|O_EXCL` 建**新**文件（既有文件一个字节都不动、没有 `--force`）；
-  `runtime/config_edit.py` 只**改**既有文件里的一个字符串列表。要再加一条「改配置」的
-  命令就走后者，别在别处第三次拼写「读 → 改 → 写」。它只读写 `config.json` 那一层、
-  从不解析 secret、原子替换，三条缺一条 `CFG-003` 或 `CFG-005` 就有一条不再成立。
-- **只读诊断走 `runtime/inspect.py`，不走 `bootstrap()`**：`inspect_plugins()`（到阶段 A
-  为止）、`inspect_capabilities()`（跑一次注册拿 `ResolutionReport`）与
-  `open_session_store()`（`D23` 搬来的）共用同一套承诺——不取实例锁、不 `save()` 权限
-  账本、不装 orchestrator、不做步骤 8 的必需能力判定、不 `raise_if_failed()`。
-  `nm plugins` / `nm capabilities` / `nm session` 都从这里取数。
-- **`plan_external(strict=False)` 与 `wire_capabilities(halt_on_critical=False)` 是诊断
-  路径专用的两个旋钮**：前者让关键插件在阶段 A 的失败只记不抛，后者让关键提供方的
-  `setup()` 失败只记不抛。**它们都不改 manifest 里的 `critical`**——那是「失败的后果由
-  装配根决定」（`PLG-004`）的应用，启动路径的默认值仍是 `True`。
-- **`/plugins` 的状态 = 清单 + 生命周期投影**（`bootstrap._plugin_statuses`）：
-  `PluginState` 由 `lifecycle.state` 给出（`PHASE_STATES` 是唯一那张表），因此一个跑完
-  `setup()` 的插件显示 `loaded`、`start()` 之后显示 `activated`。**已记下的失败不被覆盖**，
-  内建不进这张表（它们是 `Builtin()` 提供方而不是插件）。
-- **跳过原因的文案只有一份**（`inventory._SKIP_REASONS` → `PluginStatus.reason`）。
-  `D30` 写文档时如果要解释「为什么我的插件没被加载」，引用那张表而不是重写一遍。
-- **`bootstrap.py` 已经贴着 800 行上限**（本轮 784 行）。再往装配根加东西之前先想清楚
-  它属不属于「装配」——只读查询归 `inspect.py`，改配置归 `config_edit.py`。
-- **`nm` 现在有七个子命令**：`init` / `run` / `config show` / `session` / `permissions` /
-  `plugins` / `capabilities`。全部在 `main.py` 里**延迟导入**（`nm --version` 不该付装配根
-  那条 import 链的代价），加子命令时照抄这条。
-
-`D28` 留下的、`D29`–`D31` 必须用到的事实：
-`D28` 留下的、`D29`–`D31` 必须用到的事实：
-
-- **停止顺序只有一个来源，且它是加载顺序的逆序**：`stop_order(LoadPlan.order)`。
-  装配根交给 `units_for()` 的那张顺序表就是 `contexts` 的顺序（内建在前、外部按拓扑序
-  在后），因此「被依赖者后停」与「被依赖者先起」共用同一个序——不要在停止侧再排一次。
-- **阶段是判定口径、`PluginState` 是显示口径**：`PluginPhase`（六个阶段 + `FAILED`）与
-  `PHASE_TRANSITIONS` 那张唯一的转换表在 `kernel/plugins/lifecycle.py`，投影表
-  `PHASE_STATES` 也在那里。`D12` 定的「不发明第二套生命周期 taxonomy」的兑现方式就是
-  这个投影，`nm plugins` 渲染时读 `lifecycle.state` 而不是自己判。
-- **`FAILED` 不是终态**：`setup()` 中途失败的插件可能已经订阅过事件或派生过任务
-  （`setup` 跑在事件循环里），它欠一次清理，因此 `FAILED -> STOPPING` 是合法边。
-  唯一的终态是 `STOPPED`。
-- **停止超时后是放弃等待而不是等它结束**（`EDG-104`）：那个协程可能仍在跑，
-  `StopOutcome.timed_out` 与独立的 `TIMEOUT_PLUGIN_STOP` 错误码如实标着这件事。
-  预算是 `plugins.stop_timeout_ms`（默认 5000），**按插件各算一份**。
-- **`EDG-105` 的三项在 P0 分别落在两处**：取消订阅与取消任务在
-  `RuntimePluginContext.shutdown()`；「注销能力」**不在运行期**——registry 解析后只读
-  （`NFR-403`）且首版不热更新（§10.4），被禁用的提供方在下一次启动时连 `setup()` 都不跑。
-  想做热更新就要先回答「已经被别人取回的实现体怎么办」（`ToolExecutor` 在装配时就持有
-  它们了），那不是加一个 `unregister()` 能解决的。
-- **`kernel/config/schema.py` 撞过 500 行上限**：那批「镜像自 `kernel.turn` /
-  `kernel.routing` / `kernel.plugins` 的默认值字面量」已经拆到
-  `kernel/config/defaults.py`，schema 从那里 import 再原样再导出。加新配置字段时，
-  默认值常量写进 `defaults.py`，字段声明仍然只进 `SECTION_SPECS`。
-- **`plugins` 小节的保留键现在有四个**（`enabled` / `disable` / `search_paths` /
-  `stop_timeout_ms`）。它们与插件 id 共用命名空间但撞不上：插件 id 不允许下划线。
-  新增保留键时沿用带下划线的形状，理由写在 `plugin_blocks.RESERVED_PLUGIN_KEYS` 上。
-
-`D27` 留下的、`D28`–`D30` 必须用到的事实：
-
-- **阶段 A 的七步现在分布在三处**，加东西前先认这条分界线：A1/A2/A3 在
-  `runtime/inventory.py`（`D25`），A4/A5/A7 的**机制**在 `kernel/plugins/loader.py`、
-  **manifest 判定**在 `runtime/plugin_plan.py`（`D27`），A6 在
-  `runtime/bootstrap.py::approve()`（`D26`）。加一种排序或校验机制改 kernel 那份，
-  加一条 manifest 判定改 runtime 那份——与 `discovery` / `inventory` 完全相同的分界线。
-- **外部插件与内建共用一次 `wire_capabilities()`**（`SDK-007`）：同一个 manifest 序列、
-  同一个 `context_for`、同一个 `keep`，唯一的差别是 `provider_for` 交出 `Builtin()` 还是
-  `Plugin(<id>)`。内建在前、外部按拓扑序在后，但**顺序不决定覆盖**（`EDG-102`）。
-  想给插件加一条「特殊的」注册路径之前，先读 `builtin_loader.py` 的模块 docstring。
-- **加载顺序的唯一来源是 `LoadPlan.order`**。`plan_load_order()` 同层按 id 字典序，
-  因此同一份配置每次得到同一个顺序；依赖可以指向内建（经 `provided` 交进去）。
-- **阶段 A 落榜的三种理由分得开**：依赖缺失（`detail.missing`）、成环
-  （`detail.cycle` 是整条环，`PLG-003`）、级联（`detail.blocked_by`）。别把它们并成
-  一句「依赖有问题」——三者的补救动作分别是装插件、改 manifest、先修另一个插件。
-- **`state_version` 变化即拒绝加载，升与降都是**（`kernel/plugins/loader.py`）：P0 没有
-  状态迁移机制，两个方向都是拿用户数据赌一把，而 `EDG-503` 要的是「升级失败保住旧状态」。
-  标记文件是 `<instance>/plugins/<id>/.nucleamind-state.json`，**只在状态目录已经存在时**
-  才读写——不为一个从未写盘的插件建目录（与 `ctx.state_dir` 的惰性创建同一条约定）。
-  `D28` 做迁移函数时，放宽的是这一处判定，不是再加一条并行路径。
-- **`jsonschema` 现在有两个接触点**：`kernel/turn/invoker._compile()` 与
-  `kernel/plugins/loader._compile()`，**两处都惰性 import**（`NFR-405` 的冷启动预算）。
-  加第三处之前先想清楚它会不会落在 `nm config show` 那类只读路径上。
-- **`/plugins` 的「已发现」= 真的会被加载的那一批**：阶段 A 落榜的插件由
-  `plan_plugins()` 从 `discovered` 移进 `failures`（`PluginState.FAILED`，
-  `failed_phase="discovery"`），因此 `D29` 渲染时不需要再区分是哪个阶段落的榜。
-- **`nm session` 也会加载外部会话存储插件**了（`open_session_store`）：它仍然只取声明了
-  `SESSION_STORE` 的 manifest、仍然不取实例锁、仍然不写 `permissions.json`。
-- **冷启动实测已与 `README` 早先记录的 480 ms 不同**（本机 ~900 ms，`import` 约 550 ms）。
-  这与 `D27` 无关——在 `D27` 之前的 HEAD 上实测 ~990 ms，同一台机器。`NFR-405` 的这一项
-  按原文只告警不失败，真要压下去仍然是「让 `model-openai` 的 httpx 延迟到第一次请求」。
-
-`D26` 留下的、`D27`–`D30` 必须用到的事实：
-
-- **授权判定只有一个调用点**：`runtime/bootstrap.py::approve()`。`D27` 的外部插件加载
-  必须走它，不要在 loader 里另判一次——账本的 TOFU 语义（首见即授予、扩权落 `pending`）
-  只在那一处成立。manifest → `Grant` 的翻译同样只在 `declared_grants()` 一处（`R2` 禁止
-  kernel 认识 `PermissionDecl`）。
-- **`PluginGrants` 从 `kernel/plugins/permissions.py` 取**，不再在 `runtime/` 里定义；
-  它的形状是 `frozenset[(PermissionKind, target)]`，`allows()` / `allows_secret()` /
-  `targets()` 是它的全部查询面。`PluginGrants.of("fs:read", ...)` 是测试与 `embed/` 的
-  便利构造。
-- **`ctx.fs` / `ctx.shell` 需要 workspace**：`build_plugin_context(workspace=...)` 没传时
-  两个门面抛 `CAPABILITY_MISSING`（授权判定在此之前已经过了）。装配根传的是
-  `loaded.workspace_root`，与 `tools_fs` 同一个根。
-- **`runtime/access/paths.py` 是 workspace 双重校验的第三份实现**，改判定要改三处
-  （另两处：`builtins/tools_fs/paths.py`、`builtins/tools_shell/paths.py`），有对照测试。
-  `runtime/access/shell.py` 的环境基线名单同理，与 `builtins/tools_shell/environ.py` 对照。
-- **`import nucleamind.runtime.access` 不会拉进 httpx**（`net.py` 里是函数内 import）。
-  加新调用点前想一下这件事——`NFR-405` 的冷启动预算已经被 `model-openai` 那笔占满了。
-- **`EventName` 现在是 32 条**，新增的 `capability.permission_granted` 由授予 / 待批准 /
-  撤销共用，靠载荷的 `decision` 区分。加事件名要同时改
-  `tests/contracts/test_events.py::EVENT_NAME_SNAPSHOT`。
-
-`D25` 留下的、`D26`–`D29` 必须用到的事实：
-
-- **`plugins.enabled` 是外部插件的总开关**，`plugins.disable` 压过它。前者是 `D25` 新增的
-  保留键，后者仍是既有的「按提供方禁用」（对内建同样有效）。`RESERVED_PLUGIN_KEYS`
-  现在是三个，改它要同时改 `SECTION_SPECS["plugins"]`。
-- **`D27` 的加载计划输入是 `build_inventory().discovered`**，每一项带着候选（来源、位置）
-  与已校验的 manifest。**不要在 `D27` 里重新发现一遍**，也不要把发现挪进加载——「未启用
-  即零导入开销」是靠「先筛后读」成立的。
-- **entry point 的 name 必须等于 manifest 的 id**，这条判定在
-  `runtime/inventory.py::_validate`。`D30` 写插件模板与文档时要写明这一条。
-- **`PluginStatus.reason` 是自由文本**，取值来自 `inventory._SKIP_REASONS` 那张表。
-  `D29` 渲染 `nm plugins` 时直接印它，不要在 CLI 侧再写一份原因文案。
-- **`kernel/plugins/discovery.py` 不认识 manifest 类型**（`R2`），它交出的是 `object`。
-  要给发现加一种来源，加在那里；要给校验加一条规则，加在 `runtime/inventory.py`。
-  分界线与 `builtin_loader` / `wiring` 那次完全相同。
-- **`import nucleamind.runtime.inventory` 会拉进 pydantic**（`sdk/manifest.py`）。
-  它只在装配根上被 import，`nm config show` 这类路径够不着——加新调用点前想一下这件事。
-
-`D24` 留下的、`D25`–`D29` 必须用到的事实：
-
-- **`kernel/config/` 依然一个字节都不写**。`scaffold.py` / `json_schema.py` 只渲染，
-  唯一的写入点是 `runtime/first_run.py`，用 `O_CREAT|O_EXCL`、**没有 `--force`**。
-  要再加一份「生成到实例目录里的文件」，落点是那里，不是 `kernel/`。
-- **顶层 `$schema` 是 `validate_config()` 唯一放行的非小节键**
-  （`schema.IGNORED_TOP_LEVEL_KEYS`，具名一条而不是前缀规则）。往那张表里加第二个键之前
-  先想清楚：它会让一个拼错的小节静默消失。
-- **`config.schema.json` 是 `SECTION_SPECS` 的派生物**，`nm init` 每次都会把过期的那份刷新
-  （内容相同则不写）。加配置字段不需要动它，但**加一种 `FieldKind` 必须在
-  `json_schema._KIND_SCHEMAS` 里补一条**——缺项是 KeyError 而不是静默退化成「任意值」，
-  有测试盯着这条。
-- **首次运行只生成、不进会话**（§10.1 步骤 2）。要改成「凭据就绪就直接跑」之前先读
-  `runtime/cli/commands/run.py` 的模块 docstring：那会让同一条命令有两种结局。
-- **缺凭据的错误现在带 `file`**（`config.json` 的绝对路径），由装配根经
-  `build_plugin_context(config_path=...)` 交下来，`resolve_text(source=...)` 放进 `detail`。
-  `kernel/config/` 自己不知道那棵配置树是从哪个文件读来的，因此这条只能由调用方传。
-- **`NFR-405` 的 300 ms 目前没达到**：`scripts/check_startup_cost.py` 的 `startup_ms` 在
-  开发机上约 480 ms，其中 import 约 340 ms。**大头是 `import httpx`**（单独一项约 280 ms），
-  它由 `model-openai` 在 `setup()` 时构造 provider 连带拉进来。按 `NFR-405` 的原文这一项
-  **只告警不失败**；真要压下去，方向是让 `builtins/model_openai/provider.py` 的 httpx 延迟到
-  第一次请求——那会动 `D19` 的 `except httpx.HTTPError` 这类语句，不是顺手能做的事。
-- **`tests/e2e/` 里唯一的替身是传输层**（`conftest.recorder` 换掉 `httpx.AsyncClient`）。
-  往里加用例时守住这条：把某个内建换成 Fake，它就退化成 `tests/integration/` 的重复。
-- **`ToolExecutor.orphans` 已经接上了**（`AgentInstance.stop()` 里的 `_report_orphans`，
-  `D14` 留的那条）。它靠 `isinstance(ToolExecutor)` 窄化——`ToolInvoker` 协议里没有孤儿表，
-  第三方执行器可以完全没有这个概念，给协议加成员会逼每个实现编一张空表。
-
-`D23` 留下的、`D25`–`D27` 必须用到的事实：
-
-- **`plugins.<id>` 是插件配置的落点**，值形如 `{"config": {...}, "secrets": {...}}`。
-  `disable` / `search_paths` 是保留键。**`plugins` 小节是全项目唯一对未知键让路的小节**
-  （那些键是插件 id），校验在 `kernel/config/plugin_blocks.py`，别在 `schema.py` 里另开
-  一张表。逐字段校验（manifest 的 `config_schema`）是 `D25` 阶段 A 的活，现在还没人做。
-- **`ctx.secret()` 已经接到 `resolve_text()` 上**（`runtime/plugin_context.py`）。`D26`
-  要做的是在 `grants_of(manifest)` 之前再叠一层**用户批准**（`permissions.json`）——形状
-  不必改，只是构造 `PluginGrants` 的人多问一句。`fs` / `net` / `shell` 三个访问器目前抛
-  `CAPABILITY_MISSING` 并指向 `D26`，那不是遗漏，是「没有守卫就不给门面」。
-- **`wire_capabilities(context_for=...)` 按 manifest 索引**，不是按 `ProviderId`。`D27` 加
-  外部插件时照抄这条：内建全是 `Builtin()`，按提供方索引会让配置块串到一起。
-- **`AgentInstance.stop()` 会取消 ctx 派生的任务与事件桥任务**（`EDG-104`/`EDG-105` 的
-  当前形态）。`D27` 落地插件生命周期时，`plugin_stop_timeout_ms` 的等待要加在这里，
-  而不是另起一套任务表。
-- **`ToolExecutor.orphans` 仍然没有调用方**（`D14` 留的那条）：实例停止时应当报告它。
-  `AgentInstance.stop()` 是它唯一合理的落点，`D24` 或 `D26` 顺手接上即可。
-- ~~**`Diagnostics.plugins_source` 仍是默认的空元组**~~ **`D25` 已接上**：数据源是
-  `runtime/inventory.py::PluginInventory.statuses`，在 `runtime/bootstrap.py` 里传入。
-  `D27` 加载完插件后应当**更新**那一份状态，而不是再写第二套查询。
-- **`nm plugins` / `nm capabilities` 还没有**（`D29`）。`runtime/cli/commands/` 里加一个
-  模块即可，数据源是 `AgentInstance.diagnostics`，与会话内的 `/plugins` 共用。
-- **Windows 上有两条已知的平台差异**：控制台编码不是 UTF-8（输出遇到编不出来的字符会
-  降级成转义，提示符因此只用 ASCII）；`tools_shell` 的 `shell` 配置项不生效（`D21`）。
-  两条都如实写在各自的 docstring 里。
-
-`D22` 留下的、`D23`/`D26` 必须用到的事实：
-
-- **`D23` 必须给 `commands_core` 装上 `ctx.instance` 与 `ctx.turns` 的生产实现**，
-  两个 builder 都在 `runtime/introspection.py`：
-  `build_instance_view(commands_source=…, diagnostics=…, config_source=…, sessions=…)` 与
-  `build_turn_control(orchestrator)`。**`commands_source` 与 `config_source` 必须是
-  callable 而不是快照**——命令索引要等全部插件注册完才建得出来，而 `PluginContext` 必须在
-  `setup()` **之前**就交给插件，传一份当时还不存在的索引是不可能的。漏传的后果是 `/help`
-  永远显示「当前没有可用的命令」而**不报任何错**（`FakeInstanceView` 上已经踩过一次，
-  `set_commands()` 就是那个时序的最小形态）。
-- **`/help` 里的命令前缀目前是硬编码的默认 `/`**（`commands_core/commands.py::DEFAULT_PREFIX`，
-  与 `kernel/routing/dispatcher.py::DEFAULT_COMMAND_PREFIX` 各写一份）。改过
-  `routing.command_prefix` 的用户会在 `/help` 里看到错的前缀。`D23` 接线时可以把它经
-  `commands-core` 的配置块交下来——那是这条偏差的正确落点，**不要让内建去读 routing 小节**
-  （`ctx.config` 按 `CFG-002` 只给自己那一块）。
-- **`InstanceView.config_document()` 是全项目唯一越过 `CFG-002` 的地方**。`D23` 传给它的
-  应当是 `LoadedConfig.to_json()` 那棵**持有 `${VAR}` 字面量**的树，不要传解析过 secret 的
-  版本——`/config` 的脱敏是靠这条结构性保证成立的，`redact()` + `scrub()` 只是纵深防御。
-- **`ctx.instance` / `ctx.turns` 不需要权限声明**，与 `ctx.events` 同一档（只读可观测性不是
-  资源访问）。`D26` 落地权限模型时若要给它们加门，`TurnControl` 是该先加的那个——取消别人的
-  turn 是控制动作，这正是它与 `InstanceView` 分成两个 Protocol 而不是一个七成员门面的理由。
-- **`SUPPORT_PROTOCOLS` 现在是 3 条**（`tests/contracts/test_protocols.py`），
-  `CAPABILITY_PROTOCOLS` 仍恒为 9——新增的两个不是可注册能力。往 `PluginContext` 加成员要
-  同时改 `test_public_surface.py::API_PROTOCOLS` 与那里的只读属性豁免名单，两处都是
-  `NFR-103` 的评审闸门。
-
-`D21` 留下的、`D22`/`D23`/`D26` 必须用到的事实：
-
-- **`D23` 必须给 `tools_shell` 传两样东西**，与 `tools_fs` 完全同构：① 配置块里的
-  `workspace` 键（没配就退回插件私有状态目录 `<instance>/plugins/tools-shell/`，命令会在
-  一个没人预期的目录里执行）；② `wire_capabilities()` 的 `keep` 参数
-  （`lambda manifest, decl: decl.name in enabled_tool_names(config_of(manifest))`）。
-  不传 `keep` 且用户禁用了 `shell.exec` 时，`tools-shell` 会以 `PLUGIN_LOAD_FAILED` 加载
-  失败——那是 `CapabilityHost.finish()` 在如实报告「声明与注册对不上」。`critical=False`，
-  因此失败只记进 `Wiring.outcomes`，实例仍会起来但没有 shell 工具。
-- **`SideEffect.UNKNOWN` 现在有了唯一的产出点**：`tools_shell` 的取消宽限期用尽
-  （`executor._fold` 的第三档）。`D22` 之后如果还有别的工具要产出 `UNKNOWN`，判据是同一条
-  ——「失败发生在副作用可能已经发生**之后**，且无法确认做完没有」。`tools_fs` 一次都不产出，
-  别把两者的规矩搞混。
-- **`shell` 权限未授予时，工具仍然会被注册**，只是每次调用被 kernel 的 `ToolExecutor` 折成
-  `PERMISSION_DENIED` + `side_effect=NONE`。开发方案 `D21` 那句「未授予 shell 权限时工具
-  不注册」在当前架构下**没有落地点**：`granted` 是 `ToolExecutor` 的实例级参数（`D14`），
-  而注册发生在装配期、那时还没有权限集合。**要真正做到「不注册」得等 `D26`**——届时可以在
-  `wire_capabilities` 的 `keep` 里再加一条「manifest 声明的权限 ⊆ 实例已授予的权限」，
-  机制已经在那里了。当前行为由 `TestPermissionGate` 如实钉住，不是遗漏而是已知边界。
-- **cwd 守卫有第二份实现**（`builtins/tools_shell/paths.py::CwdGuard`），与
-  `tools_fs.WorkspaceGuard` 由 `test_cwd_guard_matches_the_fs_workspace_guard` 五条对照钉住。
-  改任何一边的判定都要同时改另一边并更新那条测试——这是刻意的重复（两个独立提供方，
-  见该模块 docstring），不是待清理的债务。
-- **Windows 上 `shell` 配置项不生效**，命令恒由 `%ComSpec%`（`cmd.exe`）执行。改这件事之前
-  先读 `command.py` 的模块 docstring：那不是偷懒，是 `list2cmdline()` 与 `cmd /c` 的原始
-  命令行语义不兼容。`D23` 写文档时要如实说明这条平台差异。
-- **`DEFAULT_GRACE_MS` 与 `kernel/turn/cancel.py::DEFAULT_TOOL_CANCEL_GRACE_MS` 各写一份**
-  （`R4` 逼的，与 `estimate_tokens` 同一种做法），由一条对照测试钉住。要把宽限期做成配置项
-  之前先想清楚：它在 kernel 那侧是取消参数而不是六项预算之一（`D14` 的结论）。
-
-`D20` 留下的、`D21`/`D23` 必须用到的事实：
-
-- **`D23` 必须给 `tools_fs` 传两样东西，缺一样都会安静地跑偏**：① 配置块里的
-  `workspace` 键（没配就退回插件私有状态目录 `<instance>/plugins/tools-fs/`，文件工具会
-  在一个没人预期的地方读写，与 `D17` 的 `dir` 是同一个坑）；② `wire_capabilities()` 的
-  `keep` 参数（`lambda manifest, decl: decl.name in enabled_tool_names(config_of(manifest))`）。
-  **不传 `keep` 时，只要用户在配置里禁用了任何一个工具，`tools-fs` 就会以
-  `PLUGIN_LOAD_FAILED` 加载失败**——那是 `CapabilityHost.finish()` 在如实报告「声明与注册
-  对不上」，有一条用例专门钉住它。`critical=False`，因此失败只记进 `Wiring.outcomes`，
-  实例仍会起来但没有文件工具。
-- **`D21` 的 `tools_shell` 直接复用 `keep` 这条路**：单工具禁用不需要再发明第二套机制，
-  `shell.exec` 只有一个名字，但形态完全一致。同时注意 `tools_shell` **不进**
-  `test_builtin_no_privilege.py::_READ_ONLY_BUILTIN_PACKAGES`——它如实声明 `shell` 权限，
-  与 `tools_fs` 声明 `fs:read`/`fs:write` 同理。
-- **`SideEffect.UNKNOWN` 在 `D21` 才第一次真的出现**。`tools_fs` 的失败全部发生在落盘之前
-  （临时文件 + `os.replace`），因此它一次 `UNKNOWN` 都不产出；`shell.exec` 的取消宽限期用尽
-  是那个取值的正主（`EDG-407`），别照抄 `base.FsTool` 里「折出来的失败一律 `NONE`」那一句。
-- **路径守卫可以直接复用**：`shell.exec` 的 cwd 要限定在 workspace，`tools_fs.WorkspaceGuard`
-  就是那道门。但它在 `builtins/tools_fs/` 里，而 `builtins/` 之间互相 import 是否可接受要先
-  确认（`R4` 只管 `builtins → kernel`）；不确定就照 §4「优先重复而非过早抽象」各写一份，
-  两份由一条对照测试钉住——与 `estimate_tokens` 在 `context_basic` 与 `context_builder` 里
-  各写一份是同一种做法。
-
-`D19` 留下的、`D23`/`D26` 必须用到的事实：
-
-- **`ctx.secret("api_key")` 必须真的能取到值，`model_openai` 才起得来**。`D19` 只能对着
-  `FakePluginContext` 测（生产级 `PluginContext` 是 `D26`）。`D23`/`D26` 落地时，
-  `ctx.secret()` 的实现要接到 `kernel/config/secrets.py::resolve_text` 上——那是 `D11` 那条
-  「provider 凭据用 `resolve_text()`」笔记的正确落点：由 ctx 那侧调，而不是让 `builtins/`
-  直接调（`R4` 拦得住）。`CONFIG_SECRET_MISSING`（授权了但环境变量没导出）与
-  `PERMISSION_DENIED`（没授权）必须可区分，`model_openai` 依赖这个区分把「去补配置」和
-  「去改权限」两种补救分开。
-- **`OpenAIModelProvider` 有一个 `aclose()`，`ModelProvider` 协议里没有它**。httpx 连接池
-  要在实例停止时释放，`D23` 装配时应当在关停路径上调它一次（多次调用安全）。协议不加生命
-  周期钩子是刻意的——不是每个 Provider 都有连接池。
-- **`auth="none"` 时 `model_openai` 不碰 `ctx.secret()`**。本地 vLLM / Ollama / LM Studio
-  没有密钥，`D23` 给本地端点装配时**不要**为它授予 `secret:api_key`，否则一个必然缺失的
-  凭据会让实例起不来。授不授 `secret` 权限要跟着 `auth` 走。
-- **`model_openai` 声明了 `net` 权限并直接用 httpx**，`ctx.net` 的 SSRF 守卫对它不生效。
-  `D26` 落地权限模型后，`net` 权限对内建的意义仍只是「可审计」而非进程隔离——这是
-  `sdk/api.py` 写死的应用级权限语义，不是 `model_openai` 的特例。
-
-`D18` 留下的、`D20`–`D23` 必须用到的事实：
-
-- **`context_basic` 不产出 `trust=SYSTEM` 的运维内容**。用户在配置里写的自定义指令是
-  `TrustLevel.OPERATOR`，落在历史之后的一条 user 消息里而不是 system 消息里（`CMD-005`）。
-  `D23` 装配后如果有人反馈「我的系统提示词没生效」，答案是这条而不是 bug。要改这个语义，
-  改的是契约层对 OPERATOR 的定义，不是内建实现。
-- **只读内建有一张显式清单**：`tests/architecture/test_builtin_no_privilege.py::
-  _READ_ONLY_BUILTIN_PACKAGES`。往里加一个包，就等于承诺它连 `os` / `pathlib` / 裸 `open`
-  都不出现、manifest 里一条权限都不声明。`D20`/`D21` 的 `tools_fs` / `tools_shell` **不进**
-  这张表——它们如实声明权限，走 `session_jsonl` 那条路。
-- **token 估算公式现在有两份**（`builtins/context_basic/instructions.py` 与
-  `kernel/turn/context_builder.py`，都是 `ceil(len/3)`）。任何要自报 `estimated_tokens` 的
-  新 Provider 都得用同一把尺，改比值要同时改两处并更新对照测试。
-- **`D14` 定的「同优先级先丢片段再丢历史」现在有了真实样例**：运维指令片段与历史同为
-  `priority=0`，预算收紧时先丢片段。`D19` 接上真模型后，`resolve_context_max_tokens` 会从
-  模型窗口推导预算，这条裁剪顺序才第一次真正生效。
-
-`D17` 留下的、`D19`–`D23` 必须用到的事实：
-
-- **内建能力拿不到实例布局**（`R4` 禁止 import `kernel/`），要写盘就只能让装配根把路径
-  经 `ctx.config` 交下来。`session_jsonl` 用的键是 `dir`，没配时退回 `ctx.state_dir`。
-  **`D23` 必须在装配时把 `layout.sessions_dir` 填进 `session-jsonl` 的配置块**，否则会话
-  会写到 `<instance_dir>/plugins/session-jsonl/` 而不是 `sessions/`——两处都能跑，
-  只有 `nm session` 找不到文件。`D20` 的 `tools_fs`（workspace 根）会遇到同一件事。
-- **文件名在 `layout.session_paths()` 与 `session_jsonl` 里各写了一份**，由
-  `tests/builtins/test_session_jsonl.py::test_filenames_match_the_instance_layout` 对照。
-  改后缀要同时改两处。
-- **`docs/session-storage.md` 是发布出去的格式契约**（`SES-006`），文档里的示例被测试直接
-  解析。改 `codec.py` 的字段就得改文档，反之亦然——这是刻意的双向闸门。
-- **`tests/` 现在是一个包**（新增了 `tests/__init__.py`）。没有它 `tests/builtins/` 会与标准库
-  的 `builtins` 撞名、整个目录收集失败。新增测试目录时不需要再操心这件事。
-- **`SESSION_SCHEMA_VERSION` 现在从 `nucleamind.contracts` 直接可导**（`D17` 补的转发）。
-
-`D16` 留下的、`D19`–`D23` 必须用到的事实：
-
-- **注册载荷形状现在九个 kind 全齐了**。`D14` 的四个（`RegisteredTool` / `RegisteredHook` /
-  `RegisteredContextProvider` / `RegisteredCommand`）加 `D16` 的五个（`RegisteredModelProvider`
-  / `RegisteredSessionStore` / `RegisteredChannel` / `RegisteredMemoryProvider` /
-  `RegisteredCliEntry`，都在 `kernel/plugins/capabilities.py`）。取回函数同理九个，
-  取回后的实现体在 `binding.value` 上。
-  **内建能力自己不构造这些形状**——Host 会按 `register_*` 的参数替你构造。
-- **`session_store_from()` 与 `cli_entry_from()` 返回 `| None`**。`D23` 必须在装配根上把
-  「MODEL / SESSION_STORE / CLI_ENTRY 各须有一个生效实现」变成明确的启动错误
-  （§10.1 步骤 8），并实现 `EDG-108` 的「覆盖失败时 CLI 强制回落内建」——kernel 层不做这个
-  判定，它只如实回答有没有。（`D17` 之后 SESSION_STORE 已经有了。）
-- **`critical` 是提供方级的，不是每项能力各有一个**。同一份 manifest 里的全部能力共享一个
-  `critical`；需要不同关键性就得是两个插件。`tests/integration/_support.py` 因此按 `critical`
-  分批注册，`D19`–`D22` 写 manifest 时要意识到这一点。
-- **`priority` 在 manifest 里别写**，除非真的要偏离基准值。写了就会被原样采纳（哪怕写的
-  正好是默认值 100），而内建的基准是 0——`D18` 的 `context_basic` 已经按这条落地，§10.2 的
-  「其余按 priority 逆序丢弃」依赖内建排在最前。
-  `tests/runtime/test_wiring.py::test_every_builtin_manifest_leaves_priority_unset` 是这条的棘轮。
-- **`wire_capabilities(context_for=...)` 没有默认值**，因为 `D16` 还没有生产级
-  `PluginContext`（那是 `D26`）。`D23` 之前一律传 `FakePluginContext`；`D26` 落地后在
-  `host.py` 之外补 `PluginContext` 的实现，**不得重写注册分派**。
-- ~~**`BUILTIN_MANIFESTS` 现在是空元组**~~ **`D17` 起不再为空**，第一条是 `SESSION_JSONL`。
-  想验「零内建可装配」要显式传 `manifests=()`，不能指望默认值。
-- **五个契约基类各有一个反向样例盯着**（`tests/sdk/test_contract_reverse_samples.py`）。
-  往基类里加用例时，要同时想清楚「什么样的实现会被这条拦下」——加不出反向样例的用例，
-  多半是在描述某个具体实现的行为而不是契约。
-
-`D15` 留下的、`D16` 已兑现的事实：
-
-- ~~**五个 kind 还没有取回函数与注册载荷形状**~~ **`D16` 已补齐**，见上。
-- ~~**`sdk.testing` 目前没有 Fake 工具 / Fake Channel / Fake Context Provider**~~
-  **`D16` 已补**（另加 `FakeMemoryProvider` / `FakeCliEntry` / `FakePluginContext`），
-  `sdk.testing.__all__` 快照相应更新。
-- ~~**`tests/integration/_support.py::wire()` 应当改用真 Host**~~ **`D16` 已改**，
-  并因此发现了 `critical` 的层级差异（见上）。
-- **`tests/integration/` 的 Fake 边界不要往里挪**：Fake 只在能力边界上，能力之间一律生产
-  实现。往里挪一层，这套测试就退化成 `tests/kernel/` 的重复。
-- **一次 turn 的事件名序列与 Hook 触发顺序都以字面量钉在
-  `tests/integration/test_skeleton_turn.py` 里**。改动编排顺序会让它们失败——那是刻意的
-  评审闸门，不要通过放宽断言绕过。（`D16` 改接真 Host 之后它们仍一字未改地通过。）
-
-
-`D14` 留下的、`D15`/`D16`/`D22`/`D23` 必须用到的事实：
-
-- **注册载荷的形状已定死三个**，`D16` 的 Host 分派必须按这个形状注册，
-  各自的 `*_from(registry)` 会当场核对：
-  `turn.RegisteredHook(hook, handler, critical)`、
-  `turn.RegisteredContextProvider(provider, critical)`、
-  `turn.RegisteredTool(spec, handler)`，外加 `D13` 已定的
-  `routing.RegisteredCommand(spec, handler)`。**`critical` 由注册方从 manifest 带进来**
-  ——`kernel/` 不认识 manifest，而 `CTX-005`/`PLG-004` 的分叉必须在 kernel 里判。
-- **`D23` 装配 `OrchestratorDeps` 的清单**（`kernel/turn/orchestration.py` 是唯一真相）：
-  必填 `instance_id` / `bus` / `sessions` / `model` / `tools` / `hooks` / `dispatcher` /
-  `scheduler` / `dedup` / `limits` / `model_id`；其余有默认值。三个超时从新的配置小节来：
-  `HookRouter(bindings, observer_timeout_ms=cfg.hooks.observer_timeout_ms,
-  interceptor_timeout_ms=cfg.hooks.interceptor_timeout_ms, on_failure=…)` 与
-  `context_provider_timeout_ms=cfg.context.provider_timeout_ms`。
-  `scheduler` 的类型参数必须是 `SessionScheduler[TurnReceipt]`。
-- **`ToolExecutor` 的 `granted` 是实例级授权**，默认全授予。`D26` 落地权限模型后要把它换成
-  真实集合——`prepare()` 取的是 `spec.permissions & granted`，缺权限在 `invoke()` 里折成
-  `PERMISSION_DENIED` 结果（`side_effect=NONE`，工具还没被碰过）。
-- **`ToolExecutor.orphans` 是 `EDG-104` 的落点**：实例停止时应当报告它（还有
-  `orphans_dropped`——「表里没有」与「被挤掉了」是两个结论）。目前没有调用方。
-- **`deliver` 回调是 Channel 的接线口**：`OrchestratorDeps.deliver` 缺省为 `None`（只攒不
-  发，测试与嵌入式用），`D23` 应当传一个按 `OutboundMessage.channel_id` 路由到对应
-  `Channel.deliver()` 的函数。
-- **`TurnOrchestrator.cancel(turn_id, reason)` 是 §10.3 的唯一入口**，`live_turns` 列出在跑
-  的 turn。`D23` 的 Ctrl-C 处理与 `D22` 的 `/cancel` 命令都走它，不要另建一张令牌表。
-- **`EventTap` 不要拆掉**：它是「engine 不发 `RuntimeEvent`」这条边界的兑现方式。想让
-  engine 直接拿一个 bus，就等于给 `EngineDeps` 开第五个槽。
-
-`D13` 留下的、`D22`/`D23` 必须用到的事实：
-
-- ~~**turn 事件由 `D14` 独家发布**~~ **`D14` 已落地**：`orchestrator.py` 是唯一发布点，
-  命令类 turn 同样有 `turn.started` 与终态事件（`KER-010`）。
-- **准入顺序是 去重 → 并发 → 分流**，不能换。`DedupCache.remember()` 返回 `DedupHit`
-  就直接跳过执行并引用上一次的 `turn_id`（`EDG-201`），**不要**让它先进队列。
-- **`SessionScheduler.submit(key, message, run)` 的 `run` 拿到的是一批消息**
-  （`QUEUE`/`REJECT` 恒为一条，`MERGE` 可能多条）。编排层的签名要按元组写，
-  换并发策略时才不需要改 orchestrator。会话历史的写入必须发生在 `run` 内部——
-  那是「持锁的单一写者」唯一成立的地方。
-- **`D22` 的每个内建命令注册的载荷必须是 `routing.RegisteredCommand(spec, handler)`**，
-  `build_command_index()` 会当场核对形状。权限（`operator_only`）与参数个数由 dispatcher
-  统一前置校验，命令自己不要再抄一遍。**带自由文本的命令要声明一个 `repeated=True` 的尾
-  参**，否则 dispatcher 会按「参数过多」拒掉（`D14` 写测试时踩到的）。
-- **`D23` 装配时按配置构造三件套**：`Dispatcher(index, prefix=cfg.routing.command_prefix)`、
-  `SessionScheduler(policy=ConcurrencyPolicy(cfg.routing.session_concurrency),
-  queue_max_size=cfg.routing.queue_max_size)`、
-  `DedupCache(capacity=…, ttl_ms=…)`。`build_command_index()` 要在启动期调用一次并让它的
-  异常直接冒泡——那正是 `CMD-002` 的「启动期报错」。
-
-`D12` 留下的、`D14`/`D23`/`D29` 必须用到的事实：
-
-- **`EventBus.publish()` 是同步的，不要 `await` 它**，也不要在订阅者里做慢活。
-  订阅者签名是 `Callable[[RuntimeEvent], None]`；要异步处理就在回调里塞进自己的有界队列。
-  连续 5 次失败或超过 50 ms 的投递会让订阅者被**自动退订**，查 `bus.health()`。
-- **发事件只走 `bus.publish(name, correlation=…, payload=…, error=…)`**，不要自己构造
-  `RuntimeEvent`：序号由 bus 分配，绕过它就会出现两个真相来源，`OBS-002` 的重放随之失效。
-  载荷不必自己脱敏——`prepare_payload()` 在构造前已经做完（`OBS-003`）。
-- **`D23` 必须接三根线**：`JsonlFileSink(layout.events_log_path)` 与 `MemoryRingSink()`
-  各 `bus.subscribe()` 一次；配置解析失败的 `except` 里调
-  `write_config_error(layout.config_error_log_path(today), error)`（`EDG-501` 后半句，
-  这是它唯一的落地点，漏了就没人实现）。实例停止时记得 `JsonlFileSink.close()`。
-- **`D14` 把 `D09` 的 9 个引擎事件翻译成 `EventName`**：`TurnStoppedByLimit` →
-  `turn.stopped_by_limit`（`D12` 新增的那个）。engine 自己不发布任何 `RuntimeEvent`，
-  它只产出封闭联合的引擎事件——那条边界不要在 `D14` 里模糊掉。
-- **`D29` 的 `nm capabilities` / `nm plugins` 与会话内 `/plugins` 共用
-  `Diagnostics`**，不各写一套查询；`D25`–`D27` 落地后只需给 `plugins_source` 传一个真
-  实现，`PluginStatus` / `PluginState` 已经备好。`PluginState` 的取值必须继续对得上
-  `EventName` 的 plugin 族，有测试盯着。
-- **`EventName` 现在有字面量快照**（`tests/contracts/test_events.py::EVENT_NAME_SNAPSHOT`）。
-  新增事件名要同时改那张表，那就是 `NFR-104` 的评审闸门。
-
-`D11` 留下的、`D24`/`D26` 必须用到的事实：
-
-- **`ctx.secret()` 返回的就是 `contracts.SecretStr`**（`D26`），不需要任何跨层转换——
-  这正是把它下沉到 `contracts/` 换来的。
-- **要落盘一份配置，先过 `prepare_for_write()`**（`D24`）。`kernel/config/` 自身仍然一个
-  字节都不写。
-- ~~**provider 凭据用 `resolve_text()` 解单个字段**（`D19`）~~ **`D19` 改走 `ctx.secret()`**：
-  `resolve_text()` 在 `kernel/config/secrets.py`，`R4` 禁止 `builtins/` import `kernel/`，
-  这条笔记按字面已不可执行。`model_openai` 声明 `secret:api_key` 并调 `ctx.secret("api_key")`
-  拿 `SecretStr`，`CONFIG_SECRET_MISSING` 与 `PERMISSION_DENIED` 的区分由 ctx 那侧兑现
-  （`FakePluginContext` 已有此行为基准）。`resolve_text()` 仍在，接线在 `D23`/`D26`——
-  把 `ctx.secret()` 的实现接到它上面，而不是让 `builtins/` 直接调它。
-
-`D10` 留下的、`D11`/`D12`/`D14`/`D23` 必须用到的事实：
-
-- ~~**`EDG-501` 的「把解析错误写到 `<instance_dir>/logs/`」`D10` 没有讨完**~~
-  **`D12` 已落地** `write_config_error()`，落点 `layout.config_error_log_path(day)`；
-  **`D23` 接线时必须调用它一次**，否则这条需求仍然没人实现。`EDG-501` 的核心
-  （拒绝启动 + 原文件不被改写）在 `D10` 已完整兑现：`config.json` 只以 `"rb"` 打开、
-  只在 `sources.read_config_file` 一处，`kernel/config/` 全包不出现任何写文件调用。
-- **`EDG-108`（配置试图禁用 CLI 入口）超出 `D10` 能力范围**：`resolve(disabled=...)` 是按
-  **提供方**索引的，表达不了「禁用某一个能力 kind」。**交给 `D23`/wiring**，在那里
-  `BUILTIN_MANIFESTS` 才存在、能知道哪一项是 `CLI_ENTRY`。
-- **`D11` 的缝已留好**（`D11` 已按此落地）：loader 把 `${VAR}` 当普通字符串、从不解析；
-  `config.json` 缺失不是错误（`file_present` 语义由默认值层承担）；`kernel/config/`
-  **从不写文件**，因此 `CFG-003` 的写回天然不会被加载路径破坏。
-  `LoadedConfig.merge.origins` 保留了逐指针来源，写回时可据此判断哪些值是用户显式写的。
-- ~~**`D24` 的缝已留好**~~ **`D24` 已用上它**：`schema.SECTION_SPECS` 与 `schema.defaults()`
-  是**唯一**的字段真相来源，`json_schema.py` 从它派生编辑器用的 schema，`scaffold.py` 只放
-  「用户必须动的那几个键」。命名按技术方案 §4.2 定为 `scaffold.py`（开发方案那行写的
-  `bootstrap.py` 已作废——`runtime/bootstrap.py` 是 `D23` 的装配根，两者不是一回事）。
-- **配置的四层优先级只在 `sources.collect_layers()` 的返回顺序里定义一次**
-  （`default < config.json < env < cli`）。新增来源要改那一处，不要在 loader 里另排一遍。
-- **环境变量是 `NUCLEAMIND_CFG_<SECTION>__<KEY>`**（双下划线分隔层级，因为字段名本身
-  含下划线），与选实例用的 `NUCLEAMIND_INSTANCE_DIR` / `NUCLEAMIND_INSTANCE` 靠前缀区分。
-  **实例定位的优先级是「显式目录 > 显式实例名 > 目录环境变量 > 名环境变量 > default」**
-  ——命令行参数压过环境变量，与配置四层同序；否则 shell 里导出过的
-  `NUCLEAMIND_INSTANCE_DIR` 会静默吃掉 `nm --instance work`。
-- **`kernel/config/` 不获取实例锁**：加载配置是纯读操作，必须能在 `nm config show`、
-  诊断与测试里安全调用；获取锁会改全局状态且需要配对释放。`InstanceLock` 的生命周期
-  归 `runtime/bootstrap.py`（§10.1 步骤 1 在步骤 2 之前）。本包也不注册 `atexit`。
-- **实例名的长度上限是 64**（`MAX_INSTANCE_NAME_LENGTH`），远小于 `contracts` 的通用标识
-  上限：它会成为一段路径分量，下面还要接 `sessions/<storage_id>.jsonl`，Windows 默认
-  MAX_PATH 是 260。想放宽要先想清楚会话写入在运行期失败的场景。
-
-`D09` 留下的、`D10`/`D12`/`D14` 必须用到的事实：
-
-- **engine 只分发 4 个 Hook**（`ENGINE_HOOKS`）：`BEFORE_MODEL_REQUEST`（每轮，次数 ==
-  迭代数——`D14` **不得**再分发一次，§10.2 已加脚注）、`AFTER_MODEL_RESPONSE`（观察者，
-  `HookOutcome` 没有 `response` 槽，响应改写永远走不通，续写只能多次调 `run_turn`）、
-  `BEFORE_TOOL_CALL`、`AFTER_TOOL_CALL`（`REPLACE` 发生在截断之前）。`turn_start` /
-  `context_assemble` / `turn_end` 归 orchestrator。
-- **`ToolInvoker.invoke` 必须在 `timeout_ms + tool_cancel_grace_ms` 内返回**（docstring
-  写死）；宽限期与孤儿任务登记只能在那里做。engine 不加第二层超时。`D14` 验收必须有一条
-  「不可取消工具在宽限期后返回 `side_effect=UNKNOWN`」的独立测试。
-- **工具失败不升级为 `TurnFailed`**（与开发方案验收表措辞不同的一处，结论在
-  `test_engine.py::test_tool_invoke_error_does_not_fail_the_turn` 与 §6.2.1）。
-  `fail_on_tool_error` 若需要由编排层多次调用之间检查，engine 不认识它。
-- ~~**`TurnStoppedByLimit` 的 `EventName` 缺口未解决**~~ **`D12` 已按 `NFR-104` 新增
-  `turn.stopped_by_limit`**，并给 `EventName` 补了字面量快照。`D14` 直接用它，不要拿
-  `turn.completed` 承载。
-- ~~**「用完预算后发一次不带 tools 的收尾请求」归 `D14`**~~ **`D14` 已落地**
-  （`orchestrator._wrap_up`）；长度截断续写与空回复重试仍未实现，见技术方案 §6.2.2。
-- ~~**参数非法由 `ToolInvoker` 判定**~~ **`D14` 已落地**（`invoker.py` 用 `jsonschema`，
-  顺序固定为 schema → 权限 → 执行）；未知工具名仍由 engine 合成错误消息。
-- **写内建/插件工具时**：声明 `FS_WRITE` 或 `SHELL` 权限的工具必须显式
-  `concurrency=EXCLUSIVE`（默认 `PARALLEL` 与旧行为相反，`scheduling.py` docstring 写死）。
-
-`D08` 留下的、`D09`/`D14` 必须用到的事实：
-
-- **检查点归属已经定死**：`CHECKPOINT_OWNERS` 里 engine 拿 2/3/5/6
-  （`BEFORE_MODEL_REQUEST` / `BETWEEN_STREAM_CHUNKS` / `BEFORE_TOOL_CALL` /
-  `AFTER_TOOL_RESULT`），orchestrator 拿 1/4。engine 里出现 1 或 4 就是分层错了——
-  它不知道 context 从哪来，也不负责写 assistant 消息。一律用 `token.checkpoint(where)`
-  而不是 `raise_if_requested()`，前者才带得上「停在哪一步」。
-- **engine 主循环的记账骨架**是 `check(pending_tool_calls=…)` -> `begin_iteration()` ->
-  模型 -> `record_tool_calls()`。判定必须在**发起前**，`test_limits.py` 里那段最小循环
-  就是这个骨架；`D09` 落地后由 `tests/kernel/test_engine.py` 在真引擎上重跑同一条
-  「缺省配置下有限步终止」的性质。
-- **越界不等于失败**：`LimitBreach.terminal_status` 为 `None` 的三项（单工具超时、
-  结果截断、上下文超限）turn 继续；`turn_timeout_ms` 的终态是 `CANCELLED` 而不是
-  `STOPPED_BY_LIMIT`。不要在 engine 里另写一份 kind→终态的判断，查 `LIMIT_OUTCOMES`。
-- **旧实现的 `_MAX_LENGTH_RECOVERIES = 3` / `_MAX_EMPTY_RETRIES = 2` 没有进
-  `TurnLimits`**：六项是技术方案 §6.4 冻结的表格，这两个是「模型返回异常时重试几次」
-  的编排策略（`EDG-303`），归 `D14`。engine 不该认识它们。工具超长结果落盘同理。
-  **`D14` 也没有实现它们**（技术方案 §6.2.2 已记为待办）：做法已经明确——用同一个
-  `ledger` 再调一次 `run_turn`——但它需要真实 Provider 的 `stop_reason=LENGTH` 才有意义，
-  留到 `D19` 之后再论证次数。
-- ~~**取消宽限期……届时需要在 `contracts/errors.py` 补 `tool.cancel_timeout` 码**~~
-  **`D14` 已落地**：码是 `ErrorCode.TIMEOUT_TOOL_CANCEL`，宽限期赛跑与孤儿任务表在
-  `kernel/turn/invoker.py`（不 `task.cancel()`——`CancelledError` 会让工具没机会
-  「保存已做的事再退出」，那正是 `CancelToken` 存在的理由）。
-
-`D07` 留下的、`D09`/`D14` 必须用到的事实：
-
-- **`tests/baseline/` 是一次性设施**：只锁 `legacy/agent/{loop,runner}.py` 的五类行为，
-  `D31` 删 `legacy/agent/` 的同一个 PR 内一并删除（`tests/baseline/README.md` 写死了这条）。
-  不要往里加与那五类无关的测试——越像通用套件越删不动。
-- **`D09` 的用法是「换构造、不换断言」**：把 `AgentRunner` 与 `AgentRunSpec` 的构造换成新
-  engine，断言尽量原样重跑。改不动的断言就是新旧语义差异，要在 `D09` 的文档里给结论，
-  **不要靠放宽断言让它通过**。`test_loop_behavior.py` 的决定项已由 `D14` 的 orchestrator
-  承接：预算耗尽推流（收尾请求）、工具失败不终止本轮、二次截断、孤儿 tool 丢弃、空
-  assistant 不入历史各有对应用例；两条不再成立的是 `fail_on_tool_error`（engine 不认识
-  这个开关）与 tool 结果的重放（新层保真存储但重放时跳过，见技术方案 §6.2.2）。
-- 旧实现的两条边界值得在新引擎里重新论证而不是照抄：`_MAX_LENGTH_RECOVERIES = 3`、
-  `_MAX_EMPTY_RETRIES = 2` 与「工具超长结果落盘到 workspace」都属于 `D08` `TurnLimits`
-  六项预算或 `D14` 的编排范畴，engine 本身不该再认识它们。
-- 基线里出现的 `.nanobot/tool-results/`、`NANOBOT_LLM_TIMEOUT_S` 是**迁移期运行契约**，
-  新层不保留（技术方案 §4.5），它们出现在断言里只是因为被测的是旧实现。
-
-`D07` 之前就已成立、继续有效的事实：
-
-- **`kernel/` 读 manifest 的分层张力，`D06` 已给出结论：不读。** `Registration` 只带
-  `overrides` 的**原始串**，由契约层的 `parse_capability_target()` 解码——manifest 的
-  `overrides` 字段（`sdk`）与覆盖解析（`kernel`）复用同一份实现，两边都不认识对方的类型。
-  因此 `D05` 记下的三条出路选的是**第三条的最小形态**：需要跨层传递的形状已经在
-  `contracts/capability.py` 里（`CapabilityRef` / `parse_capability_target`），
-  `PluginManifest` 整体**不必**下沉。`D25` 的 `kernel/plugins/` 沿用同一约定：
-  由 `runtime/`（唯一组装根）把 manifest 翻译成 `RegistrationBatch.add()` 的参数，
-  kernel 侧不出现第二套 manifest 校验。
-- **注册分派只有一套。** `builtins/registry.py` 只提供 `BUILTIN_MANIFESTS`，内建 bootstrap
-  与外部插件 loader 都走同一个 Host `NucleaAPI` 实现和 `RegistrationBatch`（技术方案 §6.1
-  末段）。`D16` 建立 Host 分派并接收注入的 Context，`D26` 补齐生产级权限实现——
-  **禁止为外部插件复制第二套注册分派**。
-- **`ResolutionReport` 是 `nm capabilities`（`D29`）与诊断接口的数据源**，四段
-  （`active` / `shadowed` / `disabled` / `failures`）已可序列化。`disabled` 由调用方传入的
-  「按提供方禁用」集合填充，`D10` 的配置层负责构造它。当前语义：**覆盖一个被禁用的目标
-  等同于目标不存在**（报 `override_target_missing`，不回退成新增注册）。若 `D10` 要放宽，
-  应在那里显式论证，不要在解析器里留隐式回退。
-- **priority 基准值由 `base_priority_for()` 决定**（内建 0 / 插件 100），`D16` 的内建
-  bootstrap **不要**自己传 priority，`D18` 的 `context_basic` 与 `D14` 的裁剪逻辑都依赖
-  这个基准：§10.2 「其余按 priority 逆序丢弃」意味着内建上下文最后被裁。
-- `on_override_failure`（`fail_start` / `use_builtin`，`CLI_ENTRY` 强制后者）**尚未实现**：
-  它描述的是「覆盖插件加载失败」时的行为，属于 `D27` 的加载流程，不在 registry 里。
-
-`D06` 之前就已成立、继续有效的事实：
-
-- `sdk.__all__` 与 `sdk.testing.__all__` 是**规范性清单**，有字面量快照测试
-  （`tests/sdk/test_public_surface.py`）。增删导出必须改快照，这就是评审闸门（`NFR-103`）。
-- `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应，对照表以字面量写死在
-  测试里。新增一类能力 = 同时改 `CapabilityKind`、`CAPABILITY_ARITY`、`NucleaAPI`、
-  对应 Protocol 与三处快照，没有捷径。
-- 契约类型**不从 `sdk` 转发**：插件按 `R4` 直接 `from nucleamind.contracts import ...`。
-  有一条测试盯着这件事，不要「顺手加个再导出」。
-- manifest 的所有校验失败都是 `NucleaError(PLUGIN_MANIFEST_UNSUPPORTED)` 且带字段路径；
-  外部数据只走 `sdk.parse_manifest(data, origin=...)`，不要直接 `PluginManifest(**data)`。
-- `sdk/manifest.py` **导入即不得有副作用**，有子进程 audit hook 测试盯着（写文件/网络/
-  牵连 `kernel`、`legacy`、`builtins` 都会失败）。往里加 import 前先想清楚。
-- 写内建能力或插件时，先继承 `sdk.testing` 的 5 个契约测试基类再写自己的用例；
-  基类里「后续应补齐」的清单就是各模块要补的验收项。
-
-`D02` 起就已经成立、继续有效的事实：
-
-- 新层每个模块的首个 docstring 必须含「职责：」「不负责：」两行，
-  否则 `tests/architecture/test_module_docstrings.py` 会失败。
-- 新层不得出现无 `# boundary:` 说明的 `Any`，不得 import `legacy/`。
-  契约层用 `JsonValue` 代替 `Any`，目前新层的 `Any` 数为 0，保持这个数字。
-- 错误码只能加在 `contracts/errors.py` 的 `ErrorCode` 并同步登记 `CODE_CATEGORIES`，
-  其他模块出现错误码字面量视为违规；`NucleaError` 的 `category` 不接受调用方传入。
-- `SessionKey.storage_id()` 的编码**已发布，不可更改**：改动会让历史会话目录失联。
-  新增分量同理需要评审——分量数变化会让 `from_storage_id()` 的三段假设失效。
-- 标识字段一律用 `contracts.ids.validate_identifier()`，不要在各模块重写非空/长度/
-  控制字符三件套。
-- `metadata` 与任何「来自外部的 JSON 映射」一律过 `contracts.metadata.normalize_metadata()`：
-  它同时完成上限校验、深拷贝与冻结。不要自己 `dict(...)` 了事——快照语义（调用方事后
-  改自己那份 dict 不影响已构造对象）依赖它。
-- 需要脱敏时复用 `contracts.errors.redact` / `scrub`，不要另写一套；
-  新增敏感键名要同时补「必须保留」的反向用例，防止把用量统计一并打掉。
-- 新增契约类型或字段时，必须同步 `tests/contracts/test_field_traceability.py` 的
-  `TRACEABILITY` 表，否则该测试会失败——这是 `D03` 为「字段遗漏到阶段 5 才暴露」
-  设的对冲，不要通过放宽断言来绕过。
-- `contracts` 内部的模块依赖方向是
-  `errors ← ids ← metadata ← {message, session, context, tool} ← {model, command}
-  ← capability ← protocols`，
-  子模块只在 `TYPE_CHECKING` 下反向从包根导入 `JsonValue`，运行时不成环。
-- 冲突语义只查 `contracts/capability.py::CAPABILITY_ARITY`，Hook 语义只查 `HOOK_KINDS`；
-  两张表都有以字面量写死的对照测试，改表必须同时改测试——这是「文档漂移」的挡板，
-  不要通过把测试改成从实现反推来绕过。
-- 覆盖目标串（`"builtin:fs.read"` / `"plugin:<id>:<name>"`）只用
-  `CapabilityRef.target` 与 `parse_capability_target()` 编解码，不要在 manifest 校验或
-  registry 里另写正则。
-- `protocols.py` 的 9 个 Protocol（`D05` 补入 `CliEntry`）是长期兼容承诺的起点：新增/删除方法必须同步
-  `tests/contracts/test_protocols.py` 的快照表，且新方法的 docstring 必须含
-  「**异常约定**」与「**取消语义**」两段，否则测试失败（`NFR-104`）。
-- 能力实现方只拿到只读的 `CancelSignal`；`request()` / `child()` 属于 `D08` 的
-  `kernel/turn/cancel.py::CancelToken`，不要把它加进 `contracts`。
-- `legacy/` 债务基线：352 个 Python 文件 / 133317 行
-  （`scripts/legacy_debt_baseline.json`，只允许用 `--lower-baseline` 下调）。
-- `runtime/legacy_entry.py` 是 `R6` 的唯一例外，白名单精确到这一个文件路径。
-- 本机跑测试时系统临时目录可能因沙箱权限不可写，`pytest` 需显式指定 basetemp。
-  **basetemp 必须落在仓库之外且父目录须已存在**（例如先建好 `D:/nm_pytest_tmp/`，
-  再传 `--basetemp=D:/nm_pytest_tmp/run1`）：放在仓库内会让 `GitStore` 的嵌套仓库保护
-  生效，凭空多出约 45 个 git 相关假失败；父目录不存在则 `tmp_path` 夹具直接报
-  `FileNotFoundError`，架构守卫的反向用例会全部 error。
-- 完整套件在本机的既有失败为 14–18 个，全部在 `legacy/`，与 `D00`–`D05` 无关：
-  `test_exec_platform.py` 的 Windows PowerShell UTF-8 用例、
-  `test_exec_session_tools.py` 的子进程时序用例、`test_web_fetch_security.py`、
-  `test_mcp_probe.py`、`test_mcp_tool.py`、oauth-cli-kit 相关用例，
-  以及 `channels/websocket` 的 `test_wrong_path_404`。数量在区间内浮动是因为其中几个
-  依赖网络与子进程时序；基线里记录的是这些用例的真实结果，不是「全绿」假设。
-  `D06` 完成时的实测为 14 failed / 6785 passed / 35 skipped
-  （`D05` 时 14 failed / 6729 passed，`D04` 时 17 failed / 6603 passed，
-  `D03` 时 14 failed / 6480 passed，`D02` 时 15 failed / 6295 passed）。失败数在区间内下降是因为网络与子进程时序用例
-  这一轮碰巧通过，不是修好了——它们仍是同一批家族。
-- `basedpyright` 在 `legacy/skills/skill-creator/scripts/` 上有 4 个既有报错
-  （`D00` 之前就存在），不是新层引入的。
-
-当前进度：D00 ✅  D01 ✅  D02 ✅  D03 ✅  D04 ✅  D05 ✅  D06 ✅  D07 ✅  D08 ✅  D09 ✅
-D10 ✅  D11 ✅  D12 ✅  D13 ✅  D14 ✅  D15 ✅  D16 ✅  D17 ✅  D18 ✅  D19 ✅  D20 ✅  D21 ✅
-D22 ✅  D23 ✅  D24 ✅  D25 ✅  D26 ✅  D27 ✅  D28 ✅  D29 ✅  D30 ✅  D31 ✅
-D32+ ⬜（能力插件化，尚未立项）
+- **工具进度提示的唯一数据源是 `tool.call_started` 事件**（`plugins/…-feishu/tool_hints.py`）。
+  `OutboundMessage` 只有 `content` 与 `metadata`，不带工具调用信息，因此 Channel 想显示
+  「agent 正在读文件」只能订阅事件、按 `correlation.session_key` 路由回 conversation。
+  载荷里**没有工具参数**，所以提示只有工具名——要恢复参数级细节就得把文件内容、绝对路径
+  与 shell 命令放进一条会被全部订阅者看到、会落进事件日志、还会被发到聊天平台上的载荷里，
+  那是一次要单独评审的脱敏决定。
+- **事件订阅者签名是同步的 `Callable[[RuntimeEvent], None]` 且连续 5 次抛异常会被自动退订**。
+  要异步处理就在回调里 `put_nowait` 进自己的**有界**队列，再由一条后台任务消费
+  （`feishu` 的 `_drain_hints`）。
+- **`R6` 与债务棘轮都没了**：`scripts/legacy_debt.py`、`legacy_debt_baseline.json`、
+  `tests/architecture/test_legacy_debt.py` 与 CI 的那个步骤全部删除。
+  `tests/architecture/` 现在守的是 `R1`–`R5`。
+- **沙箱下跑 pytest 要加 `--basetemp=.pytest-tmp`**：系统临时目录不可写时 `tmp_path`
+  夹具会以 `PermissionError` 报错，而那与被测代码无关。
+- **`docs/` 只剩三篇能力文档**（`session-storage` / `permissions` / `plugin-development`）。
+  21 篇描述被继承实现的文档随 `D35` 删除。新层的用户文档（安装、配置字段、CLI 参考、
+  部署）**尚未写**——**一条能力以插件形态落地时，在同一个 PR 里写它的文档**。
 
 ## 本目录文档分类
 

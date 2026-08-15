@@ -57,9 +57,12 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   并把 `anthropic` 从根 `pyproject.toml` 的依赖里摘掉；`D33` 已落地 M5 的第 4 项——
   **放开 Channel 泵的串行限制**（`kernel/routing/fanout.py` 的按 conversation 扇出）
   与官方插件 `plugins/nucleamind-plugin-discord/`，同 PR 删掉 `legacy/channels/discord/`；
-  下一步按技术方案 §13 M5 的顺序继续（Memory / 扩展 Tool / 其余 Channel / Cron / WebUI）。
-  遗留实现的**剩余部分**位于 `src/nucleamind/legacy/`（218 文件 / 73773 行），
-  自 `D31` 起**没有任何入口能启动它**——它只是 `D32+` 的在树迁移源；
+  `D34` 已落地官方 Feishu Channel 插件（`plugins/nucleamind-plugin-feishu/`）；
+  **`D35` 删掉了整个 `legacy/`、`tests/legacy/` 与 `webui/`**，`R6` 守卫、
+  `scripts/legacy_debt.py` 与债务棘轮一并退休——**项目范围本轮收窄**：Model Provider
+  止步于内建 `model-openai` + `anthropic` 插件，Channel 只做 `feishu`，WebUI 不做。
+  下一步是 M5 剩下的三项：**Memory / 扩展 Tool / Cron-Automation**，
+  迁移参考在 `references/nanobot/`（本地只读上游副本，见「参考项目读取规范」）；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`access/` 与 `cli/`，
@@ -73,8 +76,8 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
 > **命名（`D00` 已落地，技术方案 §4.5）**：Python 包为 `nucleamind`，发行名 `nucleamind`，
 > CLI 命令只有 `nm`（不保留 `nanobot` 别名）。新层只读 `NUCLEAMIND_*`、
 > `~/.nucleamind/<instance>/` 和 snake_case 配置，**不双读旧格式、不写长期兼容垫片**。
-> `src/nucleamind/legacy/` 在被删除前继续使用 `NANOBOT_*`、`~/.nanobot/` 和 camelCase
-> 配置别名——那是尚未改写完的实现，不是兼容承诺。
+> `D35` 删掉 `legacy/` 之后，仓库里已经没有第二套命名——`NANOBOT_*` / `~/.nanobot/` /
+> camelCase 只存在于 `references/nanobot/` 那份只读上游副本里。
 
 ## 仓库结构（`D00` 已落地，技术方案 §4.1–§4.4）
 
@@ -85,17 +88,18 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 ├── sdk/                   # 第 3 层：插件唯一依赖面，只 import contracts
 ├── builtins/              # 第 4 层：内建默认能力，与插件同等身份
 ├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
-├── embed/                 # 第 5 层：嵌入式 Python SDK
-└── legacy/                # 隔离区：nanobot 遗留代码，只出不进；D31 之后已无入口可启动
-plugins/                   # 一等公民：官方插件（openai-api、anthropic、discord）
+└── embed/                 # 第 5 层：嵌入式 Python SDK
+plugins/                   # 一等公民：官方插件（openai-api、anthropic、discord、feishu）
 examples/plugins/          # 教学用最小示例插件
-tests/                     # 镜像分层：architecture/ contracts/ kernel/ ... legacy/
+tests/                     # 镜像分层：architecture/ contracts/ kernel/ sdk/ builtins/ runtime/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
                            # 外加 integration/（骨架集成，Fake 在能力边界）与
                            # e2e/（开箱可用里程碑，只有传输层是替身）
 deploy/                    # Dockerfile / compose / entrypoint
-webui/                     # 前端源码（TypeScript）
 ```
+
+`D35` 之后**包里只有这六层**：`legacy/` 隔离区、`tests/legacy/` 与 `webui/` 全部删除，
+`R6`（新层禁止 import legacy/）随之退休——没有隔离区了，规则没有可判定的对象。
 
 `contracts/` 三层（基础 / 领域与执行 / 能力）已齐，`sdk/` 已冻结公开表面，
 `kernel/registry/` 已落地；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
@@ -558,36 +562,33 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m pytest tests/kernel/test_engine.py::test_function -v
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
-# 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic + D33 的 discord）：
-# 因此必须真的装进环境才跑得起来。tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
+# 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic + D33 的 discord
+# + D34 的 feishu）：经 entry point 发现，因此必须真的装进环境才跑得起来。
+# tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
+# **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi）因此不在 CI 环境里，
+# 而两个 Channel 插件的测试树仍须全绿。
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-discord
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-feishu
 
-# legacy/ 债务指标（只允许下降）
-.venv\Scripts\python.exe scripts/legacy_debt.py
-.venv\Scripts\python.exe scripts/legacy_debt.py --check          # CI 门禁形态
-.venv\Scripts\python.exe scripts/legacy_debt.py --lower-baseline # 迁完模块后下调基线
-
-# 架构守卫（R1–R6 / 模块头部 / 文件规模 / Any 边界 / 债务棘轮），CI 独立作业
+# 架构守卫（R1–R5 / 模块头部 / 文件规模 / Any 边界），CI 独立作业
 .venv\Scripts\python.exe -m pytest tests/architecture -q
 .venv\Scripts\python.exe scripts/check_startup_cost.py --check
 
 # 严格类型检查（与 CI 一致）
 uv sync --all-extras --dev
-uv run --no-sync python -m scripts.install_channel_dependencies --all-channels
 uv run --no-sync basedpyright
-
-# WebUI：前端源码仍在树里，但 D31 删掉了它的后端（legacy/webui/ + gateway + websocket
-# 通道）。在 D32+ 的 WebUI 插件落地前，下面这几条构建得出产物却没有服务端可连。
-cd webui && bun run build
-cd webui && bun run test
 
 # 无头模式：启动已启用的 Channel 插件并常驻（D31）
 nm serve
 ```
+
+**沙箱下跑 pytest 要加 `--basetemp=.pytest-tmp`**：系统临时目录不可写时
+`tmp_path` 夹具会以 `PermissionError` 报错，而那与被测代码无关。
+`.pytest-tmp/` 已在 `.gitignore` 里。
 
 ## Python 环境与沙箱
 
@@ -605,33 +606,26 @@ nm serve
 - 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
   对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
-## `legacy/` 剩余部分（`D31` 之后）
+## 剩余工作与迁移参考（`D35` 之后）
 
-`D31` 删掉了遗留 Agent 路径：`legacy/{agent,cli,webui,gateway,api,sdk,triggers}` 与
-`nanobot.py`、`__main__.py`、`channels/websocket/` 全部不在了，`nm legacy` 与
-`runtime/legacy_entry.py` 一并删除，`R6` 自此**没有例外**。
+`legacy/` 已经不存在。项目范围本轮收窄成：
 
-剩下的是**不依赖 agent 的库代码**，它们留在树里只有一个用途：`D32+` 把能力迁成插件时
-的在树参考（已改过名、有通过的测试，比 `references/nanobot` 的上游副本好用）。
-**它们此后不可达**——没有任何入口能启动它们，`legacy/README.md` 的隔离规则照旧，
-债务棘轮继续压着，每迁完一个模块就在同一个 PR 里删掉对应目录。
+| M5 项 | 范围 |
+| --- | --- |
+| 额外 Model Provider | **止步**：内建 `model-openai` + `anthropic` 插件已够 |
+| Memory | 仍要做 |
+| 扩展 Tool（web / search / image / mcp） | 仍要做 |
+| Channel | **只做 `feishu`**（`D34` 已交），其余 13 个放弃 |
+| Cron / Automation | 仍要做 |
+| WebUI | **不做**，前端源码已删 |
 
-- **LLM Providers**（`legacy/providers/`，13202 行）：OpenAI 兼容、OpenAI Responses API、
-  Azure、Bedrock、GitHub Copilot、Codex 等，基于公共基类（`base.py`），含图像生成与音频转录。
-  **`D32` 已取走 Anthropic 那一份**（`anthropic_provider.py` 与三条 `backend="anthropic"`
-  的 `ProviderSpec` 已删除），其余仍是后续 Model 插件化的来源。
-- **Channels**（`legacy/channels/`，45399 行）：Telegram、Slack、Feishu、
-  Matrix、WhatsApp、QQ、WeChat、WeCom、DingTalk、Email、MoChat、MS Teams、Mattermost。
-  `manager.py` 通过 `pkgutil` 扫描自动发现，每个 channel 是自包含包。
-  **`D33` 已取走 Discord**（`plugins/nucleamind-plugin-discord/`），其余仍是 Channel
-  插件化的来源——**照 discord 那个插件的形状写**。
-- **Message Bus**（`legacy/bus/`）、**Session**（`legacy/session/`）、
-  **Cron**（`legacy/cron/`）、**Command Router**（`legacy/command/`）、
-  **Config**（`legacy/config/`）、**Utils**（`legacy/utils/`）、
-  **Security**（`legacy/security/`）、**Skills**（`legacy/skills/`）：
-  上面两块的支撑代码。新 Kernel 已各有对应机制，因此它们的迁移价值主要是行为参考。
-- **WebUI 前端**（`webui/`，TypeScript）：源码保留，但 `D31` 删掉了它的后端。
-  在 `D32+` 的 WebUI 插件落地前它没有服务端可连。
+剩下三项的迁移参考在 **`references/nanobot/`**（本地只读的上游副本，被 Git 忽略）。
+它比原来的 `legacy/` 更全——`D31` 从 `legacy/` 删掉的 `agent/tools/` 与 memory 在那里
+还在。代价是未改名、没有通过的测试，因此**只能读不能搬**：按 `AGENTS.md` 原则 5，
+复用实现时把代码写到新家并补测试。
+
+`D32`–`D34` 已经把 M5 的五步法跑通三遍，**照它们的形状写**：a 步不新写基线，
+b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 
 ### 入口点
 
@@ -642,19 +636,20 @@ nm serve
 - **OpenAI 兼容 HTTP API**：官方插件 `plugins/nucleamind-plugin-openai-api/` + `nm serve`
 - **Anthropic 原生模型**：官方插件 `plugins/nucleamind-plugin-anthropic/`（一条 `MODEL` 能力）
 - **Discord bot**：官方插件 `plugins/nucleamind-plugin-discord/` + `nm serve`
+- **飞书 / Lark bot**：官方插件 `plugins/nucleamind-plugin-feishu/` + `nm serve`
 
 ## 架构约束与改造方向
 
 改造时遵循以下边界（详见 [.agent/design.md](.agent/design.md)）；分层与依赖规则
-`R1`–`R6` 见技术方案 §3.1、§4.2：
+`R1`–`R5` 见技术方案 §3.1、§4.2：
 
-1. **核心保持小，能力在边缘扩展**：新代码写在最终位置——机制进 `kernel/`，能力进 `builtins/` 或 `plugins/`，公开类型进 `contracts/`，装配进 `runtime/`。**不允许往 `legacy/` 新增文件**（只出不进，`R6`）。
+1. **核心保持小，能力在边缘扩展**：代码写在最终位置——机制进 `kernel/`，能力进 `builtins/` 或 `plugins/`，公开类型进 `contracts/`，装配进 `runtime/`。**不要再开隔离区**：`D35` 之后没有「先放着以后再清」的地方。
 2. **接口优先于实现**：不绑定具体数据库、聊天平台、模型供应商、工作流框架，优先设计抽象接口（Memory Interface、Context Interface、Message Interface、Agent Provider Interface）。
 3. **机制优先于功能**：核心提供 Extension Mechanism、Lifecycle、Registry、Interface，而不是堆积具体功能。
 4. **少结构、多智能**：优先简单可读的代码，不要引入不必要的框架层和间接层。
-5. **优先重复而非过早抽象**：channel/provider 之间允许重复逻辑（发送重试、媒体处理、消息拆分），不要为消除重复引入复杂基类。从 `legacy/` 复用实现时**把代码搬到新家并补测试**，不要 import 过来。
+5. **优先重复而非过早抽象**：channel/provider 之间允许重复逻辑（发送重试、媒体处理、消息拆分），不要为消除重复引入复杂基类。从 `references/nanobot/` 借鉴实现时**把代码写到新家并补测试**，那份副本不在包里、也不可 import。
 6. **在边界类型化动态数据**：wire payload、持久化记录、第三方 SDK 对象在拥有它们的边缘做解析/规范化，用 `TypedDict` 固定形状，不用 `Any` 向核心泄漏；`typing.cast` 必须有运行时检查支撑。
-7. **显式优于魔法**：配置必须显式声明（新层在 `kernel/config/`，`legacy/` 仍在 `legacy/config/schema.py`）；错误处理抛清晰异常，不静默修正坏输入。
+7. **显式优于魔法**：配置必须显式声明（字段表只在 `kernel/config/schema.py` 一处）；错误处理抛清晰异常，不静默修正坏输入。
 8. **新模块首个 docstring 含「职责/不负责」两行**（技术方案 §4.6）：`contracts/`、`kernel/`、`sdk/`、`runtime/` 强制，由 `D01` 的架构守卫检查。
 
 ## 常见坑与安全边界
@@ -692,8 +687,9 @@ nm serve
 ## 指令文件边界
 
 - 根目录 `AGENTS.md` 是本仓库 AI 编码代理的开发指引，`CLAUDE.md` 仅引用本文件。
-- `legacy/templates/AGENTS.md` 是运行时复制到用户 workspace 的 Agent 行为模板，不是仓库开发规范。
-- 修改 `legacy/templates/`、`legacy/skills/` 中的说明会改变最终用户 Agent 的行为；不要把仓库开发流程、上游协作方式或当前重构任务写入这些运行时模板。
+- 运行时复制到用户 workspace 的 Agent 行为模板随 `legacy/templates/` 一并删除；新 Kernel 的
+  同位物是 `builtins/context_basic/` 的基线指令与运维可配的自定义指令（`TrustLevel.OPERATOR`）。
+  改那里会改变最终用户 Agent 的行为——**不要**把仓库开发流程或当前重构任务写进去。
 
 ## 代码风格
 

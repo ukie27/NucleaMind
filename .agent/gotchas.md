@@ -1,41 +1,73 @@
 # Common Gotchas
 
-## Do not use `ruff format`
+## 不要运行 `ruff format`
 
-**不要运行 `ruff format`**——当前历史代码未经 ruff format 排版，整体运行会生成
-大面积无关 diff。只用 `ruff check`。
+历史代码未经 `ruff format` 排版，整体运行会生成大面积无关 diff。只用 `ruff check`。
 
-## Config `${VAR}` References
+## 沙箱下跑 pytest 要加 `--basetemp=.pytest-tmp`
 
-`config/loader.py` resolves `${VAR}` patterns in `config.json` at load time. This is **not** a shell-like default-value syntax. If the environment variable is missing, `load_config` raises `ValueError` and the agent falls back to default configuration.
+系统临时目录不可写时 `tmp_path` 夹具会以 `PermissionError` 报错，而那与被测代码无关。
+`.pytest-tmp/` 已在 `.gitignore` 里。
 
-Example valid usage:
-```json
-{ "providers": { "openrouter": { "apiKey": "${OPENROUTER_KEY}" } } }
-```
+## 插件的测试模块名要带插件前缀
 
-## Windows Compatibility
+`testpaths` 一次收集整个 `plugins/`，而 pytest 按**模块名**去重。两个插件各有一个
+`test_stream.py` 或 `_fakes.py` 时，先被导入的会顶掉后一个，另一棵测试树整体
+`ImportError`。**单独跑各自的目录看不出来，跑全量才炸。**
+照 `plugins/nucleamind-plugin-feishu/tests/` 的命名切。
 
-nanobot explicitly supports Windows. Key differences to keep in mind:
-- `ExecTool` defaults to PowerShell on Windows (`pwsh` when available, otherwise Windows PowerShell); pass `shell="cmd"` for cmd.exe syntax or cmd built-ins (`shell.py`).
-- `cli/commands.py` forces `sys.stdout`/`stderr` to UTF-8 on startup to handle emoji and multilingual input.
-- MCP stdio server commands are normalized for Windows path separators (`mcp.py`).
-- Always use `pathlib.Path` for path manipulation; do not assume `/` separators.
+## 配置的 `${VAR}` 引用
 
-## Prompt Templates
+`kernel/config/secrets.py` 在加载时解析 `config.json` 里的 `${VAR}`。这**不是**
+shell 那种带默认值的语法：
 
-Agent system prompts and scenario-specific instructions live in `nanobot/templates/` as Jinja2 markdown files (`identity.md`, `platform_policy.md`, `HEARTBEAT.md`, `SOUL.md`, etc.). Changing these files alters agent behavior as directly as changing Python code. They are loaded by `utils/prompt_templates.py`.
+- 没有 `${VAR:-默认值}` 回退，没有 `$${VAR}` 转义；
+- 空变量按**缺失**处理；
+- 任何位置的引用都算密钥（整串或内嵌）；
+- 缺失即 `CONFIG_SECRET_MISSING`，不静默回落到默认配置。
 
-Tool descriptions, skills, and replayed session history also shape model behavior. Treat changes to those surfaces like runtime code: keep them narrow, add a focused regression test when possible, and avoid teaching the model to repeat internal markers, local paths, or tool-call text.
+解析结果是按 JSON Pointer 索引的 `SecretMap`，**配置树自始至终持有 `${VAR}` 字面量**。
+要落盘一份配置前先过 `prepare_for_write()`。
 
-## Context Pollution Persists
+## Windows 兼容
 
-Anything written into memory, session history, or prompt inputs can be replayed into future LLM calls. Metadata such as timestamps, local media paths, tool-call echoes, and raw fallback dumps must be bounded and sanitized before they become examples for the model to imitate.
+NucleaMind 明确支持 Windows。几处容易踩的：
 
-## Skills as Extension Point
+- **起子进程必须走 `create_subprocess_shell`**（`builtins/tools_shell/command.py` 的模块
+  docstring 是唯一出处）：`cmd.exe` 接在 `/c` 后的是原始命令行尾巴，而 `subprocess` 用
+  `list2cmdline()` 把 argv 拼回字符串时会把内层引号转义成 `\"`，`cmd` 不认识——任何带
+  引号的命令当场残掉。平台分派只在 `process._spawn` 一处，有测试数 `os.name` 的出现次数。
+- **判断 PID 是否存活一律用 `kernel/config/process.py::process_is_alive()`**，绝不用
+  `os.kill(pid, 0)`：Windows 上 CPython 把非 CTRL 信号映射到 `TerminateProcess`，
+  那个「探测」会**杀掉目标进程**。返回值是三态，`UNKNOWN` 不得用来回收锁。
+- 一律用 `pathlib.Path`，不要假设 `/` 分隔符；路径比较过 `os.path.normcase`。
+- 测试里拦网络要拦 `connect` / `connect_ex` / `getaddrinfo` 的**目标**并放行回环，
+  **不要**拦 `socket.socket` 的构造——`ProactorEventLoop` 用 `socketpair()` 做 self-pipe，
+  那样只会证明事件循环起不来。
 
-Built-in skills live in `nanobot/skills/` (markdown + YAML frontmatter format). Agent capabilities that are "know-how" rather than code should be added as skills, not hardcoded into the agent loop. External skills can be published to and installed from ClawHub.
+## 上下文污染会一直留着
 
-## Atomic Session Writes
+写进会话历史、Context 片段或事件载荷的任何东西，都可能在未来的 LLM 调用里被重放。
+时间戳、本地媒体路径、工具调用回声、原始 fallback 转储在成为模型模仿的样例之前，
+必须有界且已脱敏。
 
-`agent/memory.py` writes `history.jsonl` atomically (temp file + fsync + rename + directory fsync). This guarantees durability across crashes. Do not replace this with a plain `open(..., "w")` write.
+**`trust=SYSTEM` 是进入系统指令位置的唯一凭据**，`kind` 不参与判定；`UNTRUSTED` 的包裹
+由契约层的 `as_model_text()` 完成，组装器不许自己拼字符串。运维配置的自定义指令是
+`TrustLevel.OPERATOR` 而不是 `SYSTEM`——它因此进不了 system 消息位置（`CMD-005`）。
+
+## 会话写入的原子性
+
+`builtins/session_jsonl/` 的 `committed_bytes` 提交水位是整批原子性的**全部**机制：
+读只认水位内的字节，写最后才换 `meta.json`。文件比水位**短**是损坏，不是「就这些了」。
+不要把它换成普通的 `open(..., "w")`。
+
+`builtins/tools_fs/` 的写走「临时文件 → `fsync` → `os.replace`」，替换成功后没有可失败
+的步骤，因此它一次 `SideEffect.UNKNOWN` 都不产出。
+
+## 事件订阅者是同步的
+
+签名是 `Callable[[RuntimeEvent], None]`，Kernel 在**发布事件的同一个栈**里调它——任何
+`await` 都会把 turn 的执行卡在回调上。要异步处理就在回调里 `put_nowait` 进自己的**有界**
+队列，再由一条后台任务消费（`plugins/nucleamind-plugin-feishu/` 的 `_drain_hints`）。
+
+连续 5 次失败、或单次投递超过 50 ms 达 5 次，订阅者会被**自动退订**——查 `bus.health()`。

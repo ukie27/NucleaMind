@@ -22,7 +22,7 @@
 
 **NucleaMind 是对 nanobot 的改造，不是它的兼容发行版。** 新架构的命名、目录、
 配置格式、环境变量与 CLI 接口冲突时一律以 NucleaMind 为准，不保留别名、不双读、
-不写长期迁移垫片；迁移期 `legacy/` 继续使用自己的旧运行契约（§4.5）。
+不写长期迁移垫片；`legacy/` 已随 `D35` 删除（§4.3）。
 
 ## 2. 设计目标与硬约束
 
@@ -105,10 +105,9 @@
                               |  只依赖 contracts
 第 1 层  公开数据契约    contracts（Message / Context / Tool / Model / Session / Error / Event）
 
-隔离区              legacy（nanobot 遗留代码，只出不进，最终清空）
 ```
 
-依赖只允许自上而下，六条硬规则：
+依赖只允许自上而下，五条硬规则：
 
 | 规则 | 内容 |
 | --- | --- |
@@ -117,21 +116,16 @@
 | `R3` | `sdk/` 只 import `contracts/`；它定义协议，宿主侧实现由 kernel 注入 |
 | `R4` | `builtins/` 与外部插件只能 import `sdk/` 和 `contracts/`；禁止 import `kernel/` |
 | `R5` | 只有 `runtime/` 可同时 import `kernel/` 与 `builtins/`；它是唯一的组装根 |
-| `R6` | 新层一律禁止 import `legacy/`。**`D31` 之后没有例外**——迁移期那个 `runtime/legacy_entry.py` 适配器已随 `nm legacy` 一并删除 |
 
 `R5` 把「组装」显式收敛到一个层。没有这条规则，`kernel/` 里迟早会出现
 `from nucleamind.builtins import ...` 的便利导入，`R2` 就名存实亡。
 
-`R6` 是**单向**的：新代码不得 import `legacy/`，但 `legacy/` 可以 import 新代码。
-方向刻意如此——迁移期 `legacy/` 里尚未删除的模块（如 `api/server.py`）需要改成调用新 Kernel，
-依赖箭头从遗留指向新架构，因此 `legacy/` 只会缩小，不会长出新的反向依赖。
-需要复用遗留实现时**把代码搬到新家并补测试**，而不是 import 过来；遗留模块删除时不留悬挂引用。
+曾经还有第六条 `R6`（新层禁止 import `legacy/`）。它是**单向**规则——新代码不得 import
+`legacy/`，但 `legacy/` 可以 import 新代码——服役期间只拦下过一处例外
+（`runtime/legacy_entry.py`，`D31` 删除）。`D35` 删掉 `legacy/` 之后它没有可判定的对象，
+随之退休。
 
-**`D31` 已经删掉 `runtime/legacy_entry.py`、那条精确路径白名单与 `nm legacy`**，
-架构测试的断言相应从「恰好只有一处新层 → legacy 导入」改成「一处也没有」。
-`D31` 之后 `legacy/` 里剩下的是不可达的库代码，只作 `D32+` 的在树迁移参考。
-
-`R1`–`R6` 不是文档约定，而是 `tests/architecture/test_import_boundaries.py` 中基于 AST
+`R1`–`R5` 不是文档约定，而是 `tests/architecture/test_import_boundaries.py` 中基于 AST
 的可执行断言（见 §12.3）。这直接落实 `NFR-101`、`NFR-102`、`NFR-103`、`KER-002`。
 
 ### 3.2 Kernel 只做四类事
@@ -292,12 +286,7 @@ src/nucleamind/
 │                              # （plugins / capabilities 见 D29）
 │
 ├── embed/                     # 第 5 层：嵌入式 Python SDK，runtime 的薄门面
-│   └── __init__.py            # open_instance() / run() / EmbeddedAgent（D23 落地）
-│
-└── legacy/                    # 隔离区：nanobot 遗留代码，只出不进
-    ├── README.md              # 说明隔离规则与迁移状态
-    ├── agent/  channels/  providers/  session/  webui_server/  ...
-    └── ...
+    └── __init__.py            # open_instance() / run() / EmbeddedAgent（D23 落地）
 ```
 
 三处容易混淆的命名，在此固定：
@@ -310,33 +299,35 @@ src/nucleamind/
 | `runtime/cli/` | `nm` **可执行程序**：解析 argv、组装实例 | 不是会话内的斜杠命令 |
 
 `sdk/` 这个最醒目的名字给插件 SDK——它才是本项目对外的主要接口面。
-`embed/` 是重写的新门面，不是从旧 `nanobot/sdk/` 移植：旧实现随 `legacy/` 一起死亡。
+`embed/` 是重写的新门面，不是从旧 `nanobot/sdk/` 移植：旧实现随 `legacy/` 一起删除。
 它只包装 `runtime/instance.py`，在 `D23` runtime 组装完成后落地，在此之前只是空骨架。
 
 `nm plugins enable` 与会话内 `/plugins` 是两个刻意分开的surface：前者是离线配置操作
 （改配置文件，下次启动生效），后者是运行期只读查询。两者共用
 `kernel/observability/diagnostics.py` 的同一份查询实现，不各写一套。
 
-### 4.3 遗留隔离区
+### 4.3 遗留隔离区（`D35` 已清空并删除）
 
-`legacy/` 承接现有 nanobot 的约 13 万行 Python。它不是「以后再说」的垃圾桶，而是有明确
-规则的隔离区：
+`legacy/` 曾承接现有 nanobot 的约 13 万行 Python。它的四条规则（只出不进、依赖单向、
+进度可度量、迁移即删除）已经跑完全程：`D31` 删掉遗留 Agent 路径，`D32`–`D34` 各迁走一项
+能力，`D35` 删掉剩下的全部 218 文件 / 73773 行。
 
-1. **只出不进**：不允许新增文件，不允许新功能进入（`R6` 由架构测试强制）。
-2. **依赖单向**：新代码不 import `legacy/`；`legacy/` 可 import 新代码（适配层方向）。
-3. **进度可度量**：`scripts/legacy_debt.py` 统计 `legacy/` 的文件数与行数，
-   CI 每次运行记录。这个数字只允许下降——上升即说明有人在往隔离区加东西。
-4. **迁移即删除**：一个能力迁到 `plugins/` 或 `builtins/` 后，`legacy/` 中的对应目录
-   在同一个 PR 内删除，不留「以后再清」的副本。
+**迁移期设施随之退休**：`R6` 守卫（新层禁止 import legacy/）、`scripts/legacy_debt.py`
+与债务基线、`tests/legacy/` 全部删除。守卫现在守的是 `R1`–`R5`。
 
-需要复用遗留实现（如路径守卫、原子写）时，**把代码搬到新家并补测试**，不 import 过来。
-这是「优先重复而非过早抽象」在迁移期的具体形态：短期有重复，但遗留目录能干净删除。
+`D35` 之后的迁移参考是 `references/nanobot/`——本地只读的上游副本，被 Git 忽略，
+不在包里也 import 不到。它比原来的 `legacy/` 更全（`D31` 从 `legacy/` 删掉的
+`agent/tools/` 与 memory 在那里还在），代价是未改名、没有通过的测试。
+因此复用实现时**只能读不能搬**：把代码写到新家并补测试。
+
+**不要再开第二个隔离区。** 「先放着以后再清」这件事本项目已经做过一次，成本是
+四个模块的迁移周期加一套只为度量它而存在的 CI 设施。
 
 ### 4.4 测试目录镜像分层
 
 ```text
 tests/                 # 是一个包（__init__.py），否则 builtins/ 与标准库的同名模块撞车
-├── architecture/      # R1–R6 守卫、SDK 公开面快照、文件规模、legacy 债务
+├── architecture/      # R1–R5 守卫、SDK 公开面快照、文件规模、Any 边界
 ├── contracts/         # 契约类型与不可变性
 ├── kernel/            # 各机制单测（Fake 驱动，无 IO）
 ├── sdk/               # 公开面与 manifest 无副作用
@@ -344,10 +335,10 @@ tests/                 # 是一个包（__init__.py），否则 builtins/ 与标
 ├── runtime/           # 组装与启动序列
 ├── plugins/           # 插件加载矩阵：正常 / 冲突 / 不兼容 / 失败
 ├── integration/       # 骨架集成（Fake 能力打通全链路）
-├── e2e/               # 全新安装到完成 turn（录制响应，不依赖网络）
-├── baseline/          # 遗留行为锁定，对应模块切换完成同 PR 删除
-└── legacy/            # 现有 nanobot 测试，随 legacy/ 一同缩小
+└── e2e/               # 全新安装到完成 turn（录制响应，不依赖网络）
 ```
+
+`baseline/`（遗留行为锁定）随 `D31` 删除，`legacy/` 随 `D35` 删除。
 
 测试目录与源码分层一一对应，看测试目录就能知道被测的是哪一层，
 以及该层允许依赖什么。
@@ -355,29 +346,24 @@ tests/                 # 是一个包（__init__.py），否则 builtins/ 与标
 ### 4.5 命名与包标识
 
 NucleaMind 是改造，不是 nanobot 的兼容发行版。新架构的命名冲突一律以 NucleaMind
-为准，**不在新层保留旧名、不做双读、不写长期迁移垫片**。迁移期的 `legacy/` 为保证
-现有功能可验证，继续读取自己的旧配置；这不是新架构的兼容承诺。
+为准，**不保留旧名、不做双读、不写长期迁移垫片**。
 
 | 项 | 现状 | 目标 | 旧名处置 |
 | --- | --- | --- | --- |
 | Python 包 | `nanobot` | `nucleamind` | 删除 |
 | 发行名 | `nanobot-ai` | `nucleamind` | 删除 |
 | CLI 命令 | `nanobot` | `nm` | 删除，不留别名 |
-| 环境变量前缀 | `NANOBOT_` | 新层只用 `NUCLEAMIND_` | `legacy/` 暂时保留；新层不双读 |
-| 实例目录 | `~/.nanobot/` | 新层使用 `~/.nucleamind/<instance>/` | `legacy/` 暂时保留；新层不读取 |
-| 配置键风格 | camelCase 别名 | 新层只用 snake_case | `legacy/` 暂时保留；新层不提供别名 |
+| 环境变量前缀 | `NANOBOT_` | 只用 `NUCLEAMIND_` | 删除（`D35`） |
+| 实例目录 | `~/.nanobot/` | `~/.nucleamind/<instance>/` | 删除（`D35`） |
+| 配置键风格 | camelCase 别名 | 只用 snake_case | 删除（`D35`） |
 | 插件 entry point 组 | 无 | `nucleamind.plugins` | — |
 
 不写长期兼容垫片的理由：每个垫片都要长期维护、要双份测试，而它们保护的是一个
 **本项目不再承诺支持的产品**。旧实例目录里的数据仍在磁盘上，需要时手工拷贝配置即可；
 这是一次性的人工动作，不值得让新 Kernel 长期承担双读逻辑。
 
-唯一保留的旧路径是 `legacy/` 内部代码本身——它不是兼容层，而是尚未改写完的实现，
-按 §4.3 的规则只出不进，最终清空。`D31` 已删掉 `nm legacy` 与遗留 Agent 路径，
-剩余部分自此**没有任何入口能启动**，只作 `D32+` 的在树迁移参考。
-
-> 本节取代 `AGENTS.md` 中「暂不重命名、不要混用 `nucleamind` 前缀」的旧约定。
-> `AGENTS.md` 需随 M-A 一并更新。
+`D35` 删掉 `legacy/` 之后仓库里已经没有第二套命名了——`NANOBOT_*` / `~/.nanobot/` /
+camelCase 只存在于 `references/nanobot/` 那份只读上游副本里。
 
 ### 4.6 模块头部约定
 
@@ -1682,10 +1668,9 @@ nm capabilities                                 # 报告中可见 provider 与 s
 | 公开 Protocol 方法 | 必须有 docstring 说明契约与异常约定 | CI 脚本 |
 | `Any` 使用 | 仅允许出现在 channel/provider 归一化边界，需 `# boundary:` 注释 | CI 脚本 |
 
-`legacy/` 隔离区不追溯适用，新层（`contracts/`、`kernel/`、`sdk/`、`builtins/`、
-`runtime/`、`embed/`）与 `plugins/` 必须满足。ruff 规则集在现有 `E, F, I, N, W`
-基础上，对新层新增 `C901`、`PLR0915`、`TRY`（异常规范）、`ASYNC`，
-用 `per-file-ignores` 让 `legacy/` 保留原规则集，避免历史代码产生大面积告警。
+全仓库适用。ruff 规则集在 `E, F, I, N, W` 基础上加 `C901`、`PLR0915`、
+`TRY`（异常规范）、`ASYNC`；`per-file-ignores` 只豁免 `scripts/` 与各测试树
+（阈值针对产品代码，不针对夹具与断言辅助）。`D35` 删掉 `legacy/` 之后没有豁免层了。
 沿用「不运行 `ruff format`」的既有约定。
 
 ### 12.2 命名约定
@@ -1706,7 +1691,7 @@ nm capabilities                                 # 报告中可见 provider 与 s
 
 | 目录 | 被测对象 | 允许的依赖 |
 | --- | --- | --- |
-| `architecture/` | import 边界、SDK 公开面、无特权、文件规模、legacy 债务 | 只读源码，不导入被测模块 |
+| `architecture/` | import 边界、SDK 公开面、无特权、文件规模、`Any` 边界 | 只读源码，不导入被测模块 |
 | `contracts/` | 契约类型与不可变性 | 仅 `contracts/` |
 | `kernel/` | engine、registry、取消、限额、并发 | Fake 能力，无真实 IO |
 | `sdk/` | 公开面、manifest 无副作用 | 仅 `sdk/` |
@@ -1715,11 +1700,10 @@ nm capabilities                                 # 报告中可见 provider 与 s
 | `plugins/` | 加载矩阵：启用/禁用/配置错误/版本不兼容/覆盖内建（`NFR-703`） | 示例插件 |
 | `integration/` | Fake 能力打通全链路（§10.2 全流程） | 全层 |
 | `e2e/` | 全新安装 → 配置凭据 → 完成带工具调用的 turn（`NFR-705`） | 录制响应，无网络 |
-| `baseline/` | 遗留行为锁定，对应模块切换完成同 PR 删除 | `legacy/` |
 
 **架构测试是本方案能否守住的关键**，具体三个：
 
-1. `test_import_boundaries.py`：用 `ast` 遍历所有模块的 import，断言 `R1`–`R6`。
+1. `test_import_boundaries.py`：用 `ast` 遍历所有模块的 import，断言 `R1`–`R5`。
    这把 `NFR-101`、`NFR-102`、`NFR-103`、`KER-002` 从口头约定变成不可绕过的检查。
 2. `test_public_surface.py`：对 `sdk.__all__` 做快照断言，SDK 表面变化必须走评审。
 3. `test_kernel_runs_without_builtins.py`：禁用全部可禁用内建实现，用 Fake provider
@@ -1828,7 +1812,7 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 
 完成判据：
 
-- `R1`–`R6` 各有 AST 断言，且各有一个「注入违规样例必须失败」的反向测试。
+- `R1`–`R5` 各有 AST 断言，且各有一个「注入违规样例必须失败」的反向测试。
 - 目标目录尚不存在时守卫返回通过而非报错（否则 M-B 自身无法验收）。
 - CI 中架构守卫是独立阶段，不允许 `skip`/`xfail`。
 - `legacy/` 债务指标接入 CI，数字只允许下降。
@@ -1904,37 +1888,39 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 
 ### M5 官方能力插件化（阶段三，P1）
 
-迁移顺序按「依赖少、风险低、行为易验证」排序：
+**范围已于 `D35` 收窄**（原为六项全做）：
 
 ```text
-1  额外 Model Provider（Anthropic 原生等）  —— 只依赖 ModelProvider 接口
-2  Memory（含 Dream 整合）                  —— 需 MemoryProvider 接口 + MEM-005 管理命令
-3  扩展 Tool（web、search、image、mcp）      —— 依赖 net/shell 权限
-4  Channel（Telegram/Discord/Slack/...）     —— 依赖长生命周期服务与投递降级
-5  Cron / Automation / Long-task            —— 依赖后台任务与 Hook
-6  WebUI + Gateway                          —— 依赖事件订阅与传输层
+1  额外 Model Provider   —— 止步：内建 model-openai + anthropic 插件已够（D32 交付）
+2  Memory                —— 仍要做，需 MemoryProvider 接口 + MEM-005 管理命令
+3  扩展 Tool（web、search、image、mcp）—— 仍要做，依赖 net/shell 权限
+4  Channel               —— 只做 feishu（D34 交付）与 discord（D33 交付），其余 13 个放弃
+5  Cron / Automation     —— 仍要做，依赖后台任务与 Hook
+6  WebUI + Gateway       —— 不做，前端源码已随 D35 删除
 ```
+
+收窄的理由是这是个人项目：十几个聊天平台与七八个 Model Provider 的适配面，维护成本
+远超它们创造的价值，而每一个都要长期跟着上游 API 变。**放弃的不是能力而是承诺**——
+第三方随时可以照 `plugins/` 里四个官方插件的形状再写一个。
 
 每个模块的迁移遵循同一套五步，避免 `13.9` 的双重机制问题：
 
 ```text
-a  为 legacy/ 中的旧实现补齐行为基线测试（tests/baseline/）
+a  读 references/nanobot/ 里的旧实现与它自己的测试当行为说明书
 b  实现插件版本，通过同一套契约测试
 c  切换：调用方改指插件版本，切换点唯一
-d  同 PR 内删除 legacy/ 中的对应目录
-e  同 PR 内删除该模块的 tests/baseline/ 用例与 tests/legacy/ 用例
+d  同 PR 内删除对应的遗留代码
+e  同 PR 内删除该模块的遗留测试
 ```
 
-第 d、e 步是硬要求：不删除就等于把同一能力的两份实现长期留在仓库里，
-`legacy/` 债务指标（§4.3）不下降即视为该模块未完成。
+`D35` 删掉 `legacy/` 之后，d/e 两步已经没有对象——它们退化成「更新文档」。
+a 步同样不再是「补基线测试」：`D32` 起就改成直接读旧实现，不为一个要删掉的实现
+再写一遍测试。
 
-**不设新旧双路径开关。** 切换在一个 PR 内完成，旧实现同时删除，
-因此不存在「两条路径同时可写同一份持久化状态」的问题。回退手段是 git，
-不是运行期配置项。若旧新实现的磁盘格式不兼容，则在该 PR 内提供一次性迁移脚本，
-而不是让两种格式长期共存。
+**不设新旧双路径开关。** 切换在一个 PR 内完成，回退手段是 git，不是运行期配置项。
 
-`legacy/` 清空后删除该目录、删除 `R6` 守卫与 `scripts/legacy_debt.py`，
-迁移期专用设施不留在最终仓库里。
+`legacy/` 已于 `D35` 清空并删除，`R6` 守卫与 `scripts/legacy_debt.py` 一并退休——
+迁移期专用设施不留在最终仓库里，这一条已经兑现。
 
 ### M6 生态兼容（阶段四，P2）
 
@@ -1956,9 +1942,9 @@ e  同 PR 内删除该模块的 tests/baseline/ 用例与 tests/legacy/ 用例
 
 | 风险 | 来源 | 应对 |
 | --- | --- | --- |
-| 只搬文件不解耦 | `13.1` | 架构测试 `R1`–`R6` 先于实现落地；engine 行数上限 |
+| 只搬文件不解耦 | `13.1` | 架构测试 `R1`–`R5` 先于实现落地；engine 行数上限 |
 | 重构中混入业务或配置变更 | M-A | M-A 只允许明列的命名变化；遗留配置、环境变量和状态目录保持不变；分三个可独立回退 commit |
-| 遗留隔离区长期不清 | §4.3 | `legacy/` 债务指标接入 CI 且只允许下降；M5 第 d/e 步强制同 PR 删除 |
+| 遗留隔离区长期不清 | §4.3 | **已闭环**：债务棘轮压到 `D35` 清空，隔离区与棘轮一并删除 |
 | 重命名遗漏 | §4.5 | M-A 验收双防线：归一化后的测试结果逐项一致 + 新层旧名扫描无意外命中 |
 | 一次性重写失控 | `13.1` | M2 采用「基线测试 → 新实现 → 单点切换并删除旧实现」，每步有独立验收，回退使用 git |
 | SDK 表面膨胀 | `13.2` | `NucleaAPI` 冻结 9 方法、Hook 冻结 10 个、`__all__` 快照测试 |
@@ -1993,12 +1979,12 @@ e  同 PR 内删除该模块的 tests/baseline/ 用例与 tests/legacy/ 用例
 
 进入实现前，本文档需通过以下检查：
 
-1. §3.1 的 `R1`–`R6` 依赖规则无歧义，且能写成 AST 断言。
+1. §3.1 的 `R1`–`R5` 依赖规则无歧义，且能写成 AST 断言。
 2. §5 的每个契约字段都能追溯到需求 §10 的逻辑字段。
 3. §10 的四条流程覆盖需求 §8 的全部步骤，且每个异常分支指向 §11 的编号场景。
 4. §15 的 12 项结论均有依据与验证方式，无「后续再定」。
 5. 需求 §15 的 P0 清单每一项都能在 §13 的 M1–M4 中找到对应交付物。
-6. §4.2 的每个目录都能归属到 `R1`–`R6` 中的确定层级，无歧义地带。
+6. §4.2 的每个目录都能归属到 `R1`–`R5` 中的确定层级，无歧义地带。
 7. 没有引入需求分析未涉及的新范围。
 
 实现过程中若发现某条结论不成立，先更新本文档再改代码，避免文档与实现脱节。

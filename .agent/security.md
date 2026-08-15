@@ -1,29 +1,67 @@
 # Security Boundaries
 
-The agent operates with significant power (file system, shell, web). The following guards must not be bypassed when modifying related code.
+Agent 拥有相当大的权力（文件系统、shell、出网）。修改相关代码时，以下守卫不可绕过。
 
-## Workspace Restriction
+**贯穿全文的一条**：这些都是**应用级**守卫，不是进程隔离。同进程的插件可以绕过全部门面
+直接 `import os`。这句话写在 `sdk/api.py`、`runtime/access/__init__.py` 与
+`docs/permissions.md` 里，是必须保留的诚实声明而不是免责套话。
 
-Filesystem tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `apply_patch`) resolve paths through the workspace path resolver (`agent/tools/filesystem.py` / `agent/tools/path_utils.py`), which enforces that the resolved path must lie under the active workspace when workspace restriction is enabled. The media upload directory is always an internal extra read root while restricted.
+## 工作区路径限制（`NFR-302`）
 
-Additional filesystem roots must be capability-specific. `extra_allowed_dirs` is a legacy read-only alias. Use `extra_read_allowed_dirs` for read-only roots, `extra_write_allowed_dirs` only when a write-capable tool is intentionally allowed to modify an extra directory, and exact file allowlists when a tool may modify only specific files.
+文件工具（`fs.read` / `fs.write` / `fs.edit` / `fs.list` / `fs.grep`）的路径守卫在
+`builtins/tools_fs/paths.py`。**两道校验缺一不可**：
 
-Shell execution (`ExecTool`, `agent/tools/shell.py`) also respects `restrict_to_workspace` as an application-level guard: if enabled and `working_dir` is outside the workspace, the command is rejected before execution, and command text is checked for obvious workspace escapes. This is not process-level isolation; use an exec sandbox backend for that.
+1. **逻辑校验**（`normpath`）挡 `..`；
+2. **realpath 校验**（`resolve()`）挡符号链接与重解析点。
 
-**Rule**: Any new path-handling logic must go through the workspace path resolver or perform an equivalent containment check with explicit read/write capability semantics.
+两次比较都过 `os.path.normcase`。不做 `expanduser()`，绝对路径接受但过同一道门，
+Windows 保留设备名两个平台一律拒绝。越界错误的 `detail` **只放原始串**——宿主机绝对
+路径进到模型可见的错误里就是泄漏。
 
-## SSRF Protection
+TOCTOU 挡不住，docstring 里如实写着，**别删掉那段**。
 
-All outbound HTTP requests from agent tools must pass through the shared URL guards in `security/network.py` (`validate_url_target` or `resolve_url_target`). By default they block loopback, RFC1918 private addresses, CGNAT ranges, link-local ranges, and cloud metadata endpoints (including `169.254.169.254`).
+同一套判定还有两份独立实现：`builtins/tools_shell/paths.py::CwdGuard`（守 shell 的 cwd）
+与 `runtime/access/` 的 `ctx.fs` 门面。三份刻意不共享（`R4` 够不着，且它们是可各自被禁用
+的独立提供方），由逐条对照测试钉住——**改一边要改多边**。
 
-For direct requests, the only escape hatch is `configure_ssrf_whitelist(cidrs)`, which reads from `config.tools.ssrf_whitelist` at load time. An explicitly configured `providers.<name>.proxy` is a separate user-authorized trust boundary for provider requests and provider-returned image URL downloads. Those downloads still reject malformed URLs and locally identifiable private/internal targets on every redirect, but hostnames unavailable to local DNS are delegated to the trusted proxy. The user-selected proxy owns final DNS resolution and network egress policy.
+**守住 cwd 不等于守住命令能碰到的文件**（`cat /etc/shadow` 与 cwd 无关）。
 
-HTTP/SSE MCP transports are part of this boundary: validate configured MCP URLs before probing or constructing clients, and validate each outgoing HTTP request before redirects are followed. Local/private HTTP MCP endpoints are allowed only through the explicit SSRF whitelist. Stdio MCP servers are not part of the HTTP SSRF path.
+**规则**：任何新的路径处理逻辑必须走上述守卫，或做等价的包含性检查并区分读/写能力。
 
-**Rule**: Do not add direct `httpx.get` / `requests.get` calls in tools. Route through the existing web fetch utilities or replicate the `validate_url_target` check.
+## SSRF 防护（`EDG-406`）
 
-## Shell Sandbox
+插件的出网唯一门面是 `ctx.net`（`runtime/access/`，需 `net` 权限）。它判的是
+**DNS 解析之后**的地址，并**手动跟随重定向**、对每一跳重新校验：私有网段、回环、
+链路本地与云元数据地址（含 `169.254.169.254`）一律拒绝。
 
-`tools/sandbox.py` provides optional command wrapping. The only backend currently shipped is `bwrap` (bubblewrap), intended for containerized deployments. On Windows and bare-metal Linux without `bwrap`, commands run in the native shell with workspace restriction as an application-level guard only.
+**规则**：不要在插件里直接 `httpx.get`。直接连当然连得出去——这正是应用级权限的意义：
+绕过门面的写法在评审时一眼可见。已知例外是自带连接的平台 SDK（`lark-oapi`、
+`discord.py`），它们一个字节都不过门面，这个空档如实写在各插件的 README 里。
 
-**Rule**: If adding a new sandbox backend, implement `_wrap_<name>(command, workspace, cwd) -> str` and register it in `_BACKENDS`.
+## Shell 执行（`EDG-407`、`NFR-307`）
+
+`shell.exec`（`builtins/tools_shell/`）的三条边界：
+
+- **子进程环境是白名单**（`environ.py`）：父进程环境默认一个字节都不进子进程，只有平台
+  基线与运维在 `pass_env` 里点名的才转发。**不要改成黑名单**——那要求穷举所有会泄漏的
+  变量名，漏一个就把凭据交给模型写的命令。哨兵用例走真实子进程打印自己的环境。
+- **取消是三步**（`process.py::_supervise`）：终止信号 → 等宽限期 → 强杀 + 收尸。
+  直接 `kill()` 会让一条 `rm -rf` 写了一半就停，那不叫取消成功。
+- **副作用三档判定只在 `executor.py::_fold` 一处**：执行**之前**失败 → `NONE`；
+  进程自己退出或宽限期内被终止 → `OCCURRED`；**宽限期用尽被强杀 → `UNKNOWN`**
+  （全项目唯一的 `SideEffect.UNKNOWN` 产出点）。
+
+没有进程级沙箱。容器化部署时用容器本身做隔离。
+
+## 凭据
+
+**`contracts.SecretStr` 是全项目唯一的密钥包装类型**。它刻意不是 dataclass
+（`dataclasses.asdict()` 会抖出明文），`str` / `repr` / `format` 恒为 `MASK`，
+明文只经 `reveal()` 取出。
+
+配置树自始至终只持有 `${VAR}` 字面量，解析后的明文不进配置文档
+（`kernel/config/secrets.py`，`CFG-003`）——写回因此「没有别的东西可写」。
+
+脱敏在**构造时**完成（`contracts.errors.redact` / `scrub`），不依赖日志或 sink 层。
+事件载荷在 `RuntimeEvent` 构造**之前**已经过 `prepare_payload()`。
+**不要在 sink 或调用点补第二道脱敏**，也不要新写敏感键名规则。

@@ -1,71 +1,45 @@
 # NucleaMind Technical Documentation
 
-This directory documents the implementation currently inherited from nanobot.
-Use it to understand the code before extracting kernel interfaces and moving
-feature implementations into plugins.
+本目录只放**当前实现**的文档。`D35` 删掉 `legacy/` 的同一个 PR 里，21 篇描述被继承的
+nanobot 实现的文档一并删除——它们教人跑的是 `nanobot onboard`、`nanobot webui` 这类
+已经不存在的命令，留着比没有更糟。需要确认旧行为时读 `references/nanobot/`
+（见 [`references/README.md`](./references/README.md)）。
 
-These documents describe the current source tree, not the final NucleaMind
-architecture. Product installation, upstream release, contribution, and
-marketing guides have intentionally been removed during the refactoring phase.
+新层的**用户**文档（安装、配置字段、CLI 参考、部署）尚未写。当前的权威来源是代码本身与
+`nm` 的内置帮助：`nm init` 生成一份带 `$schema` 的 `config.json`，`nm --help` 列出全部
+子命令，`nm capabilities` 说明哪些能力真的生效了。
 
-## Start Here
+## 现有文档
 
-| Goal | Document |
+| 目标 | 文档 |
 |---|---|
-| Understand project direction | [`project/开发背景.md`](./project/开发背景.md) |
-| Follow repository development rules | [`../AGENTS.md`](../AGENTS.md) |
-| Continue current development work | [`project/README.md`](./project/README.md) |
-| Read reference-project navigation rules | [`references/README.md`](./references/README.md) |
-| Understand current runtime ownership and flow | [`architecture.md`](./architecture.md) |
-| Extend the current implementation while it is being migrated | [`development.md`](./development.md) |
-| Inspect configuration fields and defaults | [`configuration.md`](./configuration.md) |
-| Understand provider selection | [`providers.md`](./providers.md) |
-| Understand session and runtime concepts | [`concepts.md`](./concepts.md) |
-| Read or migrate the built-in session storage format | [`session-storage.md`](./session-storage.md) |
-| Understand the plugin permission model | [`permissions.md`](./permissions.md) |
-| Write a plugin | [`plugin-development.md`](./plugin-development.md) |
-| Inspect WebSocket behavior | [`websocket.md`](./websocket.md) |
-| Inspect the current Python SDK | [`python-sdk.md`](./python-sdk.md) |
+| 了解项目方向 | [`project/开发背景.md`](./project/开发背景.md) |
+| 遵循仓库开发规则 | [`../AGENTS.md`](../AGENTS.md) |
+| 接手当前开发工作 | [`project/README.md`](./project/README.md) |
+| 参考项目的阅读规范 | [`references/README.md`](./references/README.md) |
+| 写一个插件 | [`plugin-development.md`](./plugin-development.md) |
+| 理解插件权限模型 | [`permissions.md`](./permissions.md) |
+| 读或迁移内建会话存储格式 | [`session-storage.md`](./session-storage.md) |
 
-Exception: [`session-storage.md`](./session-storage.md) documents the **new** kernel's
-built-in session storage format (`builtins/session_jsonl/`), not the inherited one. It is a
-published compatibility contract for external implementations, so keep it in sync with
-`src/nucleamind/builtins/session_jsonl/codec.py`.
+三篇能力文档各自的性质：
 
-Same exception for [`permissions.md`](./permissions.md): it documents the **new** kernel's
-plugin permission model (`kernel/plugins/permissions.py`, `runtime/access/`), including the
-`permissions.json` file format and the explicit statement that application-level permissions
-are **not** process isolation.
+- [`session-storage.md`](./session-storage.md) 是**已发布的兼容契约**（`SES-006`），
+  外部实现按它写；改 `builtins/session_jsonl/codec.py` 的字段就得改它。
+- [`permissions.md`](./permissions.md) 记着 `permissions.json` 的文件格式，以及那句必须
+  保留的诚实声明——**应用级权限不是进程隔离**。
+- [`plugin-development.md`](./plugin-development.md) 的代码块由
+  `tests/e2e/test_plugin_docs.py` **直接执行**，因此不会漂移。
 
-Same exception for [`plugin-development.md`](./plugin-development.md): it is the getting-started
-guide for the **new** kernel's plugin system, written against `sdk/` and the two examples under
-`examples/plugins/`. Its code blocks are executed by `tests/e2e/test_plugin_docs.py`, so they
-cannot drift from the implementation.
+官方插件各自带 README，说明自己的配置项与已知边界：
+[`plugins/README.md`](../plugins/README.md)。
 
-## Current Feature References
+## 文档规则
 
-The following pages remain because they explain behavior that still exists in
-the inherited implementation:
-
-- [`chat-apps.md`](./chat-apps.md)
-- [`memory.md`](./memory.md)
-- [`automations.md`](./automations.md)
-- [`image-generation.md`](./image-generation.md)
-- [`webui.md`](./webui.md)
-- [`openai-api.md`](./openai-api.md)
-- [`channel-package-guide.md`](./channel-package-guide.md)
-
-Treat feature-specific ownership described in these pages as current state to be
-migrated, not as a permanent kernel boundary.
-
-## Documentation Rules
-
-- Do not point NucleaMind users to the upstream nanobot installer, PyPI package,
-  issue tracker, pull requests, releases, community channels, or deployment
-  buttons.
-- Keep `nanobot` in commands and import paths only while the code still uses that
-  name.
-- Record upstream attribution in `LICENSE`, `THIRD_PARTY_NOTICES.md`, or an
-  explicit historical note, not as current project ownership.
-- Update architecture documentation when an ownership boundary moves into or
-  out of the kernel.
+- 不把 NucleaMind 用户指向上游 nanobot 的安装器、PyPI 包、issue、PR、release
+  或社区渠道。
+- 上游归属记在 `LICENSE`、`THIRD_PARTY_NOTICES.md` 或明确的历史说明里，
+  不作为本项目的当前归属。
+- 一条能力以插件形态落地时，在同一个 PR 里写它的文档；**不要**先留一篇描述
+  「将来会怎样」的占位文档。
+- 所有权边界移进或移出 Kernel 时更新架构说明（当前在
+  [`project/technical-design.md`](./project/technical-design.md)）。
