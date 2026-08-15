@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nucleamind-plugin-image"
+version = "0.1.0"
+description = "NucleaMind 官方插件：image.generate 图像生成工具"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# 插件只依赖 SDK 与契约（`R4`）。`httpx` 是宿主已有的依赖：图像端点由运维配置
+# （要支持本地 ollama / 自建网关），因此走 raw httpx 而不是 `ctx.net`，见 README。
+dependencies = ["nucleamind>=0.3.0", "httpx>=0.28.0,<1.0.0"]
+
+# 发现的唯一入口（技术方案 §7.1）。name 必须等于 manifest 里的 `id`。
+[project.entry-points."nucleamind.plugins"]
+image = "nucleamind_plugin_image:MANIFEST"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nucleamind_plugin_image"]
