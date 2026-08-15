@@ -55,6 +55,7 @@ SDK_TESTING_PUBLIC_NAMES: Final[tuple[str, ...]] = (
     "FakeTurnControl",
     "InMemorySessionStore",
     "ManualCancel",
+    "MemoryProviderContract",
     "ModelProviderContract",
     "NullChannel",
     "RecordingEventSubscriber",

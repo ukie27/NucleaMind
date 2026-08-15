@@ -68,7 +68,11 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   外加一次机制扩展 **`D38-A` `CapabilityDecl.namespace`**（`sdk/manifest.py` +
   `kernel/plugins/{declarations,host}.py` + `runtime/wiring.py`）与一个新错误码
   `EXTERNAL_TOOL_SERVER`。
-  下一步是 M5 剩下的两项：**Memory / Cron-Automation**，
+  `D39` 已落地 **M5 的「Memory」**：官方插件 `memory`
+  （`plugins/nucleamind-plugin-memory/`，一份 manifest 四类能力：`MEMORY:jsonl` 存储本体 +
+  `CONTEXT:memory` 每轮自动召回 + 三条 `TOOL:memory.*` + `COMMAND:memory`），
+  外加一次冻结表面变更 **`sdk.testing.MemoryProviderContract`**（第 6 个契约基类）。
+  下一步是 M5 最后一项：**Cron-Automation**，
   迁移参考在 `references/nanobot/`（本地只读上游副本，见「参考项目读取规范」）；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
@@ -129,7 +133,10 @@ deploy/                    # Dockerfile / compose / entrypoint
 `sdk/` 同样已冻结：`sdk.__all__` 与 `sdk.testing.__all__` 是规范性清单，有字面量快照测试；
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
-写内建能力或插件时，先继承 `sdk.testing` 的 5 个契约测试基类。
+写内建能力或插件时，先继承 `sdk.testing` 的 6 个契约测试基类
+（`D39` 补上了 `MemoryProviderContract`）。**契约基类挡不住签名不一致**——它只在你自己
+传的实参下跑，`isinstance` 又只查属性存在性，见下方 `plugins/nucleamind-plugin-memory/`
+那条。
 
 **`D22` 给 `PluginContext` 加了 `instance` 与 `turns`**（类型是 `contracts` 的
 `InstanceView` / `TurnControl`，`sdk.__all__` 因此一个字都没变）。它们是插件读取实例自身
@@ -464,6 +471,36 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `read_bytes` / `write_bytes`（`image` 因此如实声明 `fs:write` 直接用 `pathlib`），
   `HttpAccess` 不能流式（`web.fetch` 因此只能先下完再截断）。三条都是冻结表面的缺口。
 
+`plugins/nucleamind-plugin-memory/`（`D39`，M5 的 Memory）六条：
+
+- **`CapabilityKind.MEMORY` 至今没有 kernel 消费者。** `memory_providers_from()` 除测试外
+  没有调用方、`runtime/bootstrap.py` 从不取它、`kernel/turn/context_builder.py` 只认
+  `ContextProvider`——因此**只注册一条 `MEMORY` 能力，记忆永远进不了模型**。本插件的记忆
+  靠自己那条 `CONTEXT:memory` 进上下文，`MEMORY:jsonl` 注册的意义是**契约形状**
+  （第三方换后端的对照目标）。下一个想用 `MEMORY` 的人先读这条，别以为它已经接上了。
+- **契约的 `MemoryProvider` 三个方法一个 `SessionKey` 都不带**，因此经那条接口只能服务
+  `agent` 级范围；`session` / `workspace` 由插件自己的四条通路（Context Provider /
+  三条工具 / 一条命令）承担，它们分别从 `SessionSnapshot.session_key` 与
+  `Correlation.session_key` 拿身份。**`CommandInvocation` 也只能走 `correlation`**——
+  `InboundMessage` 只有 `channel_id + conversation_id`，缺 `scope`，拼不出 `SessionKey`。
+- **`FragmentScope.USER` 落不了地**：召回路径拿不到发送者身份（`SessionMessage` 一个
+  sender 字段都没有），折成「按 conversation 存」会让群聊里 A 的用户记忆被召回给 B。
+  拒绝它并说明原因，不静默降级。
+- **召回片段的 `priority` 必须 > 0 且一条记录一个片段。** `HISTORY_TRIM_PRIORITY` 是 0
+  而组装器按 priority **逆序**丢弃，因此记忆排在历史之前被丢——记忆下一轮还能重新召回，
+  历史丢了就是丢了。拼成一大块就只能整块留或整块丢，`dropped` 的记账也失去精度。
+- **写入侧统一 `trust=UNTRUSTED` 并忽略调用方声明的 trust**（`record.from_fragment`）。
+  `/memory add` 敲进来的内容与模型写的一样不可信——群聊里任何人都能敲那条命令。
+  `sensitivity=SECRET` 直接拒绝写入：组装器本来就不会把它送进模型，存进去只是一条永远
+  召不回来、却躺在明文文件里的记录。
+- **`CommandHandler.handle` 收 `(invocation, cancel)` 两个参数。** 本轮第一版只写了一个，
+  49 个命令用例**全绿**——它们直接用一个实参调 `handle()`，测的是「我自己写的那个签名」
+  而不是「kernel 会怎么调」，真实表现是 `nm run` 下一条 `kernel.unexpected` + `TypeError`。
+  `isinstance` 对 `runtime_checkable` Protocol 只查属性存在性，而 basedpyright 的 `include`
+  只覆盖 `src/nucleamind`（**插件全都不在类型检查范围内**）。因此
+  `test_memory_plugin.py` 有一条 `inspect.signature` 逐个比对注册实现与契约 Protocol 的
+  守卫，**下一个插件照抄它**。
+
 `plugins/nucleamind-plugin-mcp/`（`D38-B`）是第一个桥接类插件，五条：
 
 - **连接必须由一条后台任务拥有**（`supervisor.py`）。`mcp` 的三种传输都建在 anyio 的任务组
@@ -630,7 +667,7 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
 # 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic + D33 的 discord
-# + D34 的 feishu + D36–D38 的 web / image / mcp）：经 entry point 发现，
+# + D34 的 feishu + D36–D38 的 web / image / mcp + D39 的 memory）：经 entry point 发现，
 # 因此必须真的装进环境才跑得起来。
 # tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
 # **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi / mcp）因此不在 CI 环境里，
@@ -644,6 +681,7 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-web
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-image
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-mcp
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-memory
 
 # 架构守卫（R1–R5 / 模块头部 / 文件规模 / Any 边界），CI 独立作业
 .venv\Scripts\python.exe -m pytest tests/architecture -q
@@ -684,7 +722,7 @@ nm serve
 | M5 项 | 范围 |
 | --- | --- |
 | 额外 Model Provider | **止步**：内建 `model-openai` + `anthropic` 插件已够 |
-| Memory | 仍要做 |
+| Memory | **已交**：`memory` 插件（`D39`） |
 | 扩展 Tool | **已交**：`web`（`D36`）、`image`（`D37`）、`mcp`（`D38`） |
 | Channel | **只做 `feishu`**（`D34` 已交），其余 13 个放弃 |
 | Cron / Automation | 仍要做 |
@@ -715,6 +753,7 @@ b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 - **抓网页 / 搜网**：官方插件 `plugins/nucleamind-plugin-web/`（`web.fetch` + `web.search`）
 - **图像生成**：官方插件 `plugins/nucleamind-plugin-image/`（`image.generate`）
 - **MCP 工具桥接**：官方插件 `plugins/nucleamind-plugin-mcp/`（一条命名空间声明）
+- **长期记忆**：官方插件 `plugins/nucleamind-plugin-memory/`（`/memory` 命令 + 三条工具 + 每轮自动召回）
 
 ## 架构约束与改造方向
 

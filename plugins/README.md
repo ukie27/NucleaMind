@@ -27,6 +27,7 @@ import 兄弟模块，依赖规则 `R4` 就成了空话。官方插件与第三�
 | `nucleamind-plugin-web/` | `web` | `TOOL:web.fetch` + `TOOL:web.search` —— 抓网页与搜网两件工具 | `D36` |
 | `nucleamind-plugin-image/` | `image` | `TOOL:image.generate` —— 按文字描述生成图像并落盘 | `D37` |
 | `nucleamind-plugin-mcp/` | `mcp` | `TOOL:mcp.*` —— 把 MCP server 的工具接进实例（命名空间声明，`D38-A` 机制的第一个使用者） | `D38` |
+| `nucleamind-plugin-memory/` | `memory` | `MEMORY:jsonl` + `CONTEXT:memory` + 三条 `TOOL:memory.*` + `COMMAND:memory` —— 跨 Session 的长期记忆（JSONL 存储 + 关键词召回，零新依赖） | `D39` |
 
 **它们必须真的装进环境才会被发现**（entry point 没有第二条路）：
 
@@ -38,6 +39,7 @@ pip install --no-deps -e plugins/nucleamind-plugin-feishu
 pip install --no-deps -e plugins/nucleamind-plugin-web
 pip install --no-deps -e plugins/nucleamind-plugin-image
 pip install --no-deps -e plugins/nucleamind-plugin-mcp
+pip install --no-deps -e plugins/nucleamind-plugin-memory
 ```
 
 装上不等于启用——`plugins.enabled` 是唯一闸门，改完要重启实例。

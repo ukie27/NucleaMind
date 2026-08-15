@@ -1,6 +1,6 @@
 """契约测试基类：可替换性的证明（技术方案 §12.3、`NFR-702`）。
 
-职责：为 5 类能力提供可继承的契约测试基类——实现方（内建或插件）继承对应基类并提供
+职责：为 6 类能力提供可继承的契约测试基类——实现方（内建或插件）继承对应基类并提供
 构造夹具，即获得全部通用用例。
 不负责：测某个具体实现的独有行为、提供夹具本身（那在 `fakes.py`）、启动 Kernel。
 
@@ -35,7 +35,10 @@ from nucleamind.contracts import (
     ContextFragment,
     ContextProvider,
     ErrorCategory,
+    FragmentKind,
+    FragmentScope,
     JsonValue,
+    MemoryProvider,
     ModelCapability,
     ModelMessage,
     ModelProvider,
@@ -53,6 +56,7 @@ from nucleamind.contracts import (
     ToolHandler,
     ToolInvocation,
     ToolSpec,
+    TrustLevel,
     TurnId,
 )
 
@@ -347,3 +351,99 @@ class ChannelContract(_ContractBase):
         await channel.start()
         await channel.deliver(self.make_outbound(channel))
         await channel.stop()
+
+
+class MemoryProviderContract(_ContractBase):
+    """`MemoryProvider` 的通用契约（需求 §9.8 `MEM-001`–`MEM-005`）。
+
+    `MEM-001`「Kernel 只依赖 Memory Interface，不假设文件、向量或图数据库」的全部意义
+    就是后端可替换——而没有一个可执行的契约基类，那句话只是文档。这个基类是它的可执行形态：
+    换后端的人继承它，就拿到「换完之后调用方看到的行为不变」的证明。
+
+    实现方要提供 `make_provider()`。`make_fragment()` 有默认实现，用 `AGENT` 范围——
+    契约的三个方法**都不带 `SessionKey`**，因此只有实例级范围在这条接口上无歧义；
+    需要别的范围的实现方自己覆盖它。
+
+    后续应补齐：`MEM-003` 的降级（后端不可用时 Kernel 按配置继续对话）需要装配根参与，
+    属于集成测试而不是单个实现的契约。
+    """
+
+    def make_provider(self) -> MemoryProvider:
+        self._required("make_provider")
+        raise AssertionError  # pragma: no cover
+
+    def make_fragment(self, content: str = "记住这件事") -> ContextFragment:
+        return ContextFragment(
+            source="contract:memory",
+            kind=FragmentKind.MEMORY,
+            content=content,
+            priority=50,
+            estimated_tokens=len(content),
+            scope=FragmentScope.AGENT,
+            # 模型生成内容应以 `UNTRUSTED` 写入——召回时会被包裹为数据块（`EDG-306`）。
+            trust=TrustLevel.UNTRUSTED,
+        )
+
+    def recall_scope(self) -> FragmentScope:
+        """`recall()` 用哪个范围。与 `make_fragment()` 的范围必须一致。"""
+        return FragmentScope.AGENT
+
+    async def test_remember_returns_a_usable_record_id(self) -> None:
+        """`remember()` 交出的标识必须是非空字符串，且能喂回 `forget()`。"""
+        provider = self.make_provider()
+        record_id = await provider.remember(self.make_fragment(), ManualCancel())
+        assert isinstance(record_id, str)
+        assert record_id
+        assert await provider.forget(record_id) is True
+
+    async def test_forget_reports_whether_the_record_existed(self) -> None:
+        """不存在返回 `False`**且不抛**（契约原文）——重复删除是幂等的。"""
+        provider = self.make_provider()
+        record_id = await provider.remember(self.make_fragment(), ManualCancel())
+        assert await provider.forget(record_id) is True
+        assert await provider.forget(record_id) is False
+
+    async def test_recall_keys_can_be_fed_back_to_forget(self) -> None:
+        """`recall()` 返回映射而不是元组，正是为了让 `MEM-005` 的删除拿得到标识。"""
+        provider = self.make_provider()
+        content = "召回之后要能删掉这一条"
+        await provider.remember(self.make_fragment(content), ManualCancel())
+        recalled = await provider.recall(
+            content, scope=self.recall_scope(), limit=5, cancel=ManualCancel()
+        )
+        assert recalled, "刚写进去的内容用它自己当查询词，必须召得回来"
+        for record_id, fragment in recalled.items():
+            assert isinstance(fragment, ContextFragment)
+            assert await provider.forget(record_id) is True
+
+    async def test_recall_respects_the_limit(self) -> None:
+        provider = self.make_provider()
+        for index in range(4):
+            await provider.remember(self.make_fragment(f"限额用例第 {index} 条"), ManualCancel())
+        recalled = await provider.recall(
+            "限额用例", scope=self.recall_scope(), limit=2, cancel=ManualCancel()
+        )
+        assert len(recalled) <= 2
+
+    async def test_recall_order_is_relevance_order(self) -> None:
+        """**顺序即相关性排序**（契约原文）：实现方必须按相关性从高到低插入。
+
+        判据只用契约保证得了的那一条：拿其中一条的原文当查询词，它必须排第一。
+        「第二名该是谁」是实现的自由。
+        """
+        provider = self.make_provider()
+        target = "锦瑟无端五十弦"
+        for content in ("春江潮水连海平", target, "千里莺啼绿映红"):
+            await provider.remember(self.make_fragment(content), ManualCancel())
+        recalled = await provider.recall(
+            target, scope=self.recall_scope(), limit=3, cancel=ManualCancel()
+        )
+        assert recalled, "用原文当查询词必须召得回来"
+        assert next(iter(recalled.values())).content == target
+
+    async def test_recall_on_an_empty_store_is_not_an_error(self) -> None:
+        """查不到东西返回空映射，不抛——但**故障时不得**用空结果掩盖（那条由实现自测）。"""
+        recalled = await self.make_provider().recall(
+            "这个实例里不存在的查询词", scope=self.recall_scope(), limit=3, cancel=ManualCancel()
+        )
+        assert dict(recalled) == {}

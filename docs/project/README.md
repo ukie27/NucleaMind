@@ -1,6 +1,6 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-15（`D38` 收口）
+- 更新时间：2026-08-15（`D39` 收口）
 - 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D38` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
@@ -8,7 +8,9 @@
   `D36`–`D38` 已交齐 **M5 的「扩展 Tool」**：官方插件 `web`（`web.fetch` / `web.search`）、
   `image`（`image.generate`）、`mcp`（命名空间桥接），外加一次机制扩展
   `CapabilityDecl.namespace`（`D38-A`）。
-  下一步是 M5 剩下的两项：**Memory / Cron-Automation**
+  `D39` 已交齐 **M5 的「Memory」**：官方插件 `memory`（一份 manifest 四类能力），
+  外加第 6 个契约基类 `sdk.testing.MemoryProviderContract`。
+  下一步是 M5 最后一项：**Cron-Automation**
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1906,6 +1908,75 @@
     另一项可测量的是 entry point 枚举约 **50 ms/次**，它扫的是**整个 site-packages** 而不是
     我们的插件数（本轮多装 3 个插件的增量可以忽略）。这一项按 `NFR-405` 原文只告警不失败。
 
+- **`D39` 官方插件 `memory`：跨 Session 的长期记忆 ★**（`plugins/nucleamind-plugin-memory/`
+  八个模块约 1500 行 + `sdk/testing/contracts.py` 的第 6 个契约基类 +
+  `tests/sdk/` 两处快照与一个反向样例 + 插件自己 230 个用例）：
+  - **本轮拍板的五件事**，逐条记在下面；`kernel/` 与 `runtime/` **一行未改**。
+  - **① 形状定为「插件自洽」，因为探查发现 `CapabilityKind.MEMORY` 至今没有 kernel
+    消费者**：`memory_providers_from()` 除测试外没有调用方、`runtime/bootstrap.py` 从不取它、
+    `kernel/turn/context_builder.py` 只认 `ContextProvider`——**只注册一条 `MEMORY` 能力，
+    记忆永远进不了模型**。于是一份 manifest 声明四类能力，四者共用同一个 `MemoryStore`：
+    `MEMORY:jsonl`（契约形状，给第三方换后端一个可对照、可被新契约基类驱动的目标）、
+    `CONTEXT:memory`（记忆真正进上下文的**唯一**路径）、三条 `TOOL:memory.*`、
+    `COMMAND:memory`。另一条路是给装配根加「选哪一个 MemoryProvider」的配置与 `MEM-003`
+    的降级策略——那是核心扩张，本轮刻意没做，**这一点写在 README 与 docstring 里，
+    不假装它已经接上了**。
+  - **② 分区只用召回路径真的拿得到的身份**（`partition.py` 是唯一映射点）：
+    `session` → `SessionKey.storage_id()`（复用已发布的编码契约）、`workspace` →
+    `SessionKey.scope`、`agent` → 一份。**`FragmentScope.USER` 拒绝写入并说明原因**：
+    `SessionSnapshot` 里一个 sender 字段都没有，折成「按 conversation 存」会让群聊里 A 的
+    用户记忆被召回给 B——那是真实的隐私泄漏，静默降级比报错危险得多。
+    记录标识是 `<scope>-<token>#<seq>`，`#` 不在 `storage_id()` 的安全字符集里，
+    因此切分不可能切错位置（与 `storage_id()` 用 `~` 是同一条推理）。
+  - **③ 存储照搬 `builtins/session_jsonl` 的 `committed_bytes` 提交水位**，检索是自写打分
+    （`scoring.py`，TF-IDF 式 + `sqrt` 长度归一；英文按词切、**CJK 按字符二元组**切——
+    无词典的折中，会有「模式深色」部分命中「深色模式」这类误召回，如实写在 README 里）。
+    记忆是 10²–10³ 条量级，全量扫描是毫秒级，为它上索引或引入向量后端都是过早抽象
+    （后者还需要一次 embedding 调用，而**插件今天发不起模型请求**）。**`forget()` 真的删**：
+    重写整个分区文件，不留墓碑——`MEM-005` 要的是删除，而墓碑不是删除。
+  - **④ 一切写入统一 `trust=UNTRUSTED` 并忽略调用方声明的 trust**
+    （`record.from_fragment()`，本插件唯一一处刻意不采纳调用方声明的地方）：
+    `/memory add` 敲进来的内容与模型写的一样不可信，群聊里任何人都能敲那条命令。
+    召回内容因此恒被 `as_model_text()` 包成 `<untrusted-data>` 数据块（`EDG-306`）。
+    **`sensitivity=SECRET` 直接拒绝写入**——组装器本来就不会把它送进模型，存进去只是一条
+    永远召不回来、却躺在明文文件里的记录。
+  - **⑤ 召回片段的 `priority` 必须 > 0，且一条记录一个片段**：`HISTORY_TRIM_PRIORITY` 是 0
+    而组装器按 priority **逆序**丢弃，记忆排在历史之前被丢是刻意的（记忆下一轮还能重新
+    召回，历史丢了就是丢了）；拼成一大块就只能整块留或整块丢，`dropped` 的记账也失去精度。
+  - **一处冻结表面变更**：`sdk/testing` 新增 **`MemoryProviderContract`**（第 6 个契约基类）。
+    `MEM-001`「Kernel 只依赖接口、不假设后端」的全部意义就是后端可替换，而在此之前
+    **唯独 `MemoryProvider` 没有可执行的契约基类**，那句话只是文档。按 `D30` 立的规矩同时
+    加了一个反向样例（`_RecallsInInsertionOrder`：按插入顺序返回——契约写死「顺序即相关性」，
+    而按插入顺序返回是最省事、也最难被发现的一种违约）。代价是 `sdk.testing.__all__` 的两处
+    字面量快照；**`sdk.__all__` 一个字未动，`CapabilityKind` 一个取值未加**。
+  - **本轮抓到的一个真 bug，它值得单独记**：`CommandHandler.handle` 收
+    `(invocation, cancel)` 两个参数，而第一版只写了一个。**49 个命令用例全绿**——它们直接用
+    一个实参调 `handle()`，测的是「我自己写的那个签名」而不是「kernel 会怎么调」；
+    真实表现是 `nm run` 下一条 `kernel.unexpected` + `TypeError`，**只有跑真实 CLI 才暴露**。
+    `isinstance` 对 `runtime_checkable` Protocol 只查属性存在性，而 basedpyright 的
+    `include = ["src/nucleamind"]` **把全部插件排除在类型检查之外**。补的守卫是
+    `test_memory_plugin.py` 里一条 `inspect.signature` 逐个比对注册实现与契约 Protocol 的
+    用例，**下一个插件照抄它**；命令用例也全部改成 kernel 的调用形状。
+  - **零新依赖、零权限扩张**：只声明 `fs:read` / `fs:write`（`FileAccess` 没有追加、
+    `fsync` 与原子替换，与 `session_jsonl` 逐字同一条先例）。不出网，因此**没有**那份零网络
+    autouse 夹具。`critical=False`——没有长期记忆的 Agent 仍然能对话，那正是 `MEM-003` 的
+    降级形态。
+  - **参考实现里刻意没搬的三样**（`references/nanobot/nanobot/agent/memory.py` 1221 行）：
+    **Dream**（定时让 LLM 读历史、增量改写长期记忆）——它要「插件能发起模型调用」，
+    而 `PluginContext` 没有这条通道，定时触发又是 `D40`；**GitStore**（记忆变更的版本历史）
+    ——它要求把记忆存成 Git 仓库里的文本文件，那会把存储形态钉死成一种后端；
+    **`SOUL.md` / `USER.md` / `MEMORY.md` 三份固定文件**——那是 Agent 人格与用户画像，
+    属于 `builtins/context_basic` 的运维指令那一档，不是长期记忆机制。
+  - 验收：新层十个测试目录 + 八个插件共 **3351 passed / 10 skipped / 0 failed**
+    （`D38` 收口时 3116）；`ruff check`（src + plugins + examples + tests + scripts）、
+    `basedpyright` **0 errors**、`tests/architecture` 56 个、`check_startup_cost --check`
+    全通过（`startup_ms` 读数约 470 ms，本机比 `D38` 记的 800–870 低，告警仍是那条
+    `import httpx`；**未启用的插件零导入开销**这条没松动）。
+    **端到端在开发机上真的跑过**：`nm plugins list` 发现 → `nm plugins enable memory` →
+    `nm capabilities` 六条全在 → 一次真实 turn 里模型调 `memory.remember` 写盘 →
+    **换一个进程**再问，那条记忆以 `<untrusted-data source="plugin:memory">` 出现在请求里 →
+    `/memory list|search|show|forget` 与别名 `/mem` 逐条验过。
+
 
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -2012,8 +2083,15 @@
   `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
   `bootstrap.py`、`first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`access/` 与 `cli/`；`embed/` 已落地薄门面。
-  **`plugins/` 目前有七个官方插件**：`openai-api`、`anthropic`、`discord`、`feishu`、
-  `web`、`image`、`mcp`。
+  `D39` 已完成，**M5 的「Memory」一项交齐**：官方插件 `memory`
+  （`plugins/nucleamind-plugin-memory/`，一份 manifest 声明四类能力——`MEMORY:jsonl` 存储
+  本体、`CONTEXT:memory` 每轮自动召回、三条 `TOOL:memory.*`、`COMMAND:memory`，
+  JSONL + 提交水位 + 自写关键词打分，**零新依赖**），外加一次冻结表面变更
+  **`sdk.testing.MemoryProviderContract`**（第 6 个契约基类 + 一个反向样例）。
+  探查中发现的决定性事实：**`CapabilityKind.MEMORY` 至今没有 kernel 消费者**，
+  因此本插件自产自销、`kernel/` 一行未改（详见下方「`D39` 留下的事实」）。
+  **`plugins/` 目前有八个官方插件**：`openai-api`、`anthropic`、`discord`、`feishu`、
+  `web`、`image`、`mcp`、`memory`。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -2061,11 +2139,10 @@
 
 ## 下一步工作
 
-项目范围本轮收窄（见文首）。M5 只剩两项，各自独立编号、独立验收：
+项目范围本轮收窄（见文首）。**M5 只剩一项**（`D39` 已交 Memory）：
 
 | # | 模块 | 迁移参考 | 备注 |
 | --- | --- | --- | --- |
-| `D39?` | **Memory** | `references/nanobot/nanobot/agent/memory/`、`skills/memory/` | 需要 `MemoryProvider` 接口 + `MEM-005` 管理命令 |
 | `D40?` | **Cron / Automation** | `references/nanobot/nanobot/cron/` | 依赖后台任务（`ctx.spawn_task`）与 Hook |
 
 **「扩展 Tool」已由 `D36`–`D38` 交齐**（`web` / `image` / `mcp` 三个官方插件 +
@@ -2074,8 +2151,8 @@
 `providers/transcription.py`（语音转写）同样没做——它是另一类能力（音频输入），而契约层
 今天没有多模态输入位置。
 
-**五步法在本仓库已经跑通七遍**（`D32` anthropic、`D33` discord、`D34` feishu、`D35` 收尾、
-`D36` web、`D37` image、`D38` mcp），照它们的形状写：
+**五步法在本仓库已经跑通八遍**（`D32` anthropic、`D33` discord、`D34` feishu、`D35` 收尾、
+`D36` web、`D37` image、`D38` mcp、`D39` memory），照它们的形状写：
 
 - a 步**不新写基线**——`references/nanobot/` 里的实现与它自己的测试就是行为说明书。
 - b 步在 `plugins/` 里**新写**而不是搬运（`AGENTS.md` 原则 5）。那份副本被 Git 忽略、
@@ -2098,7 +2175,7 @@
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 三件挂着的独立事项
+### 四件挂着的独立事项
 
 1. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
    **provider-opaque 块槽位**。Anthropic 要求多轮续写时把 `thinking` 块（含 `signature`）
@@ -2121,6 +2198,43 @@
      直接用 `pathlib`。
    - **`HttpAccess.request` 不能流式。** `web.fetch` 因此只能先下完整个响应体再截断，
      无法按字节提前中断连接。
+   - **`ToolResult` 那条 `D39` 又撞了一次**：`memory.recall` 的输出同样只能靠一行提醒性
+     文字。这是第二个撞上它的插件，值得作为「该做了」的信号。
+
+4. **`MemoryProvider` 的接口形状与它的使用场景对不上**（`D39` 提出）：三个方法
+   **都不带 `SessionKey`**，因此经这条契约只能表达实例级（`agent`）的记忆——
+   `session` / `workspace` 范围在它上面无从定位。`memory` 插件因此绕开了自己注册的那条
+   `MEMORY` 能力，用内部的 session 感知 store 服务四条通路。要么给三个方法加一个
+   `scope_key`（冻结表面变更），要么承认 `MemoryProvider` 就是「实例级长期记忆」的接口、
+   把会话级记忆归给 `ContextProvider`——**目前是后者，但那是默认而不是决定过的**。
+
+### `D39` 留下的、后续必须用到的事实
+
+- **`CapabilityKind.MEMORY` 仍然没有 kernel 消费者。** `memory` 插件自产自销：记忆靠它
+  自己的 `CONTEXT:memory` 进上下文。要让「换一个 `MEMORY` 实现即刻生效」成立，得给装配根
+  加「选哪一个 MemoryProvider」的配置与 `MEM-003` 的降级策略——那是核心扩张，
+  `D39` 刻意没做。**在那之前，别以为注册一条 `MEMORY` 能力就够了。**
+- **`ContextProvider.provide()` 与 `ToolInvocation` 都拿不到发送者身份**
+  （`SessionSnapshot` 里的 `SessionMessage` 一个 sender 字段都没有），因此
+  `FragmentScope.USER` 今天落不了地。要支持它得先让身份到得了召回路径，那是一次契约变更。
+- **`CommandInvocation` 里能拼出 `SessionKey` 的只有 `correlation`**：
+  `InboundMessage` 只有 `channel_id + conversation_id`，缺 `scope`。
+- **插件发不起模型调用**：`PluginContext` 没有这条通道。因此任何「让 LLM 自己整理数据」
+  的设计（Dream 式记忆整理、自动摘要、语义 embedding）在今天的机制下都做不出来。
+  它同时依赖 `D40` 的定时触发。想做就要先评审一次 `PluginContext` 的表面扩展。
+- **basedpyright 的 `include = ["src/nucleamind"]` 把 `plugins/` 全部排除在类型检查之外。**
+  加上「`isinstance` 对 `runtime_checkable` Protocol 只查属性存在性」「契约基类只在你自己
+  传的实参下跑」，**插件实现与契约 Protocol 的签名不一致没有任何自动闸门**——`D39` 就是这么
+  漏掉 `handle(invocation, cancel)` 的第二个参数、直到跑真实 `nm run` 才发现。
+  `plugins/nucleamind-plugin-memory/tests/test_memory_plugin.py` 里那条 `inspect.signature`
+  守卫是目前唯一的对策，**下一个插件照抄它**。
+- **Git Bash 会把 `-p "/memory list"` 里的 `/memory` 转成 `D:/env/Git/memory`**（MSYS 路径
+  转换）。验证斜杠命令要带 `MSYS_NO_PATHCONV=1`，否则会看到命令「没有被分流」的假象。
+- **`nm run` 的实例目录环境变量是 `NUCLEAMIND_INSTANCE_DIR`**（不是 `NUCLEAMIND_HOME`）。
+  写错会静默落到 `~/.nucleamind/default`，而 `nm plugins enable` 会真的改那份配置。
+- **CLI 走流式**：手写替身端点必须返回 SSE（`data: {...}` + `data: [DONE]`）。返回一份普通
+  JSON 会被折成「没有分片」，推断出 `END_TURN` + 0 个工具调用——看起来像模型没调工具，
+  实际是替身写错了（`D39` 在这上面绕了一圈）。
 
 ### `D36`–`D38` 留下的、后续必须用到的事实
 
