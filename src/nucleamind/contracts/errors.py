@@ -109,6 +109,7 @@ class ErrorCode(StrEnum):
     EXTERNAL_MODEL_PROVIDER = "external.model_provider"
     EXTERNAL_CHANNEL = "external.channel"
     EXTERNAL_HTTP_REQUEST = "external.http_request"
+    EXTERNAL_TOOL_SERVER = "external.tool_server"
 
     # PLUGIN_FAILURE
     PLUGIN_LOAD_FAILED = "plugin.load_failed"
@@ -179,6 +180,10 @@ CODE_CATEGORIES: Final[Mapping[ErrorCode, ErrorCategory]] = MappingProxyType(
         # 同上：插件经 `ctx.net` 打出去的请求失败了。复用 `EXTERNAL_MODEL_PROVIDER` 会把
         # 一次 webhook 故障记到模型供应商头上。
         ErrorCode.EXTERNAL_HTTP_REQUEST: ErrorCategory.EXTERNAL_SERVICE,
+        # 一个外部工具服务器（MCP server 一类）出了问题（`D38-B`）。它既不是 HTTP
+        # 专属——stdio 传输一个字节的 HTTP 都没有——也不该混进 `EXTERNAL_CHANNEL`：
+        # 后者说的是「消息发不出去」，而这里说的是「一次工具调用没能给出结论」。
+        ErrorCode.EXTERNAL_TOOL_SERVER: ErrorCategory.EXTERNAL_SERVICE,
         ErrorCode.PLUGIN_LOAD_FAILED: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PLUGIN_HOOK_FAILED: ErrorCategory.PLUGIN_FAILURE,
         ErrorCode.PLUGIN_REGISTRATION_CONFLICT: ErrorCategory.PLUGIN_FAILURE,
