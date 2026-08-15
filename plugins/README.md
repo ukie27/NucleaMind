@@ -24,6 +24,7 @@ import 兄弟模块，依赖规则 `R4` 就成了空话。官方插件与第三�
 | `nucleamind-plugin-anthropic/` | `anthropic` | `MODEL:anthropic` —— Anthropic 原生 Messages API，与内建 `model-openai` 并存 | `D32` |
 | `nucleamind-plugin-discord/` | `discord` | `CHANNEL:discord` —— Discord bot，配合 `nm serve` 常驻 | `D33` |
 | `nucleamind-plugin-feishu/` | `feishu` | `CHANNEL:feishu` —— 飞书 / Lark bot（WS 长连接、CardKit 流式卡片），配合 `nm serve` 常驻 | `D34` |
+| `nucleamind-plugin-web/` | `web` | `TOOL:web.fetch` + `TOOL:web.search` —— 抓网页与搜网两件工具 | `D36` |
 
 **它们必须真的装进环境才会被发现**（entry point 没有第二条路）：
 
@@ -32,6 +33,7 @@ pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 pip install --no-deps -e plugins/nucleamind-plugin-anthropic
 pip install --no-deps -e plugins/nucleamind-plugin-discord
 pip install --no-deps -e plugins/nucleamind-plugin-feishu
+pip install --no-deps -e plugins/nucleamind-plugin-web
 ```
 
 装上不等于启用——`plugins.enabled` 是唯一闸门，改完要重启实例。
