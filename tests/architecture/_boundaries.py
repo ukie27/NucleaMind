@@ -1,4 +1,4 @@
-"""依赖规则 `R1`–`R6` 的可复用检查器（技术方案 §3.1）。
+"""依赖规则 `R1`–`R5` 的可复用检查器（技术方案 §3.1）。
 
 职责：对任意源码树做 AST 扫描，收集 import 目标并判定其违反了哪条规则。
 不负责：断言与夹具——检查器必须能作用于临时树，否则「注入违规样例必须失败」的
@@ -11,7 +11,9 @@
     R3  sdk/        只 import contracts/
     R4  builtins/ 与外部插件  只能 import sdk/ 与 contracts/
     R5  只有 runtime/ 可同时 import kernel/ 与 builtins/（唯一组装根）
-    R6  新层一律禁止 import legacy/（D31 删掉 `nm legacy` 之后无例外）
+
+`R6`（新层禁止 import legacy/）随 `D35` 删掉 `legacy/` 一并退休：没有隔离区了，
+规则也就没有可判定的对象。它服役期间只拦下过一处例外（`D31` 删掉的 legacy_entry）。
 """
 
 from __future__ import annotations
@@ -20,12 +22,12 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._common import IGNORED_DIRS, LEGACY_LAYER, NEW_LAYERS, dotted_path, iter_modules, rel
+from ._common import IGNORED_DIRS, NEW_LAYERS, dotted_path, iter_modules, rel
 
 PACKAGE = "nucleamind"
 
 #: 全部依赖规则编号。每条都必须有一个反向用例（见 `test_guard_integrity.py`）。
-RULES: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6")
+RULES: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5")
 
 #: 各层允许 import 的内部层。键是源层，值是允许的目标层集合（含自身）。
 _ALLOWED_TARGETS: dict[str, frozenset[str]] = {
@@ -53,7 +55,7 @@ _RULE_BY_SOURCE_LAYER = {
 
 @dataclass(frozen=True)
 class Violation:
-    """一条依赖违规。`rule` 是 `R1`–`R6` 之一。"""
+    """一条依赖违规。`rule` 是 `R1`–`R5` 之一。"""
 
     rule: str
     path: str
@@ -68,7 +70,7 @@ class Violation:
 def _imported_modules(tree: ast.Module, *, module_dotted: str) -> list[tuple[str, int]]:
     """收集模块内所有 import 目标的绝对导入路径与行号。
 
-    相对导入按当前模块所在包解析为绝对路径，否则 `from ..legacy import x` 这类
+    相对导入按当前模块所在包解析为绝对路径，否则 `from ..kernel import x` 这类
     写法会绕过所有规则。
     """
     package_parts = module_dotted.split(".")[:-1] if "." in module_dotted else []
@@ -100,7 +102,7 @@ def _layer_of(imported: str) -> str | None:
     if imported == PACKAGE or not imported.startswith(f"{PACKAGE}."):
         return None
     top = imported.split(".")[1]
-    if top in NEW_LAYERS or top == LEGACY_LAYER:
+    if top in NEW_LAYERS:
         return top
     return None
 
@@ -118,12 +120,7 @@ def _classify(
     if source_layer is None:  # 外部插件
         if target_layer in _PLUGIN_ALLOWED_TARGETS:
             return None
-        if target_layer == LEGACY_LAYER:
-            return ("R6", "插件禁止 import legacy/；需要复用实现时把代码搬到新家")
         return ("R4", f"插件只能 import sdk/ 与 contracts/，不得 import {target_layer}/")
-
-    if target_layer == LEGACY_LAYER:
-        return ("R6", "新层禁止 import legacy/；D31 之后没有例外")
 
     if target_layer in _ALLOWED_TARGETS[source_layer]:
         return None
@@ -194,8 +191,7 @@ def collect_violations(
 ) -> list[Violation]:
     """扫描新层与插件目录，返回全部依赖违规。
 
-    `legacy/` 作为**源**不检查：`R6` 是单向规则，遗留模块允许 import 新层
-    （迁移期适配方向）。目录不存在时返回空列表，空骨架必须通过。
+    目录不存在时返回空列表，空骨架必须通过。
     """
     violations: list[Violation] = []
 
@@ -215,32 +211,9 @@ def collect_violations(
     return violations
 
 
-def legacy_importers(*, src_dir: Path, repo_root: Path) -> list[str]:
-    """列出新层中所有 import 了 `legacy/` 的文件（含白名单本身）。
-
-    用于断言「白名单之外不存在第二处新层 → legacy 的导入」。
-    """
-    package_dir = src_dir / PACKAGE
-    found: list[str] = []
-    for layer in NEW_LAYERS:
-        for path in iter_modules(package_dir / layer):
-            dotted = dotted_path(path, src_dir=src_dir)
-            try:
-                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            except SyntaxError:
-                continue
-            if any(
-                _layer_of(name) == LEGACY_LAYER
-                for name, _ in _imported_modules(tree, module_dotted=dotted)
-            ):
-                found.append(rel(path, root=repo_root))
-    return sorted(found)
-
-
 __all__ = [
     "IGNORED_DIRS",
     "RULES",
     "Violation",
     "collect_violations",
-    "legacy_importers",
 ]

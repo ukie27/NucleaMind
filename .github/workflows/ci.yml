@@ -21,11 +21,8 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
 
-      - name: Layer boundaries R1-R6 / docstrings / file size / Any
+      - name: Layer boundaries R1-R5 / docstrings / file size / Any
         run: pytest tests/architecture -q
-
-      - name: Legacy debt ratchet
-        run: python scripts/legacy_debt.py --check
 
       - name: Startup cost
         run: python scripts/check_startup_cost.py --check
@@ -41,13 +38,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install
-        run: |
-          pip install -e ".[dev]"
-          python -m scripts.install_channel_dependencies --all-channels
+        run: pip install -e ".[dev]"
 
       # 插件经 entry point 被发现，因此必须真的装进环境（D30 的两个示例、D31 的官方
-      # openai-api、D32 的 anthropic、D33 的 discord）。tests/e2e/ 的第一条用例会在没装时
-      # 明确报出来。
+      # openai-api、D32 的 anthropic、D33 的 discord、D34 的 feishu）。tests/e2e/ 的第一条
+      # 用例会在没装时明确报出来。
+      # **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi）因此不在 CI 环境里，
+      # 而两个 Channel 插件的测试树仍须全绿——这正是「只有一两个模块接触 SDK」换来的东西。
       - name: Install plugins
         run: |
           pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
@@ -55,6 +52,7 @@ jobs:
           pip install --no-deps -e plugins/nucleamind-plugin-openai-api
           pip install --no-deps -e plugins/nucleamind-plugin-anthropic
           pip install --no-deps -e plugins/nucleamind-plugin-discord
+          pip install --no-deps -e plugins/nucleamind-plugin-feishu
 
       - name: Lint
         run: ruff check src/ plugins/ examples/ scripts/ tests/

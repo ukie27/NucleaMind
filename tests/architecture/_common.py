@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
 PACKAGE_DIR = SRC_DIR / "nucleamind"
 
-#: 五层 + `embed`。`legacy/` 是隔离区，不适用新层规范（技术方案 §4.3）。
+#: 五层 + `embed`。`D35` 删掉 `legacy/` 之后，这就是包里的全部内容。
 NEW_LAYERS: tuple[str, ...] = (
     "contracts",
     "kernel",
@@ -23,7 +23,6 @@ NEW_LAYERS: tuple[str, ...] = (
     "runtime",
     "embed",
 )
-LEGACY_LAYER = "legacy"
 
 #: 生成物与缓存目录，扫描时跳过。
 IGNORED_DIRS = frozenset({"__pycache__", ".venv", "node_modules", "dist", "build", ".mypy_cache"})

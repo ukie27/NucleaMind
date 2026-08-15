@@ -22,88 +22,31 @@ license-files = [
 ]
 
 dependencies = [
-    "typer>=0.20.0,<1.0.0",
-    "pydantic>=2.12.0,<3.0.0",
-    "pydantic-settings>=2.12.0,<3.0.0",
-    # Feishu's lark-oapi currently requires websockets<16; core supports 15 and 16.
-    "websockets>=15.0,<17.0",
-    "websocket-client>=1.9.0,<2.0.0",
-    "httpx>=0.28.0,<1.0.0",
-    "ddgs>=9.5.5,<10.0.0",
-    "oauth-cli-kit>=0.1.6,<1.0.0",
-    "loguru>=0.7.3,<1.0.0",
-    "readability-lxml>=0.8.4,<1.0.0",
-    "lxml-html-clean>=0.4.0,<1.0.0",
-    "rich>=14.0.0,<15.0.0",
-    "croniter>=6.0.0,<7.0.0",
-    "prompt-toolkit>=3.0.50,<4.0.0",
-    "questionary>=2.0.0,<3.0.0",
-    "mcp>=1.26.0,<2.0.0",
-    "json-repair>=0.57.0,<1.0.0",
-    # kernel/turn/invoker.py：工具参数的 JSON Schema 校验（技术方案 §10.2 第 10 步）。
-    # 目前也是 mcp 的传递依赖，但 Kernel 直接用它，必须显式声明。
+    # 宿主的第三方依赖到此为止。`D35` 删掉 `legacy/` 之后，剩下的每一条都能指到一个
+    # 具体的 import 点；**能力所需的包由那个能力自己的发行包声明**（`D32` 摘掉
+    # `anthropic`、`D33` 摘掉 `discord.py`、`D34` 摘掉 `lark-oapi` 的同一条理由）。
+    # 因此将来的 Memory / 扩展 Tool / Cron 插件即使需要 croniter 这类包，也不回到这里。
+    "pydantic>=2.12.0,<3.0.0",      # sdk/manifest.py：PluginManifest
+    "httpx>=0.28.0,<1.0.0",         # builtins/model_openai/、runtime/access/net
+    # kernel/turn/invoker.py 与 kernel/plugins/loader.py：JSON Schema 校验
+    # （技术方案 §10.2 第 10 步）。两处都惰性 import，但 Kernel 直接用它，必须显式声明。
     "jsonschema>=4.23.0,<5.0.0",
-    "chardet>=3.0.2,<6.0.0",
-    "openai>=2.8.0",
-    "tiktoken>=0.12.0,<1.0.0",
-    "jinja2>=3.1.0,<4.0.0",
-    "dulwich>=0.22.0,<1.0.0",
-    "pyyaml>=6.0,<7.0.0",
-    "filelock>=3.25.2",
-    "watchfiles>=1.1.1,<2.0.0",
-    "packaging>=24.0",
-    "tzdata>=2025.2",
-    "tzlocal>=5.3.1,<6.0.0",
-    "defusedxml>=0.7.1,<1.0.0",
-    "pypdf>=5.0.0,<6.0.0",
-    "python-docx>=1.1.0,<2.0.0",
-    "openpyxl>=3.1.0,<4.0.0",
-    "python-pptx>=1.0.0,<2.0.0",
+    "packaging>=24.0",              # sdk/manifest.py、sdk/version.py：SDK 版本区间
 ]
 
 [project.optional-dependencies]
-api = [
-    "aiohttp>=3.9.0,<4.0.0",
-]
-azure = [
-    "azure-identity>=1.19.0,<2.0.0",
-]
-bedrock = [
-    "boto3>=1.43.0",
-]
-documents = [
-    # Compatibility extra: document readers are bundled since v0.2.3.
-    "defusedxml>=0.7.1,<1.0.0",
-    "pypdf>=5.0.0,<6.0.0",
-    "python-docx>=1.1.0,<2.0.0",
-    "openpyxl>=3.1.0,<4.0.0",
-    "python-pptx>=1.0.0,<2.0.0",
-]
-langfuse = [
-    "langfuse>=3.0.0,<4.0.0",
-]
-pdf = [
-    # Compatibility extra: PDF reading is bundled since v0.2.3.
-    "pypdf>=5.0.0,<6.0.0",
-]
-olostep = [
-    "olostep>=0.1.0; python_version < '3.14'",
-]
 dev = [
     "pytest>=9.0.0,<10.0.0",
     "pytest-asyncio>=1.3.0,<2.0.0",
-    "aiohttp>=3.9.0,<4.0.0",
     "pytest-cov>=6.0.0,<7.0.0",
     "pytest-xdist>=3.8.0,<4.0.0",
     "ruff>=0.1.0",
     "basedpyright>=1.39.0,<2.0.0",
-    "pymupdf>=1.25.0",
-    "pypdf>=5.0.0,<6.0.0",
-    "python-docx>=1.1.0,<2.0.0",
-    "openpyxl>=3.1.0,<4.0.0",
-    "python-pptx>=1.0.0,<2.0.0",
-    "python-socketio>=5.16.0,<6.0.0",
-    "msgpack>=1.1.0,<2.0.0",
+    # 根 conftest.py 的 Windows CA 夹具直接 import 它（此前只靠 httpx 的传递依赖）。
+    "certifi>=2024.0.0",
+    # 官方插件 openai-api / discord 的 HTTP 与 gateway 实现；插件自己声明为可选
+    # 依赖，但它们的测试树与本仓库一起跑，因此开发环境要有。
+    "aiohttp>=3.9.0,<4.0.0",
 ]
 
 [project.scripts]
@@ -122,48 +65,30 @@ build-backend = "hatchling.build"
 [tool.hatch.metadata]
 allow-direct-references = true
 
-[tool.hatch.build.hooks.custom]
-# Implementation lives in the conventional `hatch_build.py` at the repo root.
-
 [tool.hatch.build]
 include = [
     "src/nucleamind/**/*.py",
-    "src/nucleamind/legacy/templates/**/*.md",
-    "src/nucleamind/legacy/skills/**/*.md",
-    "src/nucleamind/legacy/skills/**/*.sh",
-    "src/nucleamind/legacy/channels/*/webui/**/*",
-    "src/nucleamind/legacy/web/dist/**/*",
-]
-# src/nucleamind/legacy/web/dist/ is produced by `cd webui && bun run build` and
-# is git-ignored. List it as an artifact so hatch ships it in both wheel and
-# sdist even though VCS does not track it.
-artifacts = [
-    "src/nucleamind/legacy/web/dist/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nucleamind"]
-exclude = ["src/nucleamind/legacy/channels/*/tests/**"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/nucleamind/",
-    "src/nucleamind/legacy/web/dist/",
-    "hatch_build.py",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
 ]
-exclude = ["src/nucleamind/legacy/channels/*/tests/**"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-# 基线规则集（全仓库）。新层与 plugins/ 在此之上叠加 C901 / PLR0915 / TRY / ASYNC，
-# 由下面的 per-file-ignores 反向豁免 legacy/、scripts/ 与 tests/（技术方案 §12.1）。
+# 基线规则集（全仓库）。`D35` 删掉 `legacy/` 之后没有豁免层了：scripts/ 与测试树的
+# 豁免针对的是夹具与断言辅助，不是历史代码（技术方案 §12.1）。
 # 沿用既有约定：不引入 `ruff format`。
 select = ["E", "F", "I", "N", "W", "C901", "PLR0915", "TRY", "ASYNC"]
 ignore = ["E501"]
@@ -173,9 +98,6 @@ ignore = ["E501"]
 max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
-# legacy/ 是隔离区，不追溯适用新层规范；它的收敛由债务棘轮度量，
-# 而不是靠给历史代码打满告警。D31 删除 legacy/ 时一并删除本条。
-"src/nucleamind/legacy/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
 # 一次性/运维脚本与测试：可读性阈值针对产品代码，不针对夹具与断言辅助。
 # 插件是独立发行包，它们的测试树不在顶层 `tests/` 下，但适用同一条理由（`D33`）。
 "scripts/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
@@ -193,7 +115,7 @@ pythonVersion = "3.11"
 asyncio_mode = "auto"
 # examples/plugins/ 各自带 tests/：示例插件是完整独立发行包，它们的契约测试
 # 与本仓库一起跑（D30）。它们要求那两个包已 editable 装进环境。
-testpaths = ["tests", "src/nucleamind/legacy/channels", "examples/plugins", "plugins"]
+testpaths = ["tests", "examples/plugins", "plugins"]
 
 [tool.coverage.run]
 source = ["src/nucleamind"]

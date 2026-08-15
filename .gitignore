@@ -15,11 +15,6 @@
 docs/superpowers/
 docs/plans/
 
-# webui (monorepo frontend)
-webui/node_modules/
-webui/dist/
-webui/coverage/
-webui/.vite/
 *.tsbuildinfo
 
 # Python bytecode & caches
@@ -104,5 +99,4 @@ temp/
 exp/
 .playwright-mcp/
 bridge/node_modules/
-webui/.verify-*
 .pytest-tmp/

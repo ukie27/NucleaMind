@@ -9,17 +9,6 @@ from collections.abc import Iterator
 
 import certifi
 import pytest
-from loguru import logger
-
-
-@pytest.fixture(autouse=True)
-def _isolate_nanobot_log_activation() -> Iterator[None]:
-    """Keep CLI log settings from leaking into later tests in the same process."""
-    logger.enable("nucleamind.legacy")
-    try:
-        yield
-    finally:
-        logger.enable("nucleamind.legacy")
 
 
 @pytest.fixture(scope="session", autouse=True)

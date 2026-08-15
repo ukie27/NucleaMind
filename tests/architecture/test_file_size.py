@@ -68,14 +68,6 @@ def test_new_layers_and_plugins_are_within_line_limits() -> None:
     )
 
 
-def test_legacy_is_not_checked() -> None:
-    """`legacy/` 隔离区不追溯适用；它的收敛由债务棘轮度量。"""
-    assert any(
-        _line_count(path) > DEFAULT_MAX_LINES for path in iter_modules(PACKAGE_DIR / "legacy")
-    ), "legacy/ 中已无超长文件——本断言的前提消失，可随 D31 一并删除"
-    assert not oversized_modules(PACKAGE_DIR, repo_root=REPO_ROOT)
-
-
 def test_empty_tree_passes(tmp_path: Path) -> None:
     assert oversized_modules(tmp_path / "nucleamind", repo_root=tmp_path) == []
 

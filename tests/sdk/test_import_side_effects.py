@@ -97,7 +97,7 @@ def test_importing_manifest_pulls_in_only_contracts_and_sdk(
     forbidden = [
         name
         for name in modules
-        if name.startswith(("nucleamind.kernel", "nucleamind.legacy", "nucleamind.builtins"))
+        if name.startswith(("nucleamind.kernel", "nucleamind.builtins"))
     ]
     assert not forbidden, f"导入 manifest 顺带拉起了：{forbidden}"
 

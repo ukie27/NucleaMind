@@ -9,10 +9,9 @@ x-common-config: &common-config
   cap_drop:
     - ALL
 
-# `D31` 之后容器里跑的是新 Kernel（`nm`），遗留 gateway / WebUI 已随 `legacy/webui/`
-# 一并删除。这里因此只剩两个服务：常驻的 `nm serve` 与交互式的 `nm run`。
-# `nm serve` 服务的是**已启用的 Channel 插件**，OpenAI 兼容接口来自 openai-api 插件
-# （镜像里没有默认装它，需要在自己的镜像层里 pip install 并写进 plugins.enabled）。
+# 容器里跑的是新 Kernel（`nm`），只有两个服务：常驻的 `nm serve` 与交互式的 `nm run`。
+# `nm serve` 服务的是**已启用的 Channel 插件**；官方插件用 Dockerfile 的
+# `NUCLEAMIND_PLUGINS` 构建参数装进镜像，再写进 `plugins.enabled` 才会生效。
 services:
   nucleamind-serve:
     container_name: nucleamind-serve
