@@ -1,11 +1,14 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-15（`D35` 收口）
-- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D35` 均已完成）。
+- 更新时间：2026-08-15（`D38` 收口）
+- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D38` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
-  下一步是 M5 剩下的三项：**Memory / 扩展 Tool / Cron-Automation**
+  `D36`–`D38` 已交齐 **M5 的「扩展 Tool」**：官方插件 `web`（`web.fetch` / `web.search`）、
+  `image`（`image.generate`）、`mcp`（命名空间桥接），外加一次机制扩展
+  `CapabilityDecl.namespace`（`D38-A`）。
+  下一步是 M5 剩下的两项：**Memory / Cron-Automation**
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1761,6 +1764,149 @@
     **legacy 债务 224 文件 / 76136 行 → 218 / 73773**，其中 `channels/` 从 47762 降到 45399。
 
 
+- **`D36` 官方 web 插件：`web.fetch` 与 `web.search`**（`plugins/nucleamind-plugin-web/`
+  五个模块约 1100 行 + 四个测试文件 135 个用例 + `tests/e2e/test_web_tools.py` 7 个）：
+  - **本轮拍板的三件事**，逐条记在下面。
+  - **① 两个工具走两条不同的出网路径，判据是「谁决定了那个 URL」。** `web.fetch` 的 URL
+    **整个来自模型**，因此走 `ctx.net`——`runtime/access/net.py` 的 SSRF 守卫（解析后逐地址
+    判定 + 手动跟随重定向）正是为这种输入存在的（`EDG-406`），插件**不写第二份守卫**。
+    `web.search` 的端点**来自运维配置**、模型只控制 query，而自托管 SearXNG 常在私有网段
+    （`ctx.net` 会按设计拒掉它），因此直接用 httpx 并如实声明 `net`——与内建 `model_openai`
+    要连本地 vLLM / Ollama 是同一条先例。**后果如实写在 README 里**：`web.search` 的请求
+    不过守卫，那条 `base_url` 本身就是一个信任边界。
+  - **② 13 个写死的搜索后端收窄成 4 个 + 一个可配置的 `custom` 通用 JSON 后端**
+    （url + headers + 点分结果路径 + `{api_key}` 占位符）。理由与 `D19` 拒掉
+    `max_tokens_field` slug 表、`D32` 拒掉四张版本 gating 表一字不差：**表只会越滚越大，
+    而用户接一个新后端要等我们发版**。
+  - **③ 默认后端必须不要凭据。** 外部插件用不上 `runtime/bootstrap.py` 的 `keep` 声明
+    过滤（那张 `_ENABLED_NAMES` 按**内建 id** 索引），因此 manifest 声明的两条能力**恒被
+    注册**；默认后端要凭据的话就成了 `D20` 明确拒过的「声明了却不可用」。于是默认是
+    `duckduckgo`，自己解析它的 HTML 返回（旧实现依赖第三方包 `ddgs`）。代价：站点改版即
+    失效，但失效的形态必须是「没有结果」而不是一次异常，有用例钉着。
+  - **凭据刻意不在 `setup()` 里取。** `PLUGIN_LOAD_FAILED` 是**提供方级**的，在 `setup()`
+    里因为缺一个搜索凭据而抛错会把 `web.fetch` 一起带走。因此凭据在第一次调用
+    `web.search` 时才解析，缺失折成那一次调用的 `CONFIG_SECRET_MISSING`。代价如实记着：
+    配置里少一个 `api_key` 不会在启动时报出来。有一条 e2e 用例断言这两件事同时成立。
+  - **凭据缺失不静默回退到 DuckDuckGo**（旧实现会）。配了 tavily 却没给 key，得到的是一条
+    指名道姓的错误，而不是一份来自另一个后端、看起来一切正常的结果（原则 7）。
+  - **抓回来的正文前那行横幅是提醒不是隔离。** `ToolResult` 没有 trust 字段——
+    `contracts/context.py::as_model_text` 的 `UNTRUSTED_DATA_PREFIX` 包裹只作用于
+    `ContextFragment`，工具结果不经过那条路径。一段写着「忽略以上指令」的网页仍然会原样
+    进模型。要真正解决它得给 `ToolResult` 一个 trust 槽位——那是 `NFR-104` 的冻结表面变更，
+    **列为契约变更候选**。
+  - **`ctx.net` 不能流式**：`HttpAccess.request` 一次性返回完整 `body: bytes`，因此
+    `fetch.max_bytes` 作用在解码之前但那些字节已经进过内存，无法按字节提前中断，只能靠
+    `timeout_ms` 兜底。要改得给 `HttpAccess` 加一个流式方法。
+  - **正文抽取用标准库 `html.parser`，不是浏览器**：JS 渲染的内容、表格的视觉布局、CSS
+    隐藏的节点都拿不到或分不清，如实写在 docstring 与 README 里。踩到并修掉的两个真问题：
+    ① 未知 charset 退回 UTF-8 时**先严格试一次**，否则一份完好的正文会带上「可能有乱码」
+    的假警报；② `</li><li>` 连着产出两个换行会让每两条列表项之间空一行——`_break()` 因此
+    先丢掉标签之间的缩进空白再判重。
+  - 验收：新层 135 + 7 个用例；`ruff check`、`basedpyright`（新层 0 报错）、
+    `tests/architecture` 56 个全绿。一个 socket 都不开。
+
+- **`D37` 官方 image 插件：`image.generate`**（`plugins/nucleamind-plugin-image/`
+  五个模块约 950 行 + 三个测试文件 87 个用例 + `tests/e2e/test_image_tool.py` 4 个）：
+  - **按模型名分支的表一张都没搬**（旧实现的 `_aihubmix_size`、`_ollama_dimensions`、
+    `_round_to_multiple`）。对应物是 `size` / `response_format` / `extra_body` 三个显式
+    配置项，**留空即不发这个字段**。实践上：`gpt-image-1` 恒回 base64 且会**拒绝**
+    `response_format`，`dall-e-3` 要写 `b64_json` 否则回一个有期限的 URL（插件会去取，
+    多一次往返，两条路都有用例）。
+  - **三个后端类收窄成两个形状差异大的**：`openai` 的专用图像端点与 `openrouter` 的
+    chat-with-image；第三家用 `provider="openai"` + `base_url` 接上（aihubmix 与多数网关
+    本来就是 OpenAI 兼容的）。
+  - **产物落盘 + `ArtifactRef` 引用，文件名内容寻址**（`image-<sha256 前 16 位>.<ext>`）：
+    同样的字节永远落在同一个文件上（重跑不堆图），而文件名里**不含 prompt**——prompt 可能
+    很长、可能带路径分隔符，也可能包含用户不想留在文件系统上的内容。写走「同目录临时文件
+    → `fsync` → `os.replace`」。
+  - **`side_effect` 只有两档**：落盘**之前**失败一律 `NONE`，写成功 `OCCURRED`。
+    **本工具从不产出 `UNKNOWN`**——`os.replace` 成功之后没有可失败的步骤，替换之前一个
+    字节都没到目标路径上。**取消不删已落盘的图**：取消不是回滚，而那些字节是用户已经
+    付过钱的。
+  - **三条如实记着的边界**：① **`ToolResult.artifacts` 今天在全项目零消费者，本插件是它的
+    第一个生产者**——`OutboundMessage` 的附件路径没有生产者、`FileAccess` 也没有
+    `read_bytes`（`D33` 已记为契约变更候选），因此没有任何 Channel 能把这些字节发出去；
+    ② **不用 `ctx.fs`**，`FileAccess` 只有 `read_text` / `write_text` / `list_dir`，
+    表达不了二进制写入，因此如实声明 `fs:write` 并直接用 `pathlib`（`session_jsonl` 先例）；
+    ③ **不用 `ctx.net`**，图像端点由运维配置（要能连本地 ollama），而**模型在这里决定不了
+    任何地址**——这与 `web.fetch` 恰好相反。
+  - **`setup()` 不创建目录**：为一个可能永远不被调用的工具建目录，是在没人要求的时候动
+    用户的磁盘。有一条用例钉着。
+  - **语音转写（旧实现的 `providers/transcription.py`）不做**：它是另一类能力（音频输入），
+    而契约层今天没有多模态输入位置。参考图 / 图生图同理（要 `FileAccess.read_bytes`）。
+  - 验收：新层 87 + 4 个用例；e2e 那条走**真实装配根**，断言图落在
+    `<instance>/plugins/image/images/` 里——落点由装配根分配，插件自己只知道 `ctx.state_dir`。
+
+- **`D38-A` 命名空间声明机制 ★**（`sdk/manifest.py` + `kernel/plugins/{declarations,host}.py`
+  + `runtime/wiring.py` 各一处 + `docs/plugin-development.md` §7.5 + 四个测试文件 20 个新用例）：
+  - **它解决的问题是硬的**：`CapabilityHost.finish()` 要求 manifest 声明的 `(kind, name)`
+    与实际注册的**逐条相等**（`D16` 的不变量），而桥接类插件（MCP、远端工具网关）的能力名
+    要连上外部服务、`list_tools()` 之后才可知，manifest 又是静态的。
+  - **取的是「扩机制」而不是「退化成单条 `mcp.call` 代理工具」**：后者会让模型拿不到每个
+    远端工具的 JSON Schema，参数校验从 kernel 的 `ToolInvoker._compile()` 退到运行期，
+    工具选择质量也随之下降。
+  - **形状先例就在 `host.py::on()`**：Hook 早就是「一条声明、N 次注册」（`<hook>.2` / `.3`
+    派生名按基名回查声明）。命名空间是同一形状的推广。**做成显式布尔而不是
+    `name="mcp.*"` 通配串**：后者会让「名字」这个字段有两种含义，而 `CapabilityRef` 的
+    形状校验对通配串又不成立（原则 7）。
+  - **五条判死的规则**：① 只放行 `<前缀>.<后缀>`——前缀本身与 `mcpx.read` 都不在内
+    （比较落在分隔符边界上，`WorkspaceGuard` 的路径前缀同一条道理）；② **精确声明优先**，
+    两条命名空间同时匹配是 `PLUGIN_LOAD_FAILED`（静默择一等于让加载顺序说了算，
+    `EDG-102` 在这一层的对应物）；③ **命名空间豁免 `finish()` 的兑现检查**，且这条豁免是
+    **结构性的**——`_declared` 里根本没有命名空间声明（分成两张表就是为了让规则只有一条）；
+    ④ 不得与 `overrides` 并存（一条声明能注册出任意多个名字，哪一个是覆盖者无从判定）；
+    ⑤ 只允许 arity 为 `MULTI_UNIQUE` 的 kind，**判据取自 `CAPABILITY_ARITY` 而不是手写
+    名单**——那张表已经是全部冲突语义的唯一来源，另写一份必然分叉。
+  - **registry 的冲突语义与权限模型一个字未改**：仍按精确 `(kind, name)` 判，
+    `nm capabilities` 印的是**实际注册的**名字；`namespace` 不放宽任何权限。
+  - **翻译只在 `runtime/wiring.py` 一处**（`R2` 决定的），漏掉那个字段的后果是插件在
+    `setup()` 里注册第一条工具时就被判成「未声明」，有一条用例钉着。
+  - `docs/plugin-development.md` 的 §7.5 由 `tests/e2e/test_plugin_docs.py` **直接执行**。
+
+- **`D38-B` 官方 mcp 插件**（`plugins/nucleamind-plugin-mcp/` 七个模块约 1200 行 +
+  两个测试文件 99 个用例 + `tests/e2e/test_mcp_namespace.py` 7 个）：
+  - **它是 `D38-A` 的第一个使用者**：manifest 只声明
+    `CapabilityDecl(kind=TOOL, name="mcp", namespace=True)`，两条远端工具名一个字都没写。
+  - **连接必须由一条后台任务拥有，这是本插件最要紧的一个设计决定**（`supervisor.py`）。
+    `mcp` 的三种传输都建在 anyio 的任务组上，而**任务组必须在进入它的那个任务里退出**——
+    在 `setup()` 里 `enter_async_context`、再由停止路径 `aclose()`，会炸出
+    `Attempted to exit cancel scope in a different task`（参考实现为此写了
+    `_OwnedMCPConnection`）。而本插件**没有第二条清理通道**：manifest 没有 teardown 字段，
+    `EDG-105` 的痕迹清理只作用在 `ctx.spawn_task()` 派生的任务上。形状因此定成：
+    `setup()` 派生任务 → 等它把工具表准备好 → 注册 → 返回；停止时取消它，`finally` 在
+    **同一个任务**里关掉 `AsyncExitStack`。**`setup()` 因此是 `async` 的**
+    （`builtin_loader.py` 早就写着同步异步都接受）。
+  - **工具名归一化会丢信息，因此必须处理撞车**（`get-file` 与 `get_file` 撞成同一个名字）。
+    **撞车的各方都不生效**并写日志，与 registry 对同名冲突的判定一致；旧实现靠 `hashlib`
+    生成后缀。**这与 `D32` anthropic 那条「`.` ↔ `-` 编码」结论相反**——那是无碰撞双射。
+  - **只桥接 tools，不桥接 resources / prompts**（旧实现三样都做）：新层没有对应的能力
+    种类，把它们伪装成工具会让模型拿到一堆语义不明的调用（原则 3）。**热重载也不做**
+    （旧实现的 `RUNTIME_CONTROL_MCP_RELOAD`）：registry 解析后只读且首版不热更新，
+    只在自己那一层成立的「重载」会让 `nm capabilities` 印的东西与实际生效的不一致。
+  - **新增 `ErrorCode.EXTERNAL_TOOL_SERVER`**（→ `EXTERNAL_SERVICE`）。它既不是 HTTP
+    专属（stdio 一个字节的 HTTP 都没有），也不该混进 `EXTERNAL_CHANNEL`——后者说的是
+    「消息发不出去」，这里说的是「一次工具调用没能给出结论」。
+  - **四条如实记着的边界**：① **`side_effect` 恒为 `UNKNOWN`、`read_only` 恒为 `False`**
+    ——MCP 协议不报告副作用，远端的 `annotations.readOnlyHint` 是**它自己说的**，而它正是
+    那个不可信的一方；失败分两档（发起**之前** `NONE`、发起之后 `UNKNOWN`），谎报 `NONE`
+    会让编排层以为可以安全重试一次可能已经生效的写操作；② **权限模型对它基本失效**——
+    声明了 `shell` 与 `net` 但那两条挡不住任何东西（stdio 要长驻子进程与管道而 `ctx.shell`
+    是一次性 exec、HTTP 由 SDK 自己开连接），**真正的边界是「你配了哪些 server」**；
+    ③ 连接在启动路径上，每台 server 都加上它自己的连接时间（`connect_timeout_ms` 是上界，
+    超时即跳过，且**不取消那条任务**——取消会把已经连上的一起关掉）；④ 停止预算是每插件
+    5000 ms，赖着不退的 stdio server 会让 `StopOutcome.timed_out` 为真。
+  - **只有 `client.py` import `mcp`**，其余全部对 `session.py` 的两个 Protocol 编程，
+    因此 99 个用例在**没装 `mcp` 的环境里全绿**（CI 用 `--no-deps` 装插件）。有一条 **AST**
+    守卫扫 import 语句（不是文本包含——docstring 里提到 `mcp` 是正常的），外加一条自证用例。
+  - 验收：新层十个测试目录共 **3116 passed / 10 skipped / 0 failed**；`ruff check`
+    （src + plugins + examples + tests + scripts）、`basedpyright` **0 errors**、
+    `tests/architecture` 56 个、`check_startup_cost --check` 全通过。
+    **`startup_ms` 读数约 800–870 ms**（`D31` 时约 500 ms）：`startup_import_ms` 约 480–530、
+    `bootstrap+start` 约 320–340。**大头仍是 `D24` 记的那条 `import httpx`**；
+    另一项可测量的是 entry point 枚举约 **50 ms/次**，它扫的是**整个 site-packages** 而不是
+    我们的插件数（本轮多装 3 个插件的增量可以忽略）。这一项按 `NFR-405` 原文只告警不失败。
+
+
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
   领域与执行 / 能力）、SDK 表面与 Capability Registry 全部落地，**阶段 1 已收口**；
@@ -1854,12 +2000,20 @@
   宿主第三方依赖从 36 个降到 4 个，`docs/` 里 21 篇描述被继承实现的文档删除。
   **项目范围本轮收窄**：Model Provider 止步、Channel 只做 feishu、WebUI 不做，
   剩下三项（Memory / 扩展 Tool / Cron）的迁移参考退回 `references/nanobot/`。
+  `D36`–`D38` 已完成，**M5 的「扩展 Tool」一项交齐**：官方插件 `web`（两条工具，
+  按「谁决定 URL」分走 `ctx.net` 与 raw httpx 两条出网路径）、`image`（产物落盘 +
+  `ArtifactRef`，全项目 `artifacts` 的第一个生产者）、`mcp`（把 MCP server 的工具桥接进来）；
+  为最后一个先做了一次机制扩展 **`D38-A` `CapabilityDecl.namespace`**——manifest 从此可以
+  声明一个**前缀**，放行「能力名要连上外部服务才知道」的插件在 `setup()` 里注册任意多条
+  派生名。同 PR 新增 `ErrorCode.EXTERNAL_TOOL_SERVER`。
   `kernel/` 目前有 `registry/`、`turn/`、`config/`、`observability/`、`routing/` 与
   `plugins/`；`builtins/` 有 `registry.py` 与七个内建子包（`session_jsonl/`、
   `context_basic/`、`model_openai/`、`tools_fs/`、`tools_shell/`、`commands_core/`、
   `cli_entry/`）；`runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、
   `bootstrap.py`、`first_run.py`、`inventory.py`、`plugin_plan.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`access/` 与 `cli/`；`embed/` 已落地薄门面。
+  **`plugins/` 目前有七个官方插件**：`openai-api`、`anthropic`、`discord`、`feishu`、
+  `web`、`image`、`mcp`。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -1907,36 +2061,44 @@
 
 ## 下一步工作
 
-项目范围本轮收窄（见文首）。M5 只剩三项，各自独立编号、独立验收：
+项目范围本轮收窄（见文首）。M5 只剩两项，各自独立编号、独立验收：
 
 | # | 模块 | 迁移参考 | 备注 |
 | --- | --- | --- | --- |
-| `D36?` | **Memory** | `references/nanobot/nanobot/agent/memory/`、`skills/memory/` | 需要 `MemoryProvider` 接口 + `MEM-005` 管理命令 |
-| `D37?` | **扩展 Tool**（web / search / image / mcp） | `references/nanobot/nanobot/agent/tools/`、`providers/image_generation.py`、`providers/transcription.py` | 依赖 `net` / `shell` 权限 |
-| `D38?` | **Cron / Automation** | `references/nanobot/nanobot/cron/` | 依赖后台任务（`ctx.spawn_task`）与 Hook |
+| `D39?` | **Memory** | `references/nanobot/nanobot/agent/memory/`、`skills/memory/` | 需要 `MemoryProvider` 接口 + `MEM-005` 管理命令 |
+| `D40?` | **Cron / Automation** | `references/nanobot/nanobot/cron/` | 依赖后台任务（`ctx.spawn_task`）与 Hook |
 
-**五步法在本仓库已经跑通四遍**（`D32` anthropic、`D33` discord、`D34` feishu，
-`D35` 收尾），照它们的形状写：
+**「扩展 Tool」已由 `D36`–`D38` 交齐**（`web` / `image` / `mcp` 三个官方插件 +
+`CapabilityDecl.namespace` 机制）。参考实现的 `agent/tools/search.py` 是**文件搜索**，
+已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖，本轮刻意没做；
+`providers/transcription.py`（语音转写）同样没做——它是另一类能力（音频输入），而契约层
+今天没有多模态输入位置。
+
+**五步法在本仓库已经跑通七遍**（`D32` anthropic、`D33` discord、`D34` feishu、`D35` 收尾、
+`D36` web、`D37` image、`D38` mcp），照它们的形状写：
 
 - a 步**不新写基线**——`references/nanobot/` 里的实现与它自己的测试就是行为说明书。
 - b 步在 `plugins/` 里**新写**而不是搬运（`AGENTS.md` 原则 5）。那份副本被 Git 忽略、
   不在包里、也 import 不到，因此「搬」在物理上就不成立。
 - c/d/e 步：`legacy/` 已经没有对应目录可删，因此这三步退化成「切换调用方 + 更新文档」。
 
-写新插件时**从第一天就按守卫的形状切**（`D32`–`D34` 逐条踩出来的）：
+写新插件时**从第一天就按守卫的形状切**（`D32`–`D38` 逐条踩出来的）：
 
 - 单文件 ≤800 行、`Any` 须带 `# boundary:`、测试树也不许 import `kernel/`——
   `tests/architecture/` 的三条守卫对 `plugins/` **全目录**生效，包括测试。
-- **测试模块名要带插件前缀**（`test_feishu_stream.py` / `_feishu_fakes.py`）。
+- **测试模块名要带插件前缀**（`test_feishu_stream.py` / `_mcp_fakes.py`）。
   `testpaths` 一次收集整个 `plugins/`，而 pytest 按模块名去重：两个插件各有一个
   `test_stream.py` 时，先导入的会顶掉后一个，另一棵测试树整体 `ImportError`。
   **单独跑各自的目录看不出来，跑全量才炸**（`D34` 就是这么发现的）。
 - 平台 SDK 只准一两个模块碰，其余对自定义 Protocol 编程；CI 用 `--no-deps` 装插件，
-  因此**测试树在没有平台 SDK 的环境里必须全绿**。
-- 会发 HTTP 的插件照抄零网络闸门那条 autouse 夹具（现在有五份，判据逐条相同、
+  因此**测试树在没有平台 SDK 的环境里必须全绿**。`D38-B` 把这条守成了一条 **AST 断言**
+  （扫 import 语句而不是文本包含，另配一条自证用例），下一个插件照抄它。
+- 会发 HTTP 的插件照抄零网络闸门那条 autouse 夹具（现在有八份，判据逐条相同、
   刻意不共享——`R4` 够不着彼此）。
+- **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
+  写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 两件挂着的独立事项
+### 三件挂着的独立事项
 
 1. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
    **provider-opaque 块槽位**。Anthropic 要求多轮续写时把 `thinking` 块（含 `signature`）
@@ -1948,6 +2110,34 @@
    前者写「投递失败抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有 try/except，真抛会把
    一次成功的 turn 变成失败。四个现存实现（`cli_entry` / `openai-api` / `discord` /
    `feishu`）都选了不抛。要解决它就要补 `channel.delivery_failed` 事件。
+
+3. **三条冻结表面上的缺口，`D36`/`D37` 各撞上一条**（都要走 `NFR-104` 的评审）：
+   - **`ToolResult` 没有 trust 字段。** `contracts/context.py::as_model_text` 的
+     `UNTRUSTED_DATA_PREFIX` 包裹只作用于 `ContextFragment`，工具结果不经过那条路径。
+     `web.fetch` 抓回来的网页因此只能靠一行**提醒性**横幅，挡不住一段写着「忽略以上指令」
+     的正文。
+   - **`sdk.api.FileAccess` 没有 `read_bytes` / `write_bytes`。** 前者（`D33` 提出）让
+     Channel 发不出 workspace 附件，后者（`D37`）让 `image` 插件只能声明 `fs:write` 后
+     直接用 `pathlib`。
+   - **`HttpAccess.request` 不能流式。** `web.fetch` 因此只能先下完整个响应体再截断，
+     无法按字节提前中断连接。
+
+### `D36`–`D38` 留下的、后续必须用到的事实
+
+- **外部插件用不上 `runtime/bootstrap.py` 的 `keep` 声明过滤**（`_ENABLED_NAMES` 按**内建
+  id** 索引）。因此一份 manifest 声明了几条能力就必须注册几条——想让某条「默认可用」，
+  就得让它在零配置下真的可用（`web` 的默认搜索后端因此必须不要凭据）。要按配置少注册
+  一条，唯一的路是 `D38-A` 的命名空间声明。
+- **`PLUGIN_LOAD_FAILED` 是提供方级的。** 一份 manifest 里的两条能力共命运：在 `setup()`
+  里因为缺一个凭据而抛错会把另一条一起带走。`web` 因此把凭据解析推迟到第一次调用
+  （代价：配置里少一个 `api_key` 不会在启动时报出来）。
+- **anyio 任务组必须在进入它的那个任务里退出。** 任何用 `AsyncExitStack` 持有
+  第三方 async 上下文的插件都要照 `plugins/…-mcp/supervisor.py` 的形状写：
+  `ctx.spawn_task()` 派生一条任务拥有整个 stack，`setup()` 等它就绪再注册。
+  **manifest 没有 teardown 字段**——那条任务是唯一的清理通道。
+- **`setup()` 可以是 `async` 的**（`kernel/plugins/builtin_loader.py:40` 早就写着），
+  而外部插件的 `setup()` 跑在 `wire_capabilities` 里，**有运行中的事件循环**，
+  因此 `ctx.spawn_task()` 在那里可用。
 
 ### `D34`/`D35` 留下的、后续必须用到的事实
 
@@ -1968,6 +2158,9 @@
 - **`docs/` 只剩三篇能力文档**（`session-storage` / `permissions` / `plugin-development`）。
   21 篇描述被继承实现的文档随 `D35` 删除。新层的用户文档（安装、配置字段、CLI 参考、
   部署）**尚未写**——**一条能力以插件形态落地时，在同一个 PR 里写它的文档**。
+  `D36`–`D38` 的三个插件各自带一份 README（配置表 + 已知边界 + 不做的事），
+  `plugins/README.md` 的清单同步更新；`plugin-development.md` 因 `D38-A` 多了 §7.5
+  （它的代码块由 `tests/e2e/test_plugin_docs.py` 直接执行）。
 
 ## 本目录文档分类
 

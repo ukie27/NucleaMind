@@ -61,7 +61,14 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   **`D35` 删掉了整个 `legacy/`、`tests/legacy/` 与 `webui/`**，`R6` 守卫、
   `scripts/legacy_debt.py` 与债务棘轮一并退休——**项目范围本轮收窄**：Model Provider
   止步于内建 `model-openai` + `anthropic` 插件，Channel 只做 `feishu`，WebUI 不做。
-  下一步是 M5 剩下的三项：**Memory / 扩展 Tool / Cron-Automation**，
+  `D36`–`D38` 已交齐 **M5 的「扩展 Tool」**：官方插件 `web`
+  （`plugins/nucleamind-plugin-web/`，`web.fetch` + `web.search`）、`image`
+  （`plugins/nucleamind-plugin-image/`，`image.generate`）、`mcp`
+  （`plugins/nucleamind-plugin-mcp/`，把 MCP server 的工具桥接进来），
+  外加一次机制扩展 **`D38-A` `CapabilityDecl.namespace`**（`sdk/manifest.py` +
+  `kernel/plugins/{declarations,host}.py` + `runtime/wiring.py`）与一个新错误码
+  `EXTERNAL_TOOL_SERVER`。
+  下一步是 M5 剩下的两项：**Memory / Cron-Automation**，
   迁移参考在 `references/nanobot/`（本地只读上游副本，见「参考项目读取规范」）；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
@@ -89,7 +96,8 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 ├── builtins/              # 第 4 层：内建默认能力，与插件同等身份
 ├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
 └── embed/                 # 第 5 层：嵌入式 Python SDK
-plugins/                   # 一等公民：官方插件（openai-api、anthropic、discord、feishu）
+plugins/                   # 一等公民：七个官方插件（openai-api、anthropic、discord、
+                           # feishu、web、image、mcp）
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ sdk/ builtins/ runtime/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
@@ -417,6 +425,65 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   图像输入同理（`ModelMessage.content` 是纯 `str`），旧实现的 `_convert_image_block` 没有
   搬运源。
 
+`CapabilityDecl.namespace`（`D38-A`，`sdk/manifest.py` + `kernel/plugins/{declarations,host}.py`
++ `runtime/wiring.py`）是「能力名要连上外部服务才知道」的唯一出路，六条：
+
+- **它只作用在「声明↔注册」这一道核对上。** registry 的冲突语义、覆盖判定与权限模型
+  一个字都没改：仍按精确 `(kind, name)` 判，`nm capabilities` 印的是**实际注册的**名字。
+- **形状先例是 `host.py::on()`**（Hook 早就是「一条声明、N 次注册」）。做成显式布尔而不是
+  `name="mcp.*"` 通配串：后者会让「名字」这个字段有两种含义，而 `CapabilityRef` 的形状
+  校验对通配串又不成立。
+- **只放行 `<前缀>.<后缀>`**，前缀本身与 `mcpx.read` 都不在内——比较落在分隔符边界上
+  （`WorkspaceGuard` 的路径前缀同一条道理）。这条规则**只有一条**：`_declared` 里根本
+  没有命名空间声明，它们单列一张 `_namespaces`。
+- **精确声明优先；两条命名空间同时匹配是 `PLUGIN_LOAD_FAILED`**——静默择一等于让加载
+  顺序说了算，那正是 `EDG-102` 要堵的。
+- **零注册合法**（`finish()` 结构性豁免）：远端服务连不上时插件注册零条能力，那是它如实
+  反映外部状态。**但同一份 manifest 里的精确声明仍然必须兑现。**
+- **只允许 arity 为 `MULTI_UNIQUE` 的 kind，且不得与 `overrides` 并存。** 前者的判据取自
+  `CAPABILITY_ARITY` 而不是一张手写 kind 名单——那张表已经是全部冲突语义的唯一来源。
+  翻译只在 `runtime/wiring.py` 一处（`R2`），漏掉那个字段的后果是插件注册第一条能力时
+  就被判成「未声明」。
+
+`plugins/nucleamind-plugin-web/`（`D36`）与 `plugins/nucleamind-plugin-image/`（`D37`）
+是两个工具插件，四条**对下一个工具插件同样成立**的事实：
+
+- **走不走 `ctx.net` 的判据是「谁决定了那个 URL」**，不是「要不要出网」。`web.fetch` 的
+  URL 整个来自模型 → 必须过 SSRF 守卫（`EDG-406`），插件不写第二份；`web.search` 与
+  `image.generate` 的端点来自运维配置（自托管 SearXNG / 本地 ollama 常在私有网段，
+  守卫会按设计拒掉）→ raw httpx + 如实声明 `net`，与内建 `model_openai` 同一条先例。
+- **外部插件用不上 `runtime/bootstrap.py` 的 `keep` 声明过滤**（`_ENABLED_NAMES` 按**内建
+  id** 索引），因此 manifest 声明几条就必须注册几条。想让一条能力「默认可用」，就得让它
+  在零配置下真的可用——`web` 的默认搜索后端因此必须不要凭据。
+- **`PLUGIN_LOAD_FAILED` 是提供方级的**：一份 manifest 里的两条能力共命运。`web` 因此把
+  凭据解析推迟到第一次调用（缺 `api_key` 只让 `web.search` 那一次失败，不牵连
+  `web.fetch`），代价是配置里少一个凭据不会在启动时报出来。
+- **工具结果没有 trust 字段**：`contracts/context.py::as_model_text` 的
+  `UNTRUSTED_DATA_PREFIX` 包裹只作用于 `ContextFragment`。`web.fetch` 的横幅是**提醒不是
+  隔离**，README 与 docstring 里都这么写着——**别改成「已隔离」**。`FileAccess` 没有
+  `read_bytes` / `write_bytes`（`image` 因此如实声明 `fs:write` 直接用 `pathlib`），
+  `HttpAccess` 不能流式（`web.fetch` 因此只能先下完再截断）。三条都是冻结表面的缺口。
+
+`plugins/nucleamind-plugin-mcp/`（`D38-B`）是第一个桥接类插件，五条：
+
+- **连接必须由一条后台任务拥有**（`supervisor.py`）。`mcp` 的三种传输都建在 anyio 的任务组
+  上，而**任务组必须在进入它的那个任务里退出**——在 `setup()` 里 `enter_async_context`、
+  再由停止路径 `aclose()`，会炸出 `Attempted to exit cancel scope in a different task`。
+  而 manifest **没有 teardown 字段**：`ctx.spawn_task()` 派生的任务是唯一的清理通道
+  （`EDG-105`）。任何用 `AsyncExitStack` 持有第三方 async 上下文的插件都照这个形状写。
+- **`setup()` 可以是 `async` 的**（`builtin_loader.py:40` 早就写着），而外部插件的
+  `setup()` 跑在 `wire_capabilities` 里、**有运行中的事件循环**，因此 `ctx.spawn_task()`
+  在那里可用。registry 解析后只读（`NFR-403`），发现远端能力没有第二个时机。
+- **`side_effect` 恒为 `UNKNOWN`、`read_only` 恒为 `False`**：MCP 不报告副作用，远端的
+  `readOnlyHint` 是**它自己说的**。失败分两档——发起**之前** `NONE`、发起之后 `UNKNOWN`；
+  谎报 `NONE` 会让编排层以为可以安全重试一次可能已经生效的写操作。
+- **归一化撞车的各方都不生效**（`get-file` 与 `get_file` 撞成一个名字），与 registry 对
+  同名冲突的判定一致。**这与 `D32` anthropic 那条「`.` ↔ `-` 编码」结论相反**——那是无碰撞
+  双射，这里的归一化会丢信息。
+- **权限模型对它基本失效**：声明的 `shell` 与 `net` 挡不住任何东西（stdio 要长驻子进程与
+  管道而 `ctx.shell` 是一次性 exec、HTTP 由 SDK 自己开连接）。**真正的边界是「你配了哪些
+  server」**，这句如实写在 README 里。
+
 `runtime/plugin_disable.py` + `examples/plugins/`（`D30`）是插件体系的收口，五条：
 
 - **`on_disable` 是拒绝隐式恢复的那道判定**（`BAS-004`、§10.4）。禁用一个声明过
@@ -563,16 +630,20 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
 # 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic + D33 的 discord
-# + D34 的 feishu）：经 entry point 发现，因此必须真的装进环境才跑得起来。
+# + D34 的 feishu + D36–D38 的 web / image / mcp）：经 entry point 发现，
+# 因此必须真的装进环境才跑得起来。
 # tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
-# **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi）因此不在 CI 环境里，
-# 而两个 Channel 插件的测试树仍须全绿。
+# **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi / mcp）因此不在 CI 环境里，
+# 而那三个插件的测试树仍须全绿。
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-discord
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-feishu
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-web
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-image
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-mcp
 
 # 架构守卫（R1–R5 / 模块头部 / 文件规模 / Any 边界），CI 独立作业
 .venv\Scripts\python.exe -m pytest tests/architecture -q
@@ -606,7 +677,7 @@ nm serve
 - 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
   对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
-## 剩余工作与迁移参考（`D35` 之后）
+## 剩余工作与迁移参考（`D38` 之后）
 
 `legacy/` 已经不存在。项目范围本轮收窄成：
 
@@ -614,17 +685,21 @@ nm serve
 | --- | --- |
 | 额外 Model Provider | **止步**：内建 `model-openai` + `anthropic` 插件已够 |
 | Memory | 仍要做 |
-| 扩展 Tool（web / search / image / mcp） | 仍要做 |
+| 扩展 Tool | **已交**：`web`（`D36`）、`image`（`D37`）、`mcp`（`D38`） |
 | Channel | **只做 `feishu`**（`D34` 已交），其余 13 个放弃 |
 | Cron / Automation | 仍要做 |
 | WebUI | **不做**，前端源码已删 |
 
-剩下三项的迁移参考在 **`references/nanobot/`**（本地只读的上游副本，被 Git 忽略）。
+「扩展 Tool」里**刻意没做的两样**：参考实现的 `agent/tools/search.py` 是**文件搜索**，
+已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖；`providers/transcription.py`
+（语音转写）是另一类能力（音频输入），而契约层今天没有多模态输入位置。
+
+剩下两项的迁移参考在 **`references/nanobot/`**（本地只读的上游副本，被 Git 忽略）。
 它比原来的 `legacy/` 更全——`D31` 从 `legacy/` 删掉的 `agent/tools/` 与 memory 在那里
 还在。代价是未改名、没有通过的测试，因此**只能读不能搬**：按 `AGENTS.md` 原则 5，
 复用实现时把代码写到新家并补测试。
 
-`D32`–`D34` 已经把 M5 的五步法跑通三遍，**照它们的形状写**：a 步不新写基线，
+`D32`–`D38` 已经把 M5 的五步法跑通六遍，**照它们的形状写**：a 步不新写基线，
 b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 
 ### 入口点
@@ -637,6 +712,9 @@ b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 - **Anthropic 原生模型**：官方插件 `plugins/nucleamind-plugin-anthropic/`（一条 `MODEL` 能力）
 - **Discord bot**：官方插件 `plugins/nucleamind-plugin-discord/` + `nm serve`
 - **飞书 / Lark bot**：官方插件 `plugins/nucleamind-plugin-feishu/` + `nm serve`
+- **抓网页 / 搜网**：官方插件 `plugins/nucleamind-plugin-web/`（`web.fetch` + `web.search`）
+- **图像生成**：官方插件 `plugins/nucleamind-plugin-image/`（`image.generate`）
+- **MCP 工具桥接**：官方插件 `plugins/nucleamind-plugin-mcp/`（一条命名空间声明）
 
 ## 架构约束与改造方向
 
