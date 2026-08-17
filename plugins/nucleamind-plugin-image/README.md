@@ -34,7 +34,7 @@ nm plugins enable image
 | `size` | 空 | **留空即不发这个字段** |
 | `response_format` | 空 | `b64_json` / `url`。留空即不发 |
 | `max_count` | `4` | 单次调用的张数上限 |
-| `dir` | `<state_dir>/images` | 相对路径按插件状态目录解析 |
+| `dir` | `<workspace>/artifacts/images` | 相对路径按 **workspace** 解析。配成绝对路径时图仍然写在那里，但**发不出去**（见边界 1） |
 | `extra_body` | `{}` | 透传给后端的额外字段（标量或数组） |
 
 **没有按模型名分支的表。** 参考实现按模型 slug 换算尺寸、按模型名判断支不支持
@@ -52,23 +52,33 @@ nm plugins enable image
 而文件名里不含 prompt——prompt 可能很长、可能带路径分隔符，也可能包含用户不想留在文件系统
 上的内容。写走「同目录临时文件 → `fsync` → `os.replace`」。
 
-工具返回值里既有给模型看的路径列表，也有 `ToolResult.artifacts` 的 `ArtifactRef`。
+工具返回值里有三样东西：给模型看的路径列表、`ToolResult.artifacts` 的 `ArtifactRef`
+（供后续工具使用），以及 `ToolResult.attachments` 的 `AttachmentRef`（供 Channel 投递）。
+**同一个文件同时出现在后两者里不是重复，是两个消费者。**
 
 ## 三条如实记着的边界
 
-### 1. `artifacts` 今天没有消费者，图发不到聊天平台
+### 1. 图能不能真的送到用户面前，取决于 Channel
 
-本插件是全项目 `ToolResult.artifacts` 的**第一个生产者**。生成的图只能由用户到目录里去看：
+`D47` 起 Kernel 会把工具产出的附件挂在本轮**终帧**出站消息上，因此：
 
-- `OutboundMessage` 的附件路径今天没有任何生产者；
-- `sdk.api.FileAccess` 没有 `read_bytes`，Channel 插件读不到这些字节
-  （`D33` 已把 `read_bytes` 记为契约变更候选）。
+- **内建 CLI** 印一行 `[附件] artifacts/images/image-xxxx.png`；
+- **`discord`** 经 `ctx.fs.read_bytes()` 读字节并真的上传；
+- 其余 Channel 各自决定，做不到的**如实印一行说明**而不是静默丢掉。
 
-### 2. 不用 `ctx.fs`，如实声明 `fs:write`
+**把 `dir` 配成绝对路径就发不出去**：`AttachmentRef` 按契约拒绝绝对路径与上跳段
+（把宿主机绝对路径交给一个聊天平台去读，正是那条契约要挡的事）。那时图仍然写在你指定的
+位置、路径仍然在工具正文里，只是不作为附件出站。
 
-`FileAccess` 只有 `read_text` / `write_text` / `list_dir`，表达不了二进制写入。
-与 `builtins/session_jsonl/` 同一条先例：门面能力不足时，**诚实声明比绕道更符合
-「应用级权限的价值是让越界意图可审计」**。
+### 2. 用 `ctx.fs` 写进 workspace，如实声明 `fs:write`
+
+`D47` 之前落在插件自己的 state_dir，理由记着「`ctx.fs` 的根是 workspace，那是两个目录树，
+不是缺个方法」——那句话当时没错，但它回避了真正的问题：**生成的图是用户的交付物**，
+属于用户的工作区，不属于插件的私有状态。落进 workspace 之后三件事同时成立：门面用得上、
+`fs.read` 这类内建工具能接着处理它、`AttachmentRef` 拿得到它要求的**相对**路径。
+
+配了绝对路径时仍然直接用 `pathlib`（门面够不着那里），与 `builtins/session_jsonl/`
+同一条先例：**诚实声明比绕道更符合「应用级权限的价值是让越界意图可审计」**。
 
 ### 3. 不用 `ctx.net`，如实声明 `net`
 

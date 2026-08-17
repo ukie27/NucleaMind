@@ -94,6 +94,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   **`D46` 补齐了新层的用户文档**（`docs/` 四篇：`getting-started` / `configuration` /
   `cli` / `deployment`，外加 `tests/e2e/test_user_docs.py` 的三条防漂移守卫），
   同 PR 修掉 `deploy/` 的三处陈旧项；
+  **`D47` 打通了出站附件通路**（`ToolResult.attachments` → `TurnState.collect_attachments`
+  → 终帧 `OutboundMessage.attachments` → 内建 CLI 印路径 / `discord` 真上传，
+  `image` 的落点从 state_dir 改到 workspace，**`SDK 1.2.0`**）；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`，
@@ -151,7 +154,8 @@ deploy/                    # Dockerfile / compose / entrypoint
   `contracts` 导入。要再写一个密钥类型之前先想清楚哨兵测试要多扫一遍哪些输出路径。
 
 `sdk/` 同样已冻结，**且从 `D42` 起是 `1.x`**（`1.0.0` 起算 §7.6 的兼容承诺，`D45` 的
-纯新增让它到 `1.1.0`）：`sdk.__all__` 与
+`OpaqueBlock` 让它到 `1.1.0`、`D47` 的 `ToolResult.attachments` 让它到 `1.2.0`，
+两次都是纯新增）：`sdk.__all__` 与
 `sdk.testing.__all__` 是规范性清单，有字面量快照测试；
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
@@ -678,6 +682,40 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   （`SES-006` 一旦发布就是契约），那是另一个决定。**同一个槽位也是多模态输入的落点**，
   语音转写与图生图都卡在那里。
 
+`D46`（用户文档）与 `D47`（出站附件通路）八条：
+
+- **`docs/` 的四篇用户文档各有守卫**（`tests/e2e/test_user_docs.py`）：配置字段表 ==
+  `SECTION_SPECS`（名字 + 默认值，**不比对说明文字**——那会让每次改文案都失败一次）、
+  CLI 子命令 == `main.py` 的派发分支（**AST 扫 `command == "..."`**，不做文本包含：
+  `_USAGE` 里也有那些名字，文本扫描会把「说明里提过」当成「真的分派了」）、插件安装清单
+  == 磁盘上的发行包。**「加一个配置小节要改五处」现在是六处。**
+- **`ToolResult.attachments` 与 `artifacts` 是两个消费者，不是两份真相**（`D47`）。
+  分工早就写在 `ArtifactRef` 的 docstring 里：产物面向 Workspace 与后续工具，附件面向
+  Channel 投递。**Kernel 不做两者之间的翻译**——那需要 Kernel 认识 workspace 根并做路径
+  相对化，而 `ArtifactRef.locator` 允许是宿主机绝对路径。**由生产者表态**：它知道落点，
+  而 `AttachmentRef.__post_init__`（拒绝绝对路径与上跳段）就是那份表态的判据。
+- **走路径引用而不是字节**，因为 `AttachmentRef` 的 docstring 已经答过这个问题：
+  「契约层只存引用不存字节」。Channel 自己经 `ctx.fs.read_bytes()` 读——`D42` 那个方法在
+  这里得到第一个消费者，而 Channel 拿到的是 workspace **相对**路径，不是宿主机绝对路径。
+- **收集在 `TurnState.collect_attachments` 一处，投递在 `emit_outbound` 一处。**
+  去重按 `(source, locator)`（内容寻址的落点让重复生成落在同一个 locator 上）、封顶
+  `MAX_ATTACHMENTS`、超出的记进 `dropped_attachments` 并经终帧 metadata 的
+  `attachments_dropped` 说出来。**`orchestrator.py` 只加了一行**——它当时 497/500。
+- **附件只挂终帧**（含 `CANCELLED` / `FAILED`：已经生成出来的文件该交给用户，而契约允许
+  这两种状态空正文）。中间帧是同一段正文的分片，挂上去等于让 Channel 收到 N 份。
+  **只有附件、没有正文的终帧照发**：契约的「内容与附件不能同时为空」本来就是二选一。
+- **`image` 的落点从 state_dir 改到 workspace。** 原来那句「那是两个目录树，不是缺个方法」
+  当时没错，但它回避了真正的问题：**生成的图是用户的交付物**，属于用户的工作区。落进
+  workspace 之后三件事同时成立（门面用得上、`fs.read` 能接着处理、`AttachmentRef` 拿得到
+  相对路径）。**配成绝对路径仍然支持**（走 `LocalImageStore` + `pathlib`），代价是那样存的
+  图发不出去——如实写在 README、配置项 description 与两个 store 类的 docstring 里。
+- **发不出去的附件必须说一句。** CLI 印 `[附件] <相对路径>`；discord 对 `INLINE`/`OPAQUE`
+  与**读盘失败**印 `[附件：…（本轮无法上传）]`。读不出来**不抛**（`EDG-204`）——
+  `deliver()` 照约定抛的只有**正文**发不出去那一种。
+- **`R4` 又逼出一处双写**：`attachments_dropped` 这个键名在 `kernel/turn/orchestration.py`
+  与 `builtins/cli_entry/console.py` 各一份，由 `test_cli_entry.py` 的对照测试钉住
+  （`estimate_tokens` / `DEFAULT_GRACE_MS` 的同一种做法）。
+
 `plugins/nucleamind-plugin-mcp/`（`D38-B`）是第一个桥接类插件，五条：
 
 - **连接必须由一条后台任务拥有**（`supervisor.py`）。`mcp` 的三种传输都建在 anyio 的任务组
@@ -940,9 +978,6 @@ a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步�
 
 已经识别、还没做的：
 
-- **出站附件通路没有生产者。** `ToolResult.artifacts` 至今零消费者，`image` 是它唯一的
-  生产者，而没有任何 Channel 能把那些字节发出去。`D42` 补的 `FileAccess.read_bytes`
-  **不解决这条**——缺的是出站侧那条路，不是读字节的方法。
 - **多模态输入没有落点。** `ModelMessage.content` 是纯 `str`，因此图像输入、语音转写
   （M5 里刻意没做的 `providers/transcription.py`）与图生图都卡在同一处。`D45` 的
   `OpaqueBlock` 是 provider **私有**块的槽位，**不是**多模态内容的槽位——那需要

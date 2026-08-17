@@ -8,7 +8,7 @@
 **注入时钟**（`now_ms`）：节流是本模块唯一的时间语义，而用真实时间测它意味着用例要
 `sleep(0.8)`，慢机器上还会假阳性。注入之后节流是确定的——`indicators.py` 同理。
 
-七条判定，每条对应一个用例：
+八条判定，每条对应一个用例：
 
 1. **`STARTED` 不上线**：Discord 上不会因此出现一条空消息。
 2. **首片必须 `strip()` 非空才上线**：模型的第一个 delta 常常是空白。
@@ -21,19 +21,39 @@
 7. **`deliver()` 可能被并发调用**（`D33` 的泵扇出之后）。缓冲表按 `conversation_id`
    分片，而同一 conversation 内由 lane 与 `SessionScheduler` 双重串行——因此各条 lane
    只碰自己那个键，**不需要加锁**。这条依赖 `kernel/routing/fanout.py` 的不变量。
+8. **附件在正文之后上传**（`D47`）：先看到答案再看到图；读不出来的附件如实印一行而不是
+   静默丢掉，且**不抛**——`deliver()` 照约定抛的只有正文发不出去那一种。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from nucleamind.contracts import OutboundMessage, StreamState
+from nucleamind.contracts import (
+    AttachmentRef,
+    AttachmentSource,
+    OutboundMessage,
+    StreamState,
+)
 
-from .outbound import MAX_MESSAGE_LENGTH, marker_for, split_message
+from .outbound import (
+    MAX_MESSAGE_LENGTH,
+    attachment_lines,
+    marker_for,
+    split_message,
+    unsendable_line,
+)
 
-__all__ = ["DEFAULT_EDIT_INTERVAL_MS", "Platform", "SentMessage", "StreamRelay"]
+__all__ = [
+    "DEFAULT_EDIT_INTERVAL_MS",
+    "AttachmentReader",
+    "FileReader",
+    "Platform",
+    "SentMessage",
+    "StreamRelay",
+]
 
 #: 两次编辑之间的最小间隔。legacy 的 `_STREAM_EDIT_INTERVAL = 0.8` 原值，只换了单位。
 DEFAULT_EDIT_INTERVAL_MS: int = 800
@@ -55,6 +75,31 @@ class Platform(Protocol):
     async def send(self, conversation_id: str, content: str, *, reply_to: str | None) -> SentMessage:
         ...
 
+    async def send_files(
+        self, conversation_id: str, files: Sequence[tuple[str, bytes]], *, reply_to: str | None
+    ) -> None:
+        """上传若干附件（`D47`）。`files` 是 `(文件名, 字节)`。
+
+        **不返回 `SentMessage`**：附件消息不需要被编辑（流式编辑只作用于正文），
+        交出一个能编辑的句柄只会让调用方以为它该被编辑。
+        """
+        ...
+
+
+#: 读一个附件的字节；`None` 表示读不出来（`channel.py` 把异常折成它）。
+AttachmentReader = Callable[[AttachmentRef], Awaitable[bytes | None]]
+
+
+class FileReader(Protocol):
+    """`ctx.fs` 里本插件用得到的那一个方法。
+
+    **不直接标注 `sdk.FileAccess`**：用例要一个可注入的替身，而
+    `FakePluginContext.fs` 按设计抛 `NotImplementedError`（`sdk.testing` 是冻结表面，
+    为一个插件的方便去改它的语义不划算）。窄到只有一个方法，替身因此是三行。
+    """
+
+    async def read_bytes(self, path: str) -> bytes: ...
+
 
 @dataclass(slots=True)
 class _Buffer:
@@ -72,6 +117,9 @@ class StreamRelay:
 
     platform: Platform
     now_ms: Callable[[], int]
+    #: 读一个附件的字节。`None` 表示本 Channel 拿不到（没有 `fs:read`、或读失败），
+    #: 那时如实印一行而不是静默丢掉。默认恒 `None`：注入才有上传能力。
+    read_attachment: AttachmentReader | None = None
     edit_interval_ms: int = DEFAULT_EDIT_INTERVAL_MS
     streaming: bool = True
     max_len: int = MAX_MESSAGE_LENGTH
@@ -132,6 +180,11 @@ class StreamRelay:
         buffer = self._buffers.pop(message.conversation_id, None)
         # 终态消息带的是完整正文；只有它为空时才回退到累积的 delta。
         body = message.content or (buffer.text if buffer else "")
+        # `URL` 附件成行让 Discord 自己 embed；拿不到字节的来源如实说一句。
+        # `WORKSPACE` 不在这里——它走下面的真上传（`D47`）。
+        extra = attachment_lines(message.attachments)
+        if extra:
+            body = "\n\n".join([part for part in (body, *extra) if part])
         marker = marker_for(message.stream_state)
         if marker:
             body = f"{body}\n\n{marker}" if body else marker
@@ -139,12 +192,38 @@ class StreamRelay:
         wire = buffer.wire if buffer else None
         if wire is None:
             await self._send_all(message, chunks)
+        elif chunks:
+            await wire.edit(chunks[0])
+            await self._send_all(message, chunks[1:])
+        # else: 流式已经上线但终态什么都没有——把已经显示的内容留着，不要编成空消息。
+        await self._upload(message)
+
+    async def _upload(self, message: OutboundMessage) -> None:
+        """把 `WORKSPACE` 附件真的传上去（`D47`）。
+
+        **在正文之后**：先看到答案再看到图，和人说话的顺序一致；而且正文那条消息才是
+        流式编辑的落点，附件插在中间会让编辑目标不再是最后一条。
+
+        **读不出来就印一行，不抛**（`EDG-204`）：一个读不到的附件不该把一次成功的投递
+        变成失败。`deliver()` 照约定抛的只有**正文**发不出去那一种，见 `channel.py`。
+        """
+        pending = [
+            item for item in message.attachments if item.source is AttachmentSource.WORKSPACE
+        ]
+        if not pending:
             return
-        if not chunks:
-            # 流式已经上线但终态什么都没有：把已经显示的内容留着，不要编成空消息。
-            return
-        await wire.edit(chunks[0])
-        await self._send_all(message, chunks[1:])
+        files: list[tuple[str, bytes]] = []
+        missing: list[str] = []
+        for item in pending:
+            data = None if self.read_attachment is None else await self.read_attachment(item)
+            if data is None:
+                missing.append(unsendable_line(item))
+                continue
+            files.append((item.filename or item.locator.rsplit("/", 1)[-1], data))
+        if files:
+            await self.platform.send_files(message.conversation_id, files, reply_to=None)
+        for line in missing:
+            await self.platform.send(message.conversation_id, line, reply_to=None)
 
     async def _send_all(self, message: OutboundMessage, chunks: Sequence[str]) -> None:
         for index, chunk in enumerate(chunks):

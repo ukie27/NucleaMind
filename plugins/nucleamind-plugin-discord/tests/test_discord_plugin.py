@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Sequence
 from importlib.metadata import entry_points
 from typing import Any
 
 import pytest
-from _fakes import CONVERSATION, TOKEN, FakePlatform, outbound, settings
+from _fakes import CONVERSATION, TOKEN, FakePlatform, FakeWorkspace, outbound, settings
 from nucleamind_plugin_discord import (
     CAPABILITY_NAME,
     CONFIG_KEYS,
@@ -36,6 +37,8 @@ from nucleamind_plugin_discord import (
 from nucleamind_plugin_discord.gateway import MISSING_SDK_FIX, DiscordGateway
 
 from nucleamind.contracts import (
+    AttachmentRef,
+    AttachmentSource,
     CapabilityKind,
     ErrorCode,
     NucleaError,
@@ -64,6 +67,11 @@ class _FakeGateway:
     async def send(self, conversation_id: str, content: str, *, reply_to: str | None) -> Any:
         return await self.platform.send(conversation_id, content, reply_to=reply_to)
 
+    async def send_files(
+        self, conversation_id: str, files: Sequence[tuple[str, bytes]], *, reply_to: str | None
+    ) -> None:
+        await self.platform.send_files(conversation_id, files, reply_to=reply_to)
+
     async def add_reaction(self, conversation_id: str, message_id: str, emoji: str) -> None:
         return None
 
@@ -75,12 +83,17 @@ class _FakeGateway:
 
 
 # boundary: 下面两个是关键字转发器，类型检查落在被构造的 `DiscordSettings` 与 ctx 上
-def make_channel(**kwargs: Any) -> tuple[DiscordChannel, _FakeGateway]:
+def make_channel(
+    *,
+    files: FakeWorkspace | None = None,
+    **kwargs: Any,  # boundary: 关键字转发，见上一行
+) -> tuple[DiscordChannel, _FakeGateway]:
     gateway = _FakeGateway()
     channel = DiscordChannel(
         settings(**kwargs),
         token=TOKEN,
         gateway=gateway,  # type: ignore[arg-type]
+        files=files,
     )
     return channel, gateway
 
@@ -124,11 +137,15 @@ class TestManifest:
         """写了默认值 100 会被原样采纳，而内建基准是 0（`D16` 记的坑）。"""
         assert "priority" not in MANIFEST.capabilities[0].model_fields_set
 
-    def test_permissions_are_exactly_the_two_secrets(self) -> None:
-        """**不声明 `net`**：`discord.py` 自己开连接，一个字节都不过 `ctx.net` 门面。"""
+    def test_permissions_are_the_two_secrets_plus_fs_read(self) -> None:
+        """**不声明 `net`**：`discord.py` 自己开连接，一个字节都不过 `ctx.net` 门面。
+
+        **`fs:read` 反过来是真的经门面**（`D47` 的附件上传），因此如实声明。
+        """
         assert {(item.kind, item.target) for item in MANIFEST.permissions} == {
             (PermissionKind.SECRET, SECRET_TOKEN),
             (PermissionKind.SECRET, SECRET_PROXY_PASSWORD),
+            (PermissionKind.FS_READ, ""),
         }
 
     def test_a_platform_outage_must_not_take_the_instance_down(self) -> None:
@@ -297,6 +314,49 @@ class TestChannelLifecycle:
         await channel.start()
         await channel.deliver(outbound("答案"))
         assert gateway.platform.sent == [(CONVERSATION, "答案", None)]
+        await channel.stop()
+
+    async def test_a_workspace_attachment_is_read_through_ctx_fs_and_uploaded(self) -> None:
+        """`D47`：Channel 自己读字节（契约层只存引用），读的那条路是 `ctx.fs`。"""
+        workspace = FakeWorkspace({"artifacts/images/a.png": b"PNG"})
+        channel, gateway = make_channel(files=workspace)
+        await channel.start()
+        await channel.deliver(
+            outbound(
+                "给你",
+                attachments=(
+                    AttachmentRef(
+                        source=AttachmentSource.WORKSPACE,
+                        locator="artifacts/images/a.png",
+                        media_type="image/png",
+                        filename="a.png",
+                    ),
+                ),
+            )
+        )
+        assert workspace.reads == ["artifacts/images/a.png"]
+        assert gateway.platform.uploads == [(CONVERSATION, [("a.png", b"PNG")])]
+        await channel.stop()
+
+    async def test_an_attachment_read_failure_does_not_fail_the_delivery(self) -> None:
+        """读不到就印一行。`deliver()` 照约定抛的只有**正文**发不出去那一种。"""
+        channel, gateway = make_channel(files=FakeWorkspace())
+        await channel.start()
+        await channel.deliver(
+            outbound(
+                "给你",
+                attachments=(
+                    AttachmentRef(
+                        source=AttachmentSource.WORKSPACE,
+                        locator="artifacts/images/gone.png",
+                        media_type="image/png",
+                        filename="gone.png",
+                    ),
+                ),
+            )
+        )
+        assert gateway.platform.uploads == []
+        assert "无法上传" in gateway.platform.sent[-1][1]
         await channel.stop()
 
     async def test_an_inbound_message_reaches_the_queue(self) -> None:

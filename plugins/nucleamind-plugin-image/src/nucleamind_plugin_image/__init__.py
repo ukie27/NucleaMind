@@ -1,8 +1,9 @@
-"""官方插件 `image`：按文字描述生成图像并落盘（开发方案 `D37`）。
+"""官方插件 `image`：按文字描述生成图像并落盘（开发方案 `D37`、`D47`）。
 
-职责：声明一条 `TOOL` 能力 `image.generate`，调用图像后端、把回来的图写进磁盘、
-交出 `ArtifactRef`。
-不负责：把图发到聊天平台（见下面第一条边界）、图像编辑与识别、语音转写。
+职责：声明一条 `TOOL` 能力 `image.generate`，调用图像后端、把回来的图写进 workspace、
+交出 `ArtifactRef` 与 `AttachmentRef`。
+不负责：把图真的发到某个聊天平台（那是各 Channel 的事，见下面第一条）、图像编辑与识别、
+语音转写。
 
 **它取代的是 `references/nanobot` 的 `agent/tools/image_generation.py` +
 `providers/image_generation.py`**，但不是移植：
@@ -14,20 +15,19 @@
 - 旧实现有三个后端类（openrouter / aihubmix / ollama）。这里写死两个形状差异大的
   （`openai` 的专用图像端点、`openrouter` 的 chat-with-image），第三家用
   `provider="openai"` + `base_url` 接上——aihubmix 与多数网关本来就是 OpenAI 兼容的。
-- 旧实现把图写进一个全局 media 目录并把 data URL 回给模型。这里写进插件自己的状态目录、
-  用**内容寻址**的文件名，只把路径回给模型（见下面第二条边界）。
+- 旧实现把图写进一个全局 media 目录并把 data URL 回给模型。这里写进 workspace、
+  用**内容寻址**的文件名，只把相对路径回给模型。
 
 **三条如实记着的边界**，写在这里而不是留给用户发现：
 
-- **`ToolResult.artifacts` 今天在全项目零消费者，本插件是它的第一个生产者。**
-  生成的图只能由用户到目录里去看：`OutboundMessage` 的附件路径没有生产者，
-  因此没有任何 Channel 能把这些字节发出去。（`D42` 给 `FileAccess` 补了
-  `read_bytes` / `write_bytes`，**这条边界没有因此变化**——缺的从来不是读字节的方法，
-  是出站侧的附件通路。）
-- **不用 `ctx.fs`，如实声明 `fs:write` 并直接用 `pathlib`。** `ctx.fs` 的根是实例的
-  workspace，而图落在插件自己的 state_dir——这不是缺个方法，是两个目录树，详见
-  `storage.py`。`builtins/session_jsonl/` 的同一条先例：门面够不着的地方，
-  诚实声明比绕道更符合权限模型的意义。
+- **图能不能真的送到用户面前，取决于 Channel。** `D47` 之后本插件在 `ToolResult` 上同时
+  交出 `artifacts`（后续工具用）与 `attachments`（出站用），Kernel 把后者挂在本轮终帧上。
+  内建 CLI 印路径、`discord` 真的上传；其余 Channel 各自决定，做不到的**如实印一行说明**
+  而不是静默丢弃。
+- **用 `ctx.fs` 写进 workspace，如实声明 `fs:write`。** `D47` 之前落在插件自己的
+  state_dir，理由记着「那是两个目录树」——那句话当时没错，但生成的图是**用户的交付物**，
+  属于用户的工作区。落进 workspace 之后 `AttachmentRef` 才拿得到它要求的**相对**路径。
+  运维仍可把 `dir` 配成绝对路径（那时走 `pathlib`），代价是那样存的图发不出去。
 - **不用 `ctx.net`，如实声明 `net` 并直接用 httpx。** 图像端点由运维配置（要能指到本地
   ollama 与自建网关），而 SSRF 守卫按设计拒绝私有地址。**模型在这里决定不了任何地址**，
   它只给 prompt——这与 `web.fetch` 恰好相反，那一条必须走守卫。
@@ -61,7 +61,14 @@ from .settings import (
     ImageSettings,
     resolve_settings,
 )
-from .storage import ImageStore, SavedImage, digest_name
+from .storage import (
+    FileWriter,
+    ImageStore,
+    LocalImageStore,
+    SavedImage,
+    WorkspaceImageStore,
+    digest_name,
+)
 from .tool import GENERATE_TOOL, ImageGenerateTool, generate_spec
 from .wire import (
     OPENAI_DEFAULT_BASE_URL,
@@ -95,14 +102,17 @@ __all__ = [
     "ImageSettings",
     "ImageSource",
     "ImageStore",
+    "FileWriter",
+    "LocalImageStore",
     "SavedImage",
+    "WorkspaceImageStore",
     "build_request",
     "check_status",
     "decode_data_url",
     "digest_name",
     "extension_for",
     "generate_spec",
-    "image_directory",
+    "build_store",
     "parse_response",
     "register",
     "resolve_settings",
@@ -138,7 +148,10 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
         "max_result_chars": {"type": "integer", "minimum": 1},
         "dir": {
             "type": "string",
-            "description": "落盘目录。相对路径按插件状态目录解析，留空即 <state_dir>/images。",
+            "description": (
+                "落盘目录。相对路径按 workspace 解析，留空即 <workspace>/artifacts/images；"
+                "配成绝对路径时图仍然写在那里，但发不出去（附件不许依赖绝对路径）。"
+            ),
         },
         "extra_body": {
             "type": "object",
@@ -151,7 +164,9 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="image",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    # `>=1.2`：`D47` 的 `ToolResult.attachments` 是本插件产出附件的唯一通道，
+    # 宿主没有它时那些图发不出去，而**静默发不出去**正是这一版要消除的东西。
+    sdk_range=">=1.2.0,<2.0.0",
     setup="nucleamind_plugin_image:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name=GENERATE_TOOL),),
     permissions=(
@@ -161,7 +176,7 @@ MANIFEST: Final = PluginManifest(
         ),
         PermissionDecl(
             kind=PermissionKind.FS_WRITE,
-            reason="把生成的图像写进插件自己的状态目录（在 ctx.fs 的 workspace 根之外）。",
+            reason="把生成的图像写进 workspace 下的落盘目录（默认 artifacts/images）。",
         ),
         PermissionDecl(
             kind=PermissionKind.SECRET,
@@ -177,16 +192,23 @@ MANIFEST: Final = PluginManifest(
 )
 
 
-def image_directory(ctx: PluginContext, settings: ImageSettings) -> Path:
-    """落点：配置的 `dir`，没配就是 `<state_dir>/images`。
+def build_store(ctx: PluginContext, settings: ImageSettings, *, files: FileWriter | None = None) -> ImageStore:
+    """落点：配置的 `dir`，没配就是 `<workspace>/artifacts/images`（`D47`）。
 
-    **相对路径按状态目录解析**而不是按进程 cwd：`nm` 从哪个目录启动不该改变图存到哪里。
-    绝对路径原样采纳——运维显式写下的绝对路径就是他要的那个位置。
+    **相对路径按 workspace 解析**（在 `D47` 之前是按 `ctx.state_dir`）：生成的图是用户的
+    交付物，而交付物属于用户的工作区。这也正是它能被当成附件发出去的前提——
+    `AttachmentRef` 按契约拒绝绝对路径。
+
+    **绝对路径原样采纳**，走 `LocalImageStore`：运维显式写下的绝对路径就是他要的位置，
+    代价是那样存下的图发不出去（如实写在 README 与配置项描述里）。
+
+    `files` 只有用例会传（`ctx.fs` 的替身），生产路径永远用 `ctx.fs`。
     """
-    if not settings.directory:
-        return ctx.state_dir / IMAGE_DIR_NAME
-    configured = Path(settings.directory)
-    return configured if configured.is_absolute() else ctx.state_dir / configured
+    configured = Path(settings.directory) if settings.directory else None
+    if configured is not None and configured.is_absolute():
+        return LocalImageStore(configured)
+    directory = configured.as_posix() if configured is not None else IMAGE_DIR_NAME
+    return WorkspaceImageStore(files if files is not None else ctx.fs, directory)
 
 
 def register(
@@ -194,14 +216,15 @@ def register(
     ctx: PluginContext,
     *,
     transport: "httpx.AsyncBaseTransport | None" = None,
+    files: FileWriter | None = None,
 ) -> ImageSettings:
-    """真正的注册体。`transport` 只有测试会传（httpx 传输层替身）。
+    """真正的注册体。`transport` / `files` 只有测试会传（httpx 传输层与 `ctx.fs` 的替身）。
 
     与 `setup()` 分开是为了让用例能在不构造整个装配根的情况下驱动它，同时保证
     生产路径与测试路径**注册的是同一个对象**。
     """
     settings = resolve_settings(ctx.config)
-    store = ImageStore(image_directory(ctx, settings))
+    store = build_store(ctx, settings, files=files)
     api.register_tool(
         generate_spec(), ImageGenerateTool(ctx, settings, store, transport=transport)
     )

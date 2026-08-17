@@ -22,6 +22,7 @@ from nucleamind.contracts import (
     HookName,
     HookOutcome,
     InstanceId,
+    JsonValue,
     ModelInfo,
     ModelProvider,
     NucleaError,
@@ -41,7 +42,18 @@ from .limits import TurnLimits
 from .memory import MemoryRecall
 from .transcript import TurnState
 
-__all__ = ["EventTap", "OrchestratorDeps", "TurnReceipt", "emit_outbound", "utc_now"]
+__all__ = [
+    "DROPPED_ATTACHMENTS_KEY",
+    "EventTap",
+    "OrchestratorDeps",
+    "TurnReceipt",
+    "emit_outbound",
+    "utc_now",
+]
+
+#: 终帧 metadata 里「有几个附件因为超上界没带上」的键（`D47`）。Channel 可以据此加一句
+#: 说明；没有它时不该猜——`attachments` 的长度只说明发了几个，不说明丢了几个。
+DROPPED_ATTACHMENTS_KEY: Final = "attachments_dropped"
 
 #: 契约要求 `DELTA` / `FINAL` 有正文；`CANCELLED` / `FAILED` 允许空正文，由 Channel 按
 #: `EDG-304` 附加标记后呈现。空正文的前两种直接不发，而不是硬塞一个占位符。
@@ -67,9 +79,23 @@ async def emit_outbound(
     寻址三件套（`channel_id` / `conversation_id` / `turn_id`）从 `Correlation` 取，
     Channel 因此不必维护自己的 Session 映射（`MSG-006`）；契约会当场校验它们与
     `session_key` 一致。
+
+    **附件只挂在终帧上**（`final=True`，`D47`）：中间帧是同一段正文的分片，把附件挂上去
+    等于让 Channel 收到 N 份同样的附件。终帧包含 `CANCELLED` / `FAILED`——已经生成出来的
+    文件该交给用户，而契约允许这两种状态空正文。**只有附件、没有正文的终帧照发**：
+    契约的「内容与附件不能同时为空」本来就是二选一。
+
+    **刻意不加 `attachments` 形参**：它已经收 `state`，加一个参数会让唯一的调用方
+    （`orchestrator._emit`）跟着长一行，而那个文件贴着 500 行上限。
     """
-    if not content and stream_state in _NEEDS_CONTENT:
+    attachments = tuple(state.attachments) if final else ()
+    if not content and stream_state in _NEEDS_CONTENT and not attachments:
         return None
+    metadata: dict[str, JsonValue] = {"reasoning": True} if reasoning else {}
+    if final and state.dropped_attachments:
+        # 撞上 `MAX_ATTACHMENTS` 时**说出来**：一条「有几张图没发出来」的消息，
+        # 比用户自己数出来强。放在 metadata 而不是事件里，是因为该看到它的是收件人。
+        metadata[DROPPED_ATTACHMENTS_KEY] = state.dropped_attachments
     key = state.correlation.session_key
     message = OutboundMessage(
         session_key=key,
@@ -77,8 +103,9 @@ async def emit_outbound(
         conversation_id=key.conversation_id,
         turn_id=state.correlation.turn_id,
         content=content,
+        attachments=attachments,
         stream_state=stream_state,
-        metadata={"reasoning": True} if reasoning else {},
+        metadata=metadata,
     )
     if not final:
         state.emitted.append(message)

@@ -28,7 +28,7 @@ from nucleamind.contracts import ErrorCode, InstanceId, JsonValue, NucleaError
 from nucleamind.sdk import NucleaAPI, PluginContext
 
 from .channel import CliChannel
-from .console import TERMINAL_MARKERS, CliConsole
+from .console import DROPPED_ATTACHMENTS_KEY, TERMINAL_MARKERS, CliConsole, attachment_lines
 from .entry import QUIT_WORDS, USAGE, StdioCliEntry
 
 __all__ = [
@@ -44,6 +44,7 @@ __all__ = [
     "DEFAULT_CONVERSATION_ID",
     "DEFAULT_PROMPT",
     "DEFAULT_USER_ID",
+    "DROPPED_ATTACHMENTS_KEY",
     "QUIT_WORDS",
     "TERMINAL_MARKERS",
     "USAGE",
@@ -51,6 +52,7 @@ __all__ = [
     "CliConsole",
     "CliSettings",
     "StdioCliEntry",
+    "attachment_lines",
     "resolve_settings",
     "setup",
 ]

@@ -29,6 +29,9 @@ from ._support import say, use_tool
 from .conftest import Recorder
 
 IMAGE_PLUGIN = "image"
+
+#: 默认落点，workspace 相对（`D47`）。与插件的 `IMAGE_DIR_NAME` 是同一个字符串。
+IMAGE_DIR = "artifacts/images"
 GENERATE_TOOL = "image.generate"
 
 SENTINEL_KEY = "sk-img0123456789abcdefghij"
@@ -105,12 +108,17 @@ async def test_the_tool_reaches_the_registry(instance_dir: Path) -> None:
 
 
 async def test_a_real_turn_writes_a_real_file(
-    instance_dir: Path, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+    instance_dir: Path,
+    recorder: Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """一次完整 turn：模型调 `image.generate` → 插件打图像后端 → 图落盘 → 模型作答。
+    """一次完整 turn：模型调 `image.generate` → 插件打图像后端 → 图落盘 → 模型作答 →
+    附件出现在终帧上。
 
-    **落点由装配根分配**（`<instance>/plugins/image/images/`），插件自己只知道
-    `ctx.state_dir`——这条用例同时验了那条交接真的接上了。
+    **落点是 workspace**（`<instance>/workspace/artifacts/images/`，`D47` 起）：插件经
+    `ctx.fs` 写，而 `ctx.fs` 的根由装配根交下来——这条用例同时验了那条交接真的接上了，
+    以及那张图真的以附件形态到了 Channel 手里（CLI 把它印成一行 `[附件] <相对路径>`）。
     """
     monkeypatch.setenv(MODEL_API_KEY_ENV, SENTINEL_KEY)
     monkeypatch.setenv("IMAGE_API_KEY", "sk-image0123456789abcdef")
@@ -123,7 +131,7 @@ async def test_a_real_turn_writes_a_real_file(
 
     assert await _run_prompt(instance_dir, "画一只猫") == 0
 
-    written = sorted((instance_dir / "plugins" / IMAGE_PLUGIN / "images").glob("image-*.png"))
+    written = sorted((instance_dir / "workspace" / IMAGE_DIR).glob("image-*.png"))
     assert len(written) == 1
     assert written[0].read_bytes() == _PNG
 
@@ -131,6 +139,12 @@ async def test_a_real_turn_writes_a_real_file(
     follow_up = json.loads(recorder.requests[2].content)
     tools = [m for m in follow_up["messages"] if m.get("role") == "tool"]
     assert written[0].name in str(tools[-1]["content"])
+
+    # 而它必须真的作为**附件**到达 Channel（`D47`）：CLI 把终帧的附件印成一行。
+    # 断言在这一层而不是单测里，因为这条路要穿过工具 → TurnState → 终帧 → deliver
+    # 四段，其中任何一段漏掉附件，单测都仍然是绿的。
+    printed = capsys.readouterr().out
+    assert f"{IMAGE_DIR}/{written[0].name}" in printed
 
 
 async def test_a_missing_credential_is_a_tool_failure_not_a_startup_failure(
@@ -149,4 +163,4 @@ async def test_a_missing_credential_is_a_tool_failure_not_a_startup_failure(
     assert await _run_prompt(instance_dir, "画一只猫") == 0
 
     # 一个字节都没落盘（`SideEffect.NONE` 的可观察形态）。
-    assert not (instance_dir / "plugins" / IMAGE_PLUGIN / "images").exists()
+    assert not (instance_dir / "workspace" / IMAGE_DIR).exists()

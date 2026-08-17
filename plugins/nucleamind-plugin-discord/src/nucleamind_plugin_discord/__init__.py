@@ -26,10 +26,10 @@
   `secret`，其中 `net` 判的是经 `ctx.net` 门面的出站请求）。`discord.py` 自己开 WebSocket
   与 HTTPS，一个字节都不过门面，因此本插件除 `secret` 外一条权限都声明不出来，而它确实
   会连出去。这是权限模型当前的一个空档，与 `openai-api` 那条「没有『监听端口』」并列。
-- **出站 workspace 附件传不出去**：`sdk.api.FileAccess` 只有 `read_text` / `write_text` /
-  `list_dir`，没有 `read_bytes`，绕过 `ctx.fs` 直接 `open()` 会让权限声明变成谎话。
-  今天新层没有任何地方产出带附件的 `OutboundMessage`，因此这是一条没有生产者的死路径；
-  本插件发一条文本标记而不是假装发过。`FileAccess.read_bytes` 已记为契约变更候选。
+- **出站 workspace 附件走真上传**（`D47` 起）：`ctx.fs.read_bytes()` 读字节、`send_files`
+  一条消息带多个文件。**读不出来就印一行说明**（没授 `fs:read`、文件被删、locator 越界都
+  算），不静默丢掉、也不假装发过。`INLINE` / `OPAQUE` 来源仍然发不出去——那要平台自己的
+  凭据去换，本插件拿不到那些字节。
 - **应用级权限不是进程隔离**（`sdk/api.py` 的原话）。能在允许的频道里说话的人就能驱动
   实例上的全部工具，包括 `shell.exec`。`allow_from` 与 `allow_channels` 是唯一的闸门。
 """
@@ -68,7 +68,7 @@ from .settings import (
     DiscordSettings,
     resolve_settings,
 )
-from .stream import StreamRelay
+from .stream import FileReader, StreamRelay
 
 __all__ = [
     "CAPABILITY_NAME",
@@ -83,6 +83,7 @@ __all__ = [
     "DiscordChannel",
     "DiscordGateway",
     "DiscordSettings",
+    "FileReader",
     "InboundGate",
     "Indicators",
     "RawAttachment",
@@ -138,9 +139,10 @@ MANIFEST: Final = PluginManifest(
     # **不写 `overrides`**（它不取代任何内建）、**不写 `priority`**（默认值 100 会被原样
     # 采纳，而内建基准是 0——`D16` 记的坑）。
     capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
-    # **只声明 secret**：`net` 判的是经 `ctx.net` 门面的出站请求，而 `discord.py` 自己开
-    # 连接、一个字节都不过门面。声明一条门面根本不经过的权限会让「这个插件到底要什么」
-    # 变模糊（`openai-api` 拒绝声明 `net` 的同一条理由）。空档如实写在模块 docstring 里。
+    # **不声明 `net`**：它判的是经 `ctx.net` 门面的出站请求，而 `discord.py` 自己开连接、
+    # 一个字节都不过门面。声明一条门面根本不经过的权限会让「这个插件到底要什么」变模糊
+    # （`openai-api` 拒绝声明 `net` 的同一条理由）。空档如实写在模块 docstring 里。
+    # **`fs:read` 反过来是真的经门面**（`D47` 的附件上传），因此如实声明。
     permissions=(
         PermissionDecl(
             kind=PermissionKind.SECRET,
@@ -151,6 +153,10 @@ MANIFEST: Final = PluginManifest(
             kind=PermissionKind.SECRET,
             target=SECRET_PROXY_PASSWORD,
             reason="HTTP 代理的密码；没配代理时不会取用。",
+        ),
+        PermissionDecl(
+            kind=PermissionKind.FS_READ,
+            reason="读 workspace 里的附件字节，把它们上传到频道（D47）。",
         ),
     ),
     config_schema=CONFIG_SCHEMA,
@@ -172,8 +178,22 @@ def setup(api: NucleaAPI) -> None:
             settings,
             token=token,
             proxy_password=_optional_secret(api.ctx, SECRET_PROXY_PASSWORD),
+            files=_file_reader(api.ctx),
         ),
     )
+
+
+def _file_reader(ctx: PluginContext) -> FileReader | None:
+    """取 `ctx.fs`，用来读要上传的附件字节（`D47`）。
+
+    **属性访问本身就可能抛 `PERMISSION_DENIED`**（未授权时），因此在这里取一次而不是
+    每条附件取一遍。**取不到就退回 `None`**：一个没有 `fs:read` 的 Discord bot 仍然该
+    正常收发消息，只是发不出附件——而那时 relay 会如实印一行，不静默丢掉。
+    """
+    try:
+        return ctx.fs
+    except NucleaError:
+        return None
 
 
 def _required_secret(ctx: PluginContext) -> SecretStr:

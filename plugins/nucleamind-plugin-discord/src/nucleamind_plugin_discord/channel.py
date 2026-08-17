@@ -32,6 +32,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Final
 
 from nucleamind.contracts import (
+    AttachmentRef,
     ErrorCode,
     InboundMessage,
     NucleaError,
@@ -44,7 +45,7 @@ from .gateway import DiscordGateway, to_raw
 from .indicators import Indicators
 from .normalize import normalize
 from .settings import DiscordSettings
-from .stream import StreamRelay
+from .stream import FileReader, StreamRelay
 
 __all__ = ["DiscordChannel"]
 
@@ -66,6 +67,7 @@ class DiscordChannel:
     """一条 Discord Channel。`setup()` 构造它，装配根负责 `start()` / `stop()`。"""
 
     __slots__ = (
+        "_files",
         "_gateway",
         "_indicators",
         "_inbox",
@@ -83,9 +85,11 @@ class DiscordChannel:
         proxy_password: SecretStr | None = None,
         gateway: DiscordGateway | None = None,
         show_reasoning: bool = False,
+        files: FileReader | None = None,
     ) -> None:
         self._settings = settings
         self._show_reasoning = show_reasoning
+        self._files = files
         self._inbox: asyncio.Queue[InboundMessage | None] = asyncio.Queue()
         self._started = False
         auth = (
@@ -103,6 +107,7 @@ class DiscordChannel:
         self._relay = StreamRelay(
             platform=self._gateway,
             now_ms=lambda: int(asyncio.get_running_loop().time() * 1000),
+            read_attachment=self._read_attachment,
             edit_interval_ms=settings.stream_edit_interval_ms,
             streaming=settings.streaming,
         )
@@ -167,6 +172,23 @@ class DiscordChannel:
             await self._quietly(self._indicators.stop(message.conversation_id))
 
     # ------------------------------------------------------------------ 内部
+
+    async def _read_attachment(self, attachment: AttachmentRef) -> bytes | None:
+        """读一个 workspace 附件的字节，交给 `StreamRelay` 上传（`D47`）。
+
+        **`None` 表示读不出来**，由 relay 印一行说明——没配 `fs:read`、文件被删掉、
+        或者那条 locator 落在 workspace 之外，对用户都是同一件事：这个附件没发出去。
+        **不抛**：`deliver()` 照约定抛的只有正文发不出去那一种（`EDG-204`）。
+
+        `ctx.fs` 由 `setup()` 交进来（`files=`）。**属性访问本身就可能抛
+        `PERMISSION_DENIED`**，因此那一次访问在 `setup()` 里做完，这里只用已经拿到的对象。
+        """
+        if self._files is None:
+            return None
+        try:
+            return await self._files.read_bytes(attachment.locator)
+        except NucleaError:
+            return None
 
     # boundary: discord.Message；`to_raw()` 在下一行就把它拍成 `RawInbound`
     async def _on_platform_message(self, raw_message: Any) -> None:

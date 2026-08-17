@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-17（`D46` 收口，**用户文档补齐**）
-- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D46` 均已完成）。
+- 更新时间：2026-08-17（`D47` 收口，**出站附件通路打通 + SDK 1.2**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D47` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -30,6 +30,12 @@
   **九个小节的逐字段表**）、`docs/cli.md`（八个子命令的参数、退出码与「不做什么」）、
   `docs/deployment.md`（Docker / compose / systemd + 「权限模型没有监听端口这一种」）。
   三条防漂移守卫落在 `tests/e2e/test_user_docs.py`，同 PR 修掉 `deploy/` 的三处陈旧项。
+  **`D47` 打通了出站附件通路**：`ToolResult.attachments`（**SDK `1.2.0`**，纯新增）→
+  `TurnState.collect_attachments`（去重 + 封顶）→ 终帧 `OutboundMessage.attachments` →
+  内建 CLI 印路径 / `discord` 经 `ctx.fs.read_bytes()` 真上传；`image` 的落点从
+  `<state_dir>/images` 改到 `<workspace>/artifacts/images`——**那是它能被当成附件发出去的
+  前提**（`AttachmentRef` 按契约拒绝绝对路径）。`ToolResult.artifacts` 至此不再是
+  「有机制没消费者」。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -2367,6 +2373,8 @@
   `docs/README.md` 里那句「新层的用户文档尚未写」至此作废；同 PR 修掉 `deploy/` 的三处
   陈旧项（compose 的构建参数名写成 `NANOBOT_CHANNELS` 而 Dockerfile 要 `NUCLEAMIND_PLUGINS`、
   默认值 `whatsapp` 这个插件不存在、`EXPOSE 18790` 而默认端口是 8760）。
+  `D47` 已完成，出站附件通路（`ToolResult.attachments` + `TurnState.collect_attachments` +
+  终帧投递 + 两个消费方 + `image` 落点迁到 workspace，**SDK 1.2.0**）。
   `runtime/` 至此有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`。
@@ -2421,7 +2429,7 @@
 （见文首）：Model Provider 止步于内建 `model-openai` + `anthropic`，Channel 只做 `feishu`，
 WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只是历史对照。
 
-`D41`–`D45` 已经把当时清单上那几件**动作明确**的做完了：
+`D41`–`D47` 已经把当时清单上那几件**动作明确**的做完了：
 
 - **`D41`**：插件进 basedpyright（`include` 加两条 glob，`exclude` 恰好四个碰 CI 缺席 SDK
   的模块），并给两张手工维护的清单各加一条守卫（`tests/architecture/test_ci_plugin_list.py`
@@ -2447,6 +2455,17 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   `ModelChunk.block`，**全部只增不改 → SDK 1.1.0**。`anthropic` 的 thinking 块因此可以
   多轮回放，`D32` 起记着的那处真实能力回退消除。**它只活到本轮 turn 结束**（opaque 块不进
   `SessionMessage`），如实写在契约 docstring 里。
+
+- **`D46`**：新层的用户文档四篇（`getting-started` / `configuration` / `cli` / `deployment`），
+  外加 `tests/e2e/test_user_docs.py` 的三条防漂移守卫。**写文档顺带发现 `deploy/` 三处
+  陈旧项**：compose 的构建参数名与 Dockerfile 对不上、默认值指向一个不存在的插件、
+  `EXPOSE` 的端口与实际默认端口差了一位数——照着自己的文档走一遍才会发现这些。
+- **`D47`**：出站附件通路。`ToolResult.attachments`（**SDK `1.2.0`**）→
+  `TurnState.collect_attachments`（按 `(source, locator)` 去重、封顶 `MAX_ATTACHMENTS`、
+  超出的经终帧 metadata 说出来）→ 终帧 `OutboundMessage.attachments` → 两个消费方
+  （内建 CLI 印路径、`discord` 经 `ctx.fs.read_bytes()` 真上传）。`image` 的落点从
+  `<state_dir>/images` 换到 `<workspace>/artifacts/images`——**那是它能被当成附件发出去的
+  前提**，不是顺手整理目录。`orchestrator.py` 只加了一行（它当时 497/500）。
 
 因此下一轮的候选是下面清单里**剩下的那几件**，加上两条刻意推迟的机制（插件热更新、
 `state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，它计划落在独立包
@@ -2500,9 +2519,9 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 挂着的独立事项（`D45` 之后剩四件，全部需要先做一个决定）
+### 挂着的独立事项（`D47` 之后剩三件，全部需要先做一个决定）
 
-`D42` 之后清单上的**前四条已经交掉**，逐条留下判据：
+`D42` 之后清单上的**前五条已经交掉**，逐条留下判据：
 
 - **`ModelMessage` 的 provider-opaque 块槽位** ✅ `D45`。`OpaqueBlock(provider, kind,
   payload)` + `ChunkKind.OPAQUE` + `ModelResponse/ModelMessage.provider_blocks` +
@@ -2514,7 +2533,13 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   「投递失败了」必须有人说出来，而能说的只有实现方自己。
 - **三条冻结表面缺口** ✅ `D42`（两条半：`ToolResult.trust` 完整，`FileAccess` 的二进制面
   补齐但 `image` 那一半是「两个目录树」而不是缺方法，`HttpAccess` 的字节上界补齐而完整
-  流式刻意没做——没有消费者）。
+  流式刻意没做——没有消费者）。**`image` 那半条在 `D47` 补上了**：不是给门面加方法，
+  而是把落点从 state_dir 挪进 workspace——真正的问题从来不是「缺个方法」，
+  而是「生成的图属于谁的目录树」。
+- **出站附件通路没有生产者** ✅ `D47`。**决定是路径引用而不是字节**——`AttachmentRef` 的
+  docstring 早就答过（「契约层只存引用不存字节」），而当时顾虑的「Channel 会拿到一个
+  workspace 之外的绝对路径」由契约自己挡掉（附件禁止绝对路径），代价是**产出物必须落进
+  workspace 才发得出去**，`image` 因此换了落点。
 - **`MemoryProvider` 的形状 + `MEMORY` 没有 kernel 消费者** ✅ `D44`。**决定是「后者」**：
   `MemoryProvider` 就是实例级（`AGENT`）长期记忆的接口，会话级与工作区级归
   `ContextProvider`。不加 `scope_key`——SDK 已发 1.0，那是 §7.6 意义上的破坏性变更。
@@ -2522,26 +2547,20 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   每一轮请求的内容）。**如实记着的代价**：memory 插件的 `enabled_scopes` 默认已含 `agent`，
   两边同时开会重复召回。
 
-剩下的四件，**每一件都是先要一个决定而不是先要工时**：
+剩下的三件，**每一件都是先要一个决定而不是先要工时**：
 
-1. **出站附件通路没有生产者。** `ToolResult.artifacts` 至今零消费者，`image` 是它唯一的
-   生产者，而没有任何 Channel 能把那些字节发出去。`D42` 补的 `FileAccess.read_bytes`
-   **不解决这条**——缺的是出站侧那条路。要决定的是：附件走 `OutboundMessage.attachments`
-   的路径引用（Channel 自己读盘）还是字节（Kernel 读、Channel 发）？前者让 Channel 拿到
-   一个 workspace 之外的绝对路径，后者让 `OutboundMessage` 可能很大。
-
-2. **多模态输入没有落点。** `ModelMessage.content` 是纯 `str`，因此图像输入、语音转写
+1. **多模态输入没有落点。** `ModelMessage.content` 是纯 `str`，因此图像输入、语音转写
    （M5 里刻意没做的 `providers/transcription.py`）与图生图都卡在同一处。**`D45` 的
    `OpaqueBlock` 不是这个槽位**——它是 provider 私有块的槽位，内容对 Kernel 无意义；
    多模态内容恰恰是 Kernel 要参与裁剪与预算的东西。要做得让 `content` 从 `str` 变成块序列,
    那是 **major 级**的破坏性变更（§7.6），牵动 `SessionMessage` / `ContextFragment` /
    两个 provider 的 wire 编码。
 
-3. **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
+2. **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
    `feishu` / `cron` 都声明不出与自己实际行为对应的权限。**这是个定位问题**：当权限模型是
    「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。先定位再动手。
 
-4. **两条刻意推迟、有记录的机制**（不是遗漏）：
+3. **两条刻意推迟、有记录的机制**（不是遗漏）：
    - **插件热更新**（技术方案 §10.4 写着「首版不做」）。它要求 registry 可变，而
      「解析后只读」（`NFR-403`）是一大批现有不变量的地基——真要做是一个独立里程碑。
    - **`state_version` 迁移机制**（P0 没有，版本不符即拒绝加载，升与降都拒）。
@@ -2550,6 +2569,46 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 一条相关但更小的：**opaque 块跨 turn 拿不回来**（`D45` 如实记着）。它不进
 `SessionMessage`，因此 `anthropic` 的 thinking 回放只在同一条 turn 的工具循环内成立。
 要跨 turn 得先决定「一份加密的思考签名该不该成为用户资产」——`SES-006` 一旦发布就是契约。
+
+### `D46`/`D47` 留下的、后续必须用到的事实
+
+1. **文档也能有守卫，而且值得有。** `tests/e2e/test_user_docs.py` 的三条判据分别读
+   `SECTION_SPECS`、`main.py` 的 AST、磁盘上的发行包——**不比对片段**（复制粘贴来的文档
+   在实现改名之后仍然长得一模一样，这是 `test_plugin_docs.py` 早就立下的先例）。
+   **加一个配置字段现在要改六处**（那五处 + `docs/configuration.md`）。
+   **说明文字刻意不钉**：钉住它会让每次改文案都失败一次，而漂了也不会误导人；
+   钉的是名字与默认值，那两样漂了文档就是在骗人。
+
+2. **CLI 子命令要用 AST 扫而不是文本包含。** `_USAGE` 里也有那些名字，文本扫描会把
+   「说明里提过」当成「真的分派了」——那正好放过「文档与 `--help` 都写了、实现漏了」
+   这一种。守卫因此扫 `app()` 里的 `command == "<字面量>"`，另有一条断言钉住
+   「`_USAGE` 提到每一条被分派的子命令」。
+
+3. **`ToolResult.artifacts` 与 `attachments` 是两个消费者。** 分工写在 `ArtifactRef` 的
+   docstring 里（产物面向 Workspace 与后续工具，附件面向 Channel 投递），因此
+   **Kernel 不做两者之间的翻译**——那需要 Kernel 认识 workspace 根并做路径相对化，
+   而 `ArtifactRef.locator` 允许是宿主机绝对路径。**由生产者表态**，判据是
+   `AttachmentRef.__post_init__`（拒绝绝对路径与上跳段）。
+
+4. **产出物落在哪，决定了它能不能被发出去。** 这是 `D47` 最容易被下一个人忽略的一条：
+   `image` 换落点不是「顺手整理一下目录」，而是**出站的前提**。下一个会产出文件的工具
+   插件默认落点也该在 workspace 里；确实要落在别处时，如实写明「那些文件发不出去」。
+
+5. **`orchestrator.py` 只剩不到三行余量。** `D44` 加一行到 501、`D47` 又加一行到 498——
+   两次都是「往编排里塞逻辑」的诱惑，两次的正确动作都是问「这段逻辑该在哪」：
+   收集归 `TurnState`、投递归 `emit_outbound`、召回归 `context_builder`。
+
+6. **`emit_outbound` 没有加形参。** 它已经收 `state`，加参数会让唯一的调用方
+   （`orchestrator._emit`）跟着长——而那个文件正贴着上限。**「需要更多输入」不总是
+   「加一个参数」**，有时是「那个输入本来就该在已有的载体上」。
+
+7. **`R4` 又逼出一处双写**：`attachments_dropped` 的键名在 `kernel/turn/orchestration.py`
+   与 `builtins/cli_entry/console.py` 各一份，由对照测试钉住。这是
+   `estimate_tokens` / `DEFAULT_GRACE_MS` 之后的第三处，做法完全相同。
+
+8. **`deploy/` 的陈旧项是「没人跑过」的直接证据**：compose 的构建参数名与 Dockerfile
+   对不上、默认值指向一个不存在的插件、`EXPOSE` 的端口与实际默认端口差了一位数。
+   **写文档是发现它们的方式**——照着文档走一遍才会发现文档写不出来。
 
 ### `D43`–`D45` 留下的、后续必须用到的事实
 

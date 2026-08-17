@@ -1,7 +1,7 @@
 """`discord` 插件测试的假平台（供同目录的五个测试文件 import）。
 
-职责：手写的 `discord.Message` 形状替身、`Platform` / `Reactions` 的记录式实现、
-可注入的时钟，以及 `RawInbound` / `OutboundMessage` 的构造助手。
+职责：手写的 `discord.Message` 形状替身、`Platform` / `Reactions` / `FileReader` 的
+记录式实现、可注入的时钟，以及 `RawInbound` / `OutboundMessage` 的构造助手。
 不负责：任何断言——每条判定都写在对应的 `test_*.py` 里。
 
 **它们不是 `discord.py` 的对象，只是长得像**：`gateway.to_raw()` 用 `getattr` 解构，
@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,7 +23,9 @@ from nucleamind_plugin_discord import DiscordSettings, RawAttachment, RawAuthor,
 from nucleamind_plugin_discord.normalize import InboundGate
 
 from nucleamind.contracts import (
+    ErrorCode,
     InstanceId,
+    NucleaError,
     OutboundMessage,
     SecretStr,
     SessionKey,
@@ -141,6 +144,8 @@ class FakePlatform:
     def __init__(self, *, fail: bool = False) -> None:
         self.sent: list[tuple[str, str, str | None]] = []
         self.messages: list[FakeSent] = []
+        #: 每次 `send_files()` 的 `(conversation, [(文件名, 字节), ...])`。
+        self.uploads: list[tuple[str, list[tuple[str, bytes]]]] = []
         self.fail = fail
 
     async def send(self, conversation_id: str, content: str, *, reply_to: str | None) -> FakeSent:
@@ -150,6 +155,32 @@ class FakePlatform:
         message = FakeSent(content)
         self.messages.append(message)
         return message
+
+    async def send_files(
+        self, conversation_id: str, files: Sequence[tuple[str, bytes]], *, reply_to: str | None
+    ) -> None:
+        del reply_to
+        if self.fail:
+            raise RuntimeError("upload failed")
+        self.uploads.append((conversation_id, list(files)))
+
+
+class FakeWorkspace:
+    """`ctx.fs` 读取面的替身（`D47`）。按 locator 给字节，找不到就抛。
+
+    抛的是 `NucleaError`，因为 `channel.py::_read_attachment` 只折那一种——一个替身抛
+    `KeyError` 会让那条 `except` 看起来是对的，而生产里门面抛的正是 `NucleaError`。
+    """
+
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files = dict(files or {})
+        self.reads: list[str] = []
+
+    async def read_bytes(self, path: str) -> bytes:
+        self.reads.append(path)
+        if path not in self.files:
+            raise NucleaError(ErrorCode.PERSISTENCE_READ_FAILED, "没有这个文件。")
+        return self.files[path]
 
 
 class FakeReactions:

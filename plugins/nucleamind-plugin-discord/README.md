@@ -61,8 +61,10 @@ Secret 两条：`bot_token`（必填，缺失即 `CONFIG_INVALID` 并指向那�
 
 - **thread 是独立会话**：`conversation_id` 取频道 id，而 thread 有自己的 id，因此它天然
   拥有自己的历史。父频道进 `metadata.discord.parent_channel_id`。
-- **入站附件不下载**：Discord CDN 的直链直接变成 `AttachmentRef(source=URL)`，因此本插件
-  一条 `fs:*` 权限都不需要。超过 `max_attachment_bytes` 的只在正文留一条标记。
+- **入站附件不下载**：Discord CDN 的直链直接变成 `AttachmentRef(source=URL)`。
+  超过 `max_attachment_bytes` 的只在正文留一条标记。
+- **出站 workspace 附件真的上传**（`D47`）：经 `ctx.fs.read_bytes()` 读字节、一条消息带
+  多个文件，发在正文之后。这是本插件声明 `fs:read` 的唯一原因。
 - **流式 edit-in-place**：第一片非空文本发一条消息，此后按节流编辑它；超过 2000 字符时
   收束成「编辑首块 + 补发其余」。
 - **中断与失败有明确标记**（`EDG-304`）：正文尾部追加 `[已中断：以上是中断前已产生的内容]`
@@ -76,12 +78,15 @@ Secret 两条：`bot_token`（必填，缺失即 `CONFIG_INVALID` 并指向那�
   `D31` 已随 WebUI 后端删除。要让人能用，把他的 id 写进 `allow_from`。
 - **没有 Discord 原生 slash command**。命令只有一个来源（`routing.command_prefix`），
   在 Discord 里打 `/help` 就是一条普通消息，由内建 `commands-core` 处理。
-- **出站 workspace 附件传不出去**：`FileAccess` 没有 `read_bytes`，本插件发一条
-  `[附件：…（本轮无法上传）]` 标记而不是假装发过。今天新层也没有任何地方产出带附件的
-  出站消息。
+- **读不到的附件印一行，不静默丢掉**：没授 `fs:read`、文件被删、或 locator 落在 workspace
+  之外时发 `[附件：…（本轮无法上传）]`。它**不会**让投递失败（`EDG-204`）——`deliver()`
+  照约定抛的只有**正文**发不出去那一种。
+- **`INLINE` / `OPAQUE` 来源的附件仍然传不出去**：那要平台自己的凭据去换字节，
+  本插件拿不到；同样印一行说明。
 - **五种权限里没有「连接一个聊天平台」这一种**：`net` 判的是经 `ctx.net` 门面的出站请求，
-  而 `discord.py` 自己开连接。因此本插件除两条 `secret` 外声明不出任何权限，而它确实会
-  连出去。这是权限模型当前的一个空档，与 `openai-api` 那条「没有『监听端口』」并列。
+  而 `discord.py` 自己开连接。因此本插件除两条 `secret` 与 `fs:read`（`D47` 的附件上传，
+  那条**是**真的经门面）外声明不出任何权限，而它确实会连出去。这是权限模型当前的一个空档，
+  与 `openai-api` 那条「没有『监听端口』」并列。
 - **应用级权限不是进程隔离**：能在允许的频道里说话的人就能驱动实例上的全部工具，
   包括 `shell.exec`。`allow_from` 与 `allow_channels` 是唯一的闸门。
 - **没有发送重试与限流退避**：失败即记日志。旧实现也没有，本轮不发明一套。

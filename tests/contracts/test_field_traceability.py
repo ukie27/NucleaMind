@@ -118,7 +118,7 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
         frozenset({"locator", "media_type", "description", "size_bytes"}),
     ),
     ToolResult: (
-        "§10.5 Tool Result 输出（七条）+ D42 的 trust",
+        "§10.5 Tool Result 输出（七条）+ D42 的 trust + D47 的 attachments",
         frozenset(
             {
                 "call_id",
@@ -134,6 +134,11 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
                 # 而这一条说的是「其中的正文进模型时按什么身份出现」。它对应的是
                 # `EDG-306`（不可信内容必须被包裹），原来只覆盖 `ContextFragment`。
                 "trust",
+                # `D47` 加的，同样不在那七条里。它与 `artifacts` 是两个消费者而不是
+                # 重复：产物面向 Workspace 与后续工具，附件面向 Channel 投递
+                # （`ArtifactRef` 的 docstring 早就把这条分工写死了）。在它之前
+                # `artifacts` 零消费者，生成出来的文件没有任何出站通路。
+                "attachments",
             }
         ),
     ),

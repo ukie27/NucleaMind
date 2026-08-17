@@ -371,6 +371,7 @@ class TurnOrchestrator:
                 )
             case ToolCallCompleted():
                 state.transcript.add_tool_result(event.result)
+                state.collect_attachments(event.result)
                 deps.bus.publish(
                     tool_event_name(event),
                     correlation=state.correlation,

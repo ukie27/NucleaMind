@@ -41,8 +41,9 @@ DEFAULT_PROVIDER: Final = "openai"
 DEFAULT_MODEL: Final = "gpt-image-1"
 DEFAULT_MAX_COUNT: Final = 4
 
-#: `ctx.state_dir` 下的默认子目录名。
-IMAGE_DIR_NAME: Final = "images"
+#: workspace 下的默认子目录（`D47` 起；在它之前是 `ctx.state_dir` 下的子目录名）。
+#: 用 `/` 拼是因为它要同时充当 `ctx.fs` 的路径与 `AttachmentRef` 的 locator。
+IMAGE_DIR_NAME: Final = "artifacts/images"
 
 _DEFAULT_TIMEOUT_MS: Final = 120_000
 _DEFAULT_MAX_RESULT_CHARS: Final = 4_000

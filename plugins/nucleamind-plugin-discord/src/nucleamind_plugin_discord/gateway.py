@@ -18,8 +18,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import Any, Final
 
 from nucleamind.contracts import ErrorCode, NucleaError, SecretStr
@@ -171,6 +172,22 @@ class DiscordGateway:
                 # **不 ping 被回复的人**：turn 的回复本来就在他眼前，再 @ 一次是噪声。
                 kwargs["allowed_mentions"] = self._no_reply_ping()
         return await channel.send(**kwargs)
+
+    async def send_files(
+        self, conversation_id: str, files: Sequence[tuple[str, bytes]], *, reply_to: str | None
+    ) -> None:
+        """上传附件（`D47`）。一条消息带多个文件，不是每个文件一条消息。
+
+        **字节由调用方读好**（`channel.py` 经 `ctx.fs.read_bytes`）：本模块是 SDK 边界，
+        让它去读盘等于把两个边界叠在一起，而权限门面在另一边。
+        `discord.File` 收一个类文件对象，因此这里包一层 `BytesIO`——`discord.py` 会自己
+        读完它，不需要我们关。
+        """
+        del reply_to  # 附件消息不带引用：它紧跟在正文之后，引用只会重复一次同样的上下文
+        discord_module = self._import_sdk()
+        channel = await self._channel(conversation_id)
+        payload = [discord_module.File(BytesIO(data), filename=name) for name, data in files]
+        await channel.send(files=payload)
 
     # ------------------------------------------------------------------ Reactions
 

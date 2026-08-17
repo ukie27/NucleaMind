@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 
 from nucleamind.contracts import (
     ArtifactRef,
+    AttachmentRef,
     CancelSignal,
     ErrorCode,
     JsonValue,
@@ -136,7 +137,7 @@ class ImageGenerateTool:
         saved: list[SavedImage] = []
         for source in sources[:count]:
             data, media_type = await self._materialise(source)
-            saved.append(self._store.save(data, media_type))
+            saved.append(await self._store.save(data, media_type))
         return tuple(saved)
 
     async def _generate(self, prompt: str, count: int) -> tuple[ImageSource, ...]:
@@ -190,12 +191,17 @@ def _success(
     invocation: ToolInvocation, saved: Sequence[SavedImage], started: float, limit: int
 ) -> ToolResult:
     lines = [f"已生成 {len(saved)} 张图像："]
-    lines.extend(f"{index}. {item.path.as_posix()}" for index, item in enumerate(saved, 1))
+    lines.extend(f"{index}. {item.locator}" for index, item in enumerate(saved, 1))
     content = "\n".join(lines)
     artifacts: tuple[ArtifactRef, ...] = tuple(item.artifact for item in saved)
+    # 只有 workspace 落点交得出附件（`AttachmentRef` 拒绝绝对路径），因此这里可能是空的
+    # ——那不是失败，是运维把 `dir` 配成了绝对路径。正文里的路径仍然在。
+    attachments: tuple[AttachmentRef, ...] = tuple(
+        item.attachment for item in saved if item.attachment is not None
+    )
     data: Mapping[str, JsonValue] = {
         "count": len(saved),
-        "paths": [item.path.as_posix() for item in saved],
+        "paths": [item.locator for item in saved],
         "bytes": [item.size_bytes for item in saved],
     }
     return ToolResult(
@@ -207,9 +213,10 @@ def _success(
         side_effect=SideEffect.OCCURRED,
         data=data,
         artifacts=artifacts,
+        attachments=attachments,
         duration_ms=_elapsed_ms(started),
         # 正文是本工具自己的话（几行「已生成 N 张图像」加落盘路径）。**图像字节本身
-        # 从不进上下文**，它们经 `artifacts` 引用（`D42`）。
+        # 从不进上下文**，它们经 `artifacts` / `attachments` 引用（`D42`、`D47`）。
         trust=TrustLevel.SYSTEM,
     )
 

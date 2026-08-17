@@ -27,7 +27,19 @@ from nucleamind.contracts import (
     StreamState,
 )
 
-__all__ = ["CliConsole", "TERMINAL_MARKERS"]
+__all__ = ["ATTACHMENT_LINE", "CliConsole", "TERMINAL_MARKERS", "attachment_lines"]
+
+#: 附件的呈现（`D47`）。终端里能给出的最好形态就是**路径**：字节印不出来，而
+#: workspace 相对路径可以直接喂给 `fs.read`、也可以直接在文件管理器里打开。
+#: 不去读字节、不去校验文件在不在——渲染层做 IO 会让「投递」有失败的可能，而
+#: `deliver` 约定不抛。
+ATTACHMENT_LINE: Final = "[附件] {locator}{size}"
+
+#: 撞上 `MAX_ATTACHMENTS` 时那一行。键名与 `kernel/turn/orchestration.py` 的
+#: `DROPPED_ATTACHMENTS_KEY` 逐字相同——`R4` 不让内建 import `kernel/`，因此这里写一份
+#: 字面量，由 `tests/builtins/test_cli_entry.py` 的对照测试钉住。
+DROPPED_ATTACHMENTS_KEY: Final = "attachments_dropped"
+_DROPPED_LINE: Final = "[附件] 另有 {count} 个未随本轮发出（超过上限）"
 
 #: 非完整回答的标记。文案里带上原因，用户才知道该重发还是该改配置。
 TERMINAL_MARKERS: Final[dict[StreamState, str]] = {
@@ -38,6 +50,21 @@ TERMINAL_MARKERS: Final[dict[StreamState, str]] = {
 #: 终态 stream_state，收到即认为这一轮结束。`FINAL` 也覆盖 `STOPPED_BY_LIMIT`
 #: （`TERMINAL_STREAM_STATES` 的映射，`D14`）。
 _TERMINAL: Final = (StreamState.FINAL, StreamState.CANCELLED, StreamState.FAILED)
+
+
+def attachment_lines(message: OutboundMessage) -> list[str]:
+    """终帧的附件呈现。没有附件时返回空列表（**不是** `[""]`）。"""
+    lines = [
+        ATTACHMENT_LINE.format(
+            locator=item.locator,
+            size="" if item.size_bytes is None else f"（{item.size_bytes} 字节）",
+        )
+        for item in message.attachments
+    ]
+    dropped = message.metadata.get(DROPPED_ATTACHMENTS_KEY)
+    if isinstance(dropped, int) and dropped > 0:
+        lines.append(_DROPPED_LINE.format(count=dropped))
+    return lines
 
 
 class CliConsole:
@@ -131,6 +158,8 @@ class CliConsole:
         if marker is not None:
             self._write(("\n" if self._streamed or message.content else "") + marker)
         self._write("\n")
+        for line in attachment_lines(message):
+            self._write(line + "\n")
         self.rendered.append(message.content)
         self.last_state = message.stream_state
         self._turn_done.set()

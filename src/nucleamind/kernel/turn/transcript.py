@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from nucleamind.contracts import (
+    AttachmentRef,
     ContextFragment,
     Correlation,
     InboundMessage,
@@ -37,6 +38,7 @@ from nucleamind.contracts import (
     ToolResult,
     TurnId,
 )
+from nucleamind.contracts.message import MAX_ATTACHMENTS
 
 from .limits import BudgetLedger, TurnLimits
 
@@ -148,9 +150,36 @@ class TurnState:
     fragments: list[ContextFragment] = field(default_factory=list)
     #: 已发出的中间帧，终帧不在其中——终帧由 `_finish` 单独产出。
     emitted: list[OutboundMessage] = field(default_factory=list)
+    #: 本轮工具产出的、要随终帧发给用户的附件（`D47`）。按到达顺序，已去重、已封顶。
+    attachments: list[AttachmentRef] = field(default_factory=list)
+    #: 因为撞上 `MAX_ATTACHMENTS` 而没能带上的附件条数。**不是静默丢弃**：调用方要据此
+    #: 报一条诊断，否则用户看到的是「有几张图没发出来」而日志里一个字都没有。
+    dropped_attachments: int = 0
     #: 模型给出的最终答复（没有 tool_calls 的那一轮）。
     final: str = ""
     ledger: BudgetLedger | None = None
+
+    def collect_attachments(self, result: ToolResult) -> None:
+        """收下一条工具结果里的附件。
+
+        **按 `(source, locator)` 去重**：模型在一轮里两次生成同一张图（内容寻址的落点
+        因此相同）不该让用户收到两份。**封顶在 `MAX_ATTACHMENTS`**，与 `OutboundMessage`
+        同一个上界——超出的记进 `dropped_attachments` 而不是让终帧的构造抛异常，
+        一次成功的 turn 不该因为附件太多而变成失败。
+
+        **不看 `result.ok`**：一条失败的工具调用仍然可能已经把文件写出来了，而它自己
+        比 Kernel 更清楚该不该交出来——工具没填 `attachments` 就没有附件，这已经是表态。
+        """
+        seen = {(item.source, item.locator) for item in self.attachments}
+        for attachment in result.attachments:
+            key = (attachment.source, attachment.locator)
+            if key in seen:
+                continue
+            if len(self.attachments) >= MAX_ATTACHMENTS:
+                self.dropped_attachments += 1
+                continue
+            seen.add(key)
+            self.attachments.append(attachment)
 
     @property
     def iterations(self) -> int:

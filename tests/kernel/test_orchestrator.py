@@ -15,12 +15,16 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from nucleamind.contracts import (
+    AttachmentRef,
+    AttachmentSource,
     CancelReason,
     CommandResult,
     Concurrency,
+    Correlation,
     Disposition,
     ErrorCode,
     EventName,
@@ -29,14 +33,18 @@ from nucleamind.contracts import (
     HookOutcome,
     NucleaError,
     Role,
+    SessionKey,
     SideEffect,
     StreamState,
     ToolResult,
     TrustLevel,
+    TurnId,
     TurnStatus,
 )
+from nucleamind.contracts.message import MAX_ATTACHMENTS
 from nucleamind.kernel.routing import ConcurrencyPolicy, SessionScheduler
 from nucleamind.kernel.turn import TurnLimits, TurnReceipt
+from nucleamind.kernel.turn.transcript import Transcript, TurnState
 
 from ._engine_support import (
     RecordingHookDispatcher,
@@ -50,6 +58,7 @@ from ._engine_support import (
     tool_spec,
 )
 from ._orchestrator_support import (
+    INSTANCE,
     FailingStore,
     FakeSessionStore,
     ScriptedCommand,
@@ -641,3 +650,92 @@ def test_the_receipt_type_is_what_the_scheduler_carries() -> None:
     """装配时 `SessionScheduler` 的类型参数必须是 `TurnReceipt`，否则 `run` 的返回值无从收窄。"""
     scheduler: SessionScheduler[TurnReceipt] = SessionScheduler()
     assert scheduler.policy is ConcurrencyPolicy.QUEUE
+
+
+# ------------------------------------------------------------------ J 出站附件（`D47`）
+
+
+def _png(name: str) -> AttachmentRef:
+    return AttachmentRef(
+        source=AttachmentSource.WORKSPACE,
+        locator=f"artifacts/images/{name}",
+        media_type="image/png",
+        size_bytes=8,
+    )
+
+
+def _with_attachments(*attachments: AttachmentRef) -> ToolResult:
+    return replace(ok_result("画好了"), attachments=attachments)
+
+
+async def test_tool_attachments_ride_on_the_final_frame() -> None:
+    """工具产出的附件挂在终帧上，中间帧一个都不带。
+
+    挂在中间帧上等于让 Channel 收到 N 份同样的附件——出站分片是同一段正文的切块。
+    """
+    harness = build(
+        ScriptedProvider([tool_response(tool_call("image.generate")), text_response("给你")]),
+        tool_specs=[tool_spec("image.generate")],
+        tools=RecordingToolInvoker(results={"image.generate": _with_attachments(_png("a.png"))}),
+    )
+
+    receipt = await harness.send()
+
+    final = receipt.messages[-1]
+    assert final.stream_state is StreamState.FINAL
+    assert [item.locator for item in final.attachments] == ["artifacts/images/a.png"]
+    assert all(not m.attachments for m in receipt.messages[:-1])
+
+
+async def test_the_same_attachment_twice_is_delivered_once() -> None:
+    """内容寻址的落点让重复生成落在同一个 locator 上；用户不该收到两份。"""
+    harness = build(
+        ScriptedProvider(
+            [
+                tool_response(tool_call("image.generate", call_id="c1")),
+                tool_response(tool_call("image.generate", call_id="c2")),
+                text_response("给你"),
+            ]
+        ),
+        tool_specs=[tool_spec("image.generate")],
+        tools=RecordingToolInvoker(results={"image.generate": _with_attachments(_png("a.png"))}),
+    )
+
+    receipt = await harness.send()
+
+    assert len(receipt.messages[-1].attachments) == 1
+
+
+async def test_attachments_beyond_the_cap_are_reported_not_silently_dropped() -> None:
+    """超上界不让终帧构造失败，但要说出来——`MAX_ATTACHMENTS` 是出站消息的硬上界。"""
+    state = TurnState(
+        correlation=Correlation(
+            instance_id=INSTANCE, session_key=SessionKey("cli", "local"), turn_id=TurnId("t1")
+        ),
+        started_at=datetime(2026, 1, 1, tzinfo=UTC),
+        transcript=Transcript(
+            turn_id=TurnId("t1"),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            limits=TurnLimits(),
+        ),
+    )
+
+    state.collect_attachments(_with_attachments(*[_png(f"{i}.png") for i in range(MAX_ATTACHMENTS)]))
+    state.collect_attachments(_with_attachments(_png("extra.png")))
+
+    assert len(state.attachments) == MAX_ATTACHMENTS
+    assert state.dropped_attachments == 1
+
+
+async def test_a_final_frame_with_only_attachments_is_still_sent() -> None:
+    """正文为空但有附件时照发：契约的「内容与附件不能同时为空」本来就是二选一。"""
+    harness = build(
+        ScriptedProvider([tool_response(tool_call("image.generate")), text_response("")]),
+        tool_specs=[tool_spec("image.generate")],
+        tools=RecordingToolInvoker(results={"image.generate": _with_attachments(_png("a.png"))}),
+    )
+
+    receipt = await harness.send()
+
+    assert receipt.messages[-1].content == ""
+    assert len(receipt.messages[-1].attachments) == 1

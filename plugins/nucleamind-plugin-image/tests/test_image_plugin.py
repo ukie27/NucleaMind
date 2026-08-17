@@ -13,6 +13,7 @@ import pytest
 from _image_fakes import (
     PNG_BYTES,
     Backend,
+    FakeWorkspace,
     ImageContext,
     invocation,
     openai_response,
@@ -24,14 +25,14 @@ from nucleamind_plugin_image import (
     GENERATE_TOOL,
     MANIFEST,
     ImageGenerateTool,
-    ImageStore,
+    build_store,
     generate_spec,
-    image_directory,
     register,
     resolve_settings,
 )
 
 from nucleamind.contracts import (
+    AttachmentSource,
     CapabilityKind,
     ErrorCode,
     JsonValue,
@@ -55,7 +56,7 @@ def _tool(
 ) -> ImageGenerateTool:
     ctx = ImageContext(tmp_path, config=config, secrets=secrets)
     settings = resolve_settings(ctx.config)
-    store = ImageStore(image_directory(ctx, settings))
+    store = build_store(ctx, settings, files=FakeWorkspace(tmp_path))
     return ImageGenerateTool(ctx, settings, store, transport=backend.transport)
 
 
@@ -71,7 +72,8 @@ class TestGenerate:
         result = await _run(tmp_path, Backend(openai_response()), {"prompt": "a cat"})
         assert result.ok is True
         assert result.data is not None
-        written = Path(str(result.data["paths"][0]))
+        # 路径是 workspace 相对的（`D47`），因此要接在替身 workspace 的根上。
+        written = tmp_path / str(result.data["paths"][0])
         assert written.read_bytes() == PNG_BYTES
 
     async def test_success_reports_an_occurred_side_effect(self, tmp_path: Path) -> None:
@@ -83,8 +85,28 @@ class TestGenerate:
         """本插件是全项目 `ToolResult.artifacts` 的第一个生产者。"""
         result = await _run(tmp_path, Backend(openai_response()), {"prompt": "a cat"})
         assert len(result.artifacts) == 1
-        assert Path(result.artifacts[0].locator).read_bytes() == PNG_BYTES
+        assert (tmp_path / result.artifacts[0].locator).read_bytes() == PNG_BYTES
         assert result.artifacts[0].media_type == "image/png"
+
+    async def test_the_attachment_rides_along_with_the_artifact(self, tmp_path: Path) -> None:
+        """`D47`：同一张图同时给出产物引用（后续工具用）与附件引用（出站用）。"""
+        result = await _run(tmp_path, Backend(openai_response()), {"prompt": "a cat"})
+        assert len(result.attachments) == 1
+        attachment = result.attachments[0]
+        assert attachment.source is AttachmentSource.WORKSPACE
+        assert attachment.locator == result.artifacts[0].locator
+        assert (tmp_path / attachment.locator).read_bytes() == PNG_BYTES
+
+    async def test_an_absolute_dir_yields_no_attachment(self, tmp_path: Path) -> None:
+        """配了绝对落点就发不出去——契约禁止附件依赖绝对路径，这条把代价钉住。"""
+        result = await _run(
+            tmp_path,
+            Backend(openai_response()),
+            {"prompt": "a cat"},
+            config={"dir": str(tmp_path / "elsewhere")},
+        )
+        assert result.ok is True
+        assert result.artifacts and not result.attachments
 
     async def test_the_content_lists_the_paths_for_the_model(self, tmp_path: Path) -> None:
         result = await _run(tmp_path, Backend(openai_response()), {"prompt": "a cat"})
@@ -130,7 +152,7 @@ class TestGenerate:
             config={"provider": "openrouter"},
         )
         assert result.ok is True
-        assert Path(result.artifacts[0].locator).read_bytes() == PNG_BYTES
+        assert (tmp_path / result.artifacts[0].locator).read_bytes() == PNG_BYTES
 
     async def test_the_credential_reaches_the_backend(self, tmp_path: Path) -> None:
         backend = Backend(openai_response())
@@ -188,7 +210,9 @@ class TestFailuresHappenBeforeAnythingIsWritten:
     ) -> None:
         ctx = ImageContext(tmp_path, granted=frozenset())
         settings = resolve_settings({})
-        tool = ImageGenerateTool(ctx, settings, ImageStore(tmp_path / "images"))
+        tool = ImageGenerateTool(
+            ctx, settings, build_store(ctx, settings, files=FakeWorkspace(tmp_path))
+        )
         result = await tool.execute(invocation({"prompt": "a cat"}), ManualCancel())
         assert result.ok is False
         assert result.error is not None
@@ -283,7 +307,7 @@ class TestRegistration:
     def test_register_covers_every_declaration(self, tmp_path: Path) -> None:
         ctx = ImageContext(tmp_path)
         api = _RecordingApi(ctx)
-        register(api, ctx)  # pyright: ignore[reportArgumentType]
+        register(api, ctx, files=FakeWorkspace(tmp_path))  # pyright: ignore[reportArgumentType]
         assert {spec.name for spec, _ in api.tools} == {
             decl.name for decl in MANIFEST.capabilities
         }
@@ -291,7 +315,9 @@ class TestRegistration:
     def test_setup_creates_no_directory(self, tmp_path: Path) -> None:
         """为一个可能永远不被调用的工具建目录，是在没人要求的时候动用户的磁盘。"""
         ctx = ImageContext(tmp_path)
-        register(_RecordingApi(ctx), ctx)  # pyright: ignore[reportArgumentType]
+        register(  # pyright: ignore[reportArgumentType]
+            _RecordingApi(ctx), ctx, files=FakeWorkspace(tmp_path)
+        )
         assert list(tmp_path.iterdir()) == []
 
     def test_a_broken_config_stops_registration_entirely(self, tmp_path: Path) -> None:
@@ -305,14 +331,14 @@ class TestGenerateToolContract(ToolContract):
     """SDK 的通用工具契约。基类**不 import pytest**，只是普通类 + `assert`。"""
 
     def make_tool(self) -> tuple[ToolSpec, ToolHandler]:
-        # 契约基类不带夹具，因此自己找一个可写目录。用 `ImageStore` 的真实落盘路径，
+        # 契约基类不带夹具，因此自己找一个可写目录。落盘是真的发生的，
         # 因为契约要验的正是「一次真实调用的形状」。
         import tempfile
 
         root = Path(tempfile.mkdtemp(prefix="nm-image-contract-"))
         ctx = ImageContext(root)
         settings = resolve_settings({})
-        store = ImageStore(image_directory(ctx, settings))
+        store = build_store(ctx, settings, files=FakeWorkspace(root))
         backend = Backend(openai_response())
         return generate_spec(), ImageGenerateTool(
             ctx, settings, store, transport=backend.transport

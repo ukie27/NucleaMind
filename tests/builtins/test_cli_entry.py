@@ -20,6 +20,7 @@ import pytest
 from nucleamind.builtins.cli_entry import (
     CONFIG_INSTANCE_ID_KEY,
     CONFIG_PROMPT_KEY,
+    DROPPED_ATTACHMENTS_KEY,
     CliChannel,
     CliConsole,
     StdioCliEntry,
@@ -29,6 +30,8 @@ from nucleamind.builtins.cli_entry import (
 )
 from nucleamind.builtins.registry import CLI_ENTRY
 from nucleamind.contracts import (
+    AttachmentRef,
+    AttachmentSource,
     Channel,
     ErrorCode,
     InstanceId,
@@ -49,17 +52,27 @@ def make_console(out: io.StringIO | None = None) -> CliConsole:
 
 
 def outbound(
-    console: CliConsole, content: str, state: StreamState, *, reasoning: bool = False
+    console: CliConsole,
+    content: str,
+    state: StreamState,
+    *,
+    reasoning: bool = False,
+    attachments: tuple[AttachmentRef, ...] = (),
+    dropped: int = 0,
 ) -> OutboundMessage:
     key = SessionKey(channel_id=console.channel_id, conversation_id=console.conversation_id)
+    metadata: dict[str, object] = {"reasoning": True} if reasoning else {}
+    if dropped:
+        metadata[DROPPED_ATTACHMENTS_KEY] = dropped
     return OutboundMessage(
         session_key=key,
         channel_id=key.channel_id,
         conversation_id=key.conversation_id,
         turn_id=TurnId("turn-1"),
         content=content,
+        attachments=attachments,
         stream_state=state,
-        metadata={"reasoning": True} if reasoning else {},
+        metadata=metadata,
     )
 
 
@@ -124,6 +137,49 @@ async def test_incomplete_answers_carry_a_marker(state: StreamState, marker: str
     console.submit("问")
     await console.deliver(outbound(console, "说到一半", state))
     assert marker in out.getvalue()
+
+
+async def test_attachments_are_listed_after_the_answer() -> None:
+    """`D47`：终帧带的附件在正文之后逐行印出来。
+
+    **印路径而不是字节**：终端里字节没有呈现形态，而 workspace 相对路径可以直接喂给
+    `fs.read`、也可以在文件管理器里打开。
+    """
+    out = io.StringIO()
+    console = make_console(out)
+    console.submit("画一张")
+    message = outbound(
+        console,
+        "画好了",
+        StreamState.FINAL,
+        attachments=(
+            AttachmentRef(
+                source=AttachmentSource.WORKSPACE,
+                locator="artifacts/images/image-abc.png",
+                media_type="image/png",
+                size_bytes=1024,
+            ),
+        ),
+    )
+    await console.deliver(message)
+    assert out.getvalue() == "画好了\n[附件] artifacts/images/image-abc.png（1024 字节）\n"
+
+
+async def test_dropped_attachments_are_reported_rather_than_silently_lost() -> None:
+    """撞上上限时说一句。一个数不对的附件列表比一句说明更糟。"""
+    out = io.StringIO()
+    console = make_console(out)
+    console.submit("画很多张")
+    message = outbound(console, "好了", StreamState.FINAL, dropped=3)
+    await console.deliver(message)
+    assert "另有 3 个未随本轮发出" in out.getvalue()
+
+
+def test_the_dropped_key_matches_the_kernel_constant() -> None:
+    """`R4` 逼得这个键名在两处各写一份（内建够不着 `kernel/`），这里把它们钉在一起。"""
+    from nucleamind.kernel.turn import orchestration
+
+    assert DROPPED_ATTACHMENTS_KEY == orchestration.DROPPED_ATTACHMENTS_KEY
 
 
 async def test_reasoning_is_hidden_unless_asked() -> None:

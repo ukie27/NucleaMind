@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Final
 from .context import TrustLevel, wrap_untrusted
 from .errors import ErrorCode, NucleaError
 from .ids import Correlation, validate_identifier
+from .message import MAX_ATTACHMENTS, AttachmentRef
 from .metadata import EMPTY_METADATA, normalize_metadata
 
 if TYPE_CHECKING:  # pragma: no cover - 仅为注解，运行时不导入，避免与包根成环。
@@ -247,6 +248,19 @@ class ToolResult:
     side_effect: SideEffect
     data: Mapping[str, JsonValue] | None = None
     artifacts: tuple[ArtifactRef, ...] = ()
+    #: 要随本轮**终帧**出站消息发给用户的附件（`D47`）。与 `artifacts` 分工不同，见
+    #: `ArtifactRef` 的 docstring：产物面向 Workspace 与后续工具，附件面向 Channel 投递。
+    #: 同一个文件常常两者都给一条——那不是重复，是两个消费者。
+    #:
+    #: **由生产者表态**：只有它知道落点与来源种类，而 `AttachmentRef` 的构造校验
+    #: （不许绝对路径、不许上跳段）就是那份表态的判据。Kernel 不做
+    #: `ArtifactRef` → `AttachmentRef` 的翻译——那需要 Kernel 认识 workspace 根并做
+    #: 路径相对化，而 `ArtifactRef.locator` 允许是宿主机绝对路径。
+    #:
+    #: **发不出去的附件由 Channel 如实说，不假装发过**：`WORKSPACE` 附件要求 Channel
+    #: 自己经 `ctx.fs.read_bytes()` 读字节（契约层只存引用不存字节），做不到的 Channel
+    #: 应当印一行说明而不是静默丢弃。
+    attachments: tuple[AttachmentRef, ...] = ()
     error: NucleaError | None = None
     duration_ms: int = 0
     #: **默认不可信**，因为绝大多数工具的产出里有外部内容（文件、命令输出、网页、
@@ -283,6 +297,18 @@ class ToolResult:
                 ErrorCode.KERNEL_INVARIANT_VIOLATED,
                 "工具执行耗时不得为负。",
                 detail={"call_id": self.call_id, "duration_ms": self.duration_ms},
+            )
+        if len(self.attachments) > MAX_ATTACHMENTS:
+            # 与 `OutboundMessage` 同一个上界。在这里就拒绝，是为了让「哪个工具越界了」
+            # 这件事在构造点报出来——留到组装出站消息时才炸，错误里已经没有工具名了。
+            raise NucleaError(
+                ErrorCode.INPUT_TOO_LARGE,
+                "工具结果的附件数量超限。",
+                detail={
+                    "call_id": self.call_id,
+                    "count": len(self.attachments),
+                    "limit": MAX_ATTACHMENTS,
+                },
             )
         if self.data is not None:
             object.__setattr__(

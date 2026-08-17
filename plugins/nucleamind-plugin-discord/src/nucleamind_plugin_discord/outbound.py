@@ -1,6 +1,7 @@
 """契约 `OutboundMessage` → Discord 发送动作（`MSG-003`、`EDG-304`，开发方案 `D33`）。
 
-职责：2000 字符分段、中断/失败标记、附件呈现、回复引用。纯函数，零 IO。
+职责：2000 字符分段、中断/失败标记、附件分流（正文成行 vs 真上传）、回复引用。
+纯函数，零 IO——**读附件字节不在这里**（那要 `ctx.fs`，归 `channel.py`）。
 不负责：真的发出去（`channel.py` / `gateway.py`）、流式的编辑时机（`stream.py`）。
 
 **分段规则逐字节照搬 legacy `utils/helpers.split_message`**（换行 > 空格 > 硬切），
@@ -36,6 +37,7 @@ __all__ = [
     "marker_for",
     "plan_outbound",
     "split_message",
+    "unsendable_line",
 ]
 
 #: Discord 单条消息的字符上限。超过就是 400，不是「会被截断」。
@@ -47,8 +49,8 @@ TERMINAL_MARKERS: Final[Mapping[StreamState, str]] = {
     StreamState.FAILED: "[本轮失败]",
 }
 
-#: workspace 附件本轮发不出去（`sdk.api.FileAccess` 没有 `read_bytes`，绕过 `ctx.fs`
-#: 直接 `open()` 会让权限声明变成谎话）。如实说一句，不假装发过。
+#: 上传不了的附件如实说一句，不假装发过。`WORKSPACE` 走真上传（`D47`），因此这一行现在
+#: 只留给 `INLINE` / `OPAQUE`（本插件拿不到它们的字节）与**读盘失败**那条退路。
 _UNSENDABLE: Final = "[附件：{name}（本轮无法上传）]"
 
 
@@ -86,36 +88,46 @@ def marker_for(state: StreamState) -> str:
 
 
 def attachment_lines(attachments: Sequence[AttachmentRef]) -> list[str]:
-    """附件的正文呈现。
+    """附件的**正文**呈现。
 
-    `URL` 直接成行——Discord 会自己 embed。其余来源（`WORKSPACE` / `INLINE` / `OPAQUE`）
-    本轮上传不了，如实说一句。**今天没有生产者**：新层里没有任何地方产出带附件的
-    `OutboundMessage`，因此这条分支是为将来准备的诚实占位而不是可用功能。
+    `URL` 直接成行——Discord 会自己 embed。`WORKSPACE` 不在这里：`D47` 起它走真上传
+    （`uploads`），成行只会让频道里多出一条读不懂的相对路径。其余来源
+    （`INLINE` / `OPAQUE`）本插件拿不到字节，如实说一句。
     """
     lines: list[str] = []
     for item in attachments:
         if item.source is AttachmentSource.URL:
             lines.append(item.locator)
             continue
-        lines.append(_UNSENDABLE.format(name=item.filename or item.locator))
+        if item.source is AttachmentSource.WORKSPACE:
+            continue
+        lines.append(unsendable_line(item))
     return lines
+
+
+def unsendable_line(attachment: AttachmentRef) -> str:
+    """「这个附件没发出去」那一行。读盘失败时 `channel.py` 也用它。"""
+    return _UNSENDABLE.format(name=attachment.filename or attachment.locator)
 
 
 @dataclass(frozen=True, slots=True)
 class SendPlan:
-    """一条出站消息要发的东西。空 `chunks` 表示什么都不用发。"""
+    """一条出站消息要发的东西。`chunks` 与 `uploads` 都空表示什么都不用发。"""
 
     chunks: tuple[str, ...] = ()
+    #: 要真的上传字节的附件（`WORKSPACE` 来源，`D47`）。**计划阶段不读盘**——本模块零 IO，
+    #: 读字节归 `channel.py`（它才有 `ctx.fs`）。
+    uploads: tuple[AttachmentRef, ...] = ()
     #: 只有第一块带回复引用——每一块都引用会在频道里刷出一串重复的引用条。
     reply_to: str | None = None
 
     @property
     def empty(self) -> bool:
-        return not self.chunks
+        return not self.chunks and not self.uploads
 
 
 def plan_outbound(message: OutboundMessage, *, max_len: int = MAX_MESSAGE_LENGTH) -> SendPlan:
-    """把一条出站消息拍成待发的块。
+    """把一条出站消息拍成待发的块 + 待上传的附件。
 
     **标记追加在正文之后再分段**，不是发第二条消息：被中断的半截答案与「它被中断了」
     必须在同一条消息里，否则前者孤零零留在上面看着像完整回答（`EDG-304` 要防的正是这个）。
@@ -127,4 +139,10 @@ def plan_outbound(message: OutboundMessage, *, max_len: int = MAX_MESSAGE_LENGTH
     if marker:
         parts.append(marker)
     body = "\n\n".join(part for part in parts if part)
-    return SendPlan(chunks=tuple(split_message(body, max_len)), reply_to=message.reply_to)
+    return SendPlan(
+        chunks=tuple(split_message(body, max_len)),
+        uploads=tuple(
+            item for item in message.attachments if item.source is AttachmentSource.WORKSPACE
+        ),
+        reply_to=message.reply_to,
+    )

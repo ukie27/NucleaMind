@@ -1,16 +1,16 @@
 """流式 edit-in-place 状态机的验收（`MSG-005`、`EDG-304`，开发方案 `D33`）。
 
-模块 docstring 里那七条判定，每条一个用例。**全程用注入的 `FakeClock`，不 `sleep`**：
+模块 docstring 里那八条判定，每条一个用例。**全程用注入的 `FakeClock`，不 `sleep`**：
 节流是本模块唯一的时间语义，用真实时间测它意味着每个用例都要等 0.8 秒，慢机器上还会
 假阳性。
 """
 
 from __future__ import annotations
 
-from _fakes import CONVERSATION, FakeClock, FakePlatform, outbound
+from _fakes import CONVERSATION, FakeClock, FakePlatform, FakeWorkspace, outbound
 from nucleamind_plugin_discord import StreamRelay
 
-from nucleamind.contracts import StreamState
+from nucleamind.contracts import AttachmentRef, AttachmentSource, NucleaError, StreamState
 
 
 def relay(platform: FakePlatform, clock: FakeClock, **kwargs: object) -> StreamRelay:
@@ -138,3 +138,81 @@ class TestStreamRelay:
         await stream.handle(outbound("", state=StreamState.CANCELLED))
         assert "已经说了的" in platform.messages[0].content
         assert "已中断" in platform.messages[0].content
+
+
+class TestAttachmentUpload:
+    """判定 ⑧：附件在正文之后真的传上去（`D47`）。"""
+
+    @staticmethod
+    def _png(locator: str = "artifacts/images/a.png") -> AttachmentRef:
+        return AttachmentRef(
+            source=AttachmentSource.WORKSPACE,
+            locator=locator,
+            media_type="image/png",
+            filename=locator.rsplit("/", 1)[-1],
+        )
+
+    async def test_a_workspace_attachment_is_uploaded_after_the_text(self) -> None:
+        platform, clock = FakePlatform(), FakeClock()
+        workspace = FakeWorkspace({"artifacts/images/a.png": b"PNG"})
+
+        async def read(item: AttachmentRef) -> bytes | None:
+            return await workspace.read_bytes(item.locator)
+
+        stream = relay(platform, clock, read_attachment=read)
+        await stream.handle(outbound("给你", attachments=(self._png(),)))
+
+        assert platform.sent == [(CONVERSATION, "给你", None)]
+        assert platform.uploads == [(CONVERSATION, [("a.png", b"PNG")])]
+
+    async def test_the_relative_path_never_reaches_the_channel_as_text(self) -> None:
+        """一条 workspace 相对路径印在频道里对用户没有任何意义。"""
+        platform, clock = FakePlatform(), FakeClock()
+
+        async def read(item: AttachmentRef) -> bytes | None:
+            del item
+            return b"PNG"
+
+        stream = relay(platform, clock, read_attachment=read)
+        await stream.handle(outbound("给你", attachments=(self._png(),)))
+        assert all("artifacts/images" not in content for _, content, _ in platform.sent)
+
+    async def test_an_unreadable_attachment_says_so_and_does_not_raise(self) -> None:
+        """`EDG-204`：一个读不到的附件不该把一次成功的投递变成失败。"""
+        platform, clock = FakePlatform(), FakeClock()
+        workspace = FakeWorkspace()
+
+        async def read(item: AttachmentRef) -> bytes | None:
+            try:
+                return await workspace.read_bytes(item.locator)
+            except NucleaError:
+                return None
+
+        stream = relay(platform, clock, read_attachment=read)
+        await stream.handle(outbound("给你", attachments=(self._png(),)))
+
+        assert platform.uploads == []
+        assert "无法上传" in platform.sent[-1][1]
+
+    async def test_without_a_reader_the_attachment_is_reported_not_dropped(self) -> None:
+        """没注入 reader（没授 `fs:read`）时也要说一句——静默丢掉才是最坏的那一种。"""
+        platform, clock = FakePlatform(), FakeClock()
+        stream = relay(platform, clock)
+        await stream.handle(outbound("给你", attachments=(self._png(),)))
+        assert platform.uploads == []
+        assert "无法上传" in platform.sent[-1][1]
+
+    async def test_uploads_also_happen_when_the_answer_was_streamed(self) -> None:
+        """流式路径与非流式路径都要走到上传——收束走的是同一个 `_finish`。"""
+        platform, clock = FakePlatform(), FakeClock()
+
+        async def read(item: AttachmentRef) -> bytes | None:
+            del item
+            return b"PNG"
+
+        stream = relay(platform, clock, read_attachment=read)
+        await stream.handle(outbound("画", state=StreamState.DELTA))
+        await stream.handle(outbound("画好了", attachments=(self._png(),)))
+
+        assert platform.messages[0].edits == ["画好了"]
+        assert platform.uploads == [(CONVERSATION, [("a.png", b"PNG")])]

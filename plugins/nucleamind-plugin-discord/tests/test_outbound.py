@@ -112,16 +112,30 @@ class TestPlan:
         plan = plan_outbound(outbound("看这个", attachments=(ref,)))
         assert "https://cdn.test/a.png" in plan.chunks[0]
 
-    def test_a_workspace_attachment_says_so_instead_of_pretending(self) -> None:
-        """`FileAccess` 没有 `read_bytes`，本轮传不出去。假装发过比说不出去更糟。"""
+    def test_a_workspace_attachment_becomes_an_upload_not_a_line(self) -> None:
+        """`D47`：它走真上传（`ctx.fs.read_bytes` + `send_files`），不在正文里成行——
+        一条 workspace 相对路径印在频道里对用户没有任何意义。"""
         ref = AttachmentRef(
             source=AttachmentSource.WORKSPACE,
-            locator="notes/a.md",
+            locator="artifacts/images/a.png",
+            media_type="image/png",
+            filename="a.png",
+        )
+        plan = plan_outbound(outbound("给你", attachments=(ref,)))
+        assert plan.uploads == (ref,)
+        assert plan.chunks == ("给你",)
+
+    def test_an_opaque_attachment_says_so_instead_of_pretending(self) -> None:
+        """本插件拿不到它的字节（那要平台自己的凭据）。假装发过比说不出去更糟。"""
+        ref = AttachmentRef(
+            source=AttachmentSource.OPAQUE,
+            locator="file-id-42",
             media_type="text/markdown",
             filename="a.md",
         )
         plan = plan_outbound(outbound("给你", attachments=(ref,)))
         assert "无法上传" in plan.chunks[0]
+        assert plan.uploads == ()
 
     def test_only_the_first_chunk_carries_the_reply_reference(self) -> None:
         """每块都引用会在频道里刷出一串重复的引用条。"""
