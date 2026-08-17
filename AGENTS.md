@@ -83,9 +83,17 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   **`D42` 已交三条冻结表面变更并发布 `SDK 1.0.0`**（`ToolResult.trust`、
   `FileAccess.read_bytes/write_bytes`、`HttpAccess.request(max_bytes=…)`，
   外加 `sdk.ManifestJsonSchema`）；
+  **`D43`–`D45` 清掉了 `D42` 之后清单上的前三条**：`D43` 落地
+  `channel.delivery_failed`（消解 `Channel.deliver` 的 docstring 与 `EDG-204` 那条真实矛盾，
+  并把 discord / feishu 从「吞掉投递故障」改成照约定抛）、`D44` 给
+  `CapabilityKind.MEMORY` 接上 kernel 消费者（`kernel/turn/memory.py` + `memory` 配置小节，
+  **M5 唯一一件「交了但没通电」的至此通电**，同 PR 拆出
+  `kernel/config/sections.py` 与 `runtime/selection.py`）、`D45` 给契约加了
+  **opaque 块槽位**（`contracts.OpaqueBlock` + `ChunkKind.OPAQUE`，
+  `anthropic` 的 thinking 块因此可以多轮回放，**`SDK 1.1.0`**）；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
-  `inspect.py`、`config_edit.py`、`access/` 与 `cli/`，
+  `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`，
   `embed/` 已落地薄门面，`kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、
   `routing/` 与 `plugins/`。
   `nm init` / `nm run` / `nm serve` / `nm config show` / `nm session` / `nm permissions` /
@@ -139,7 +147,8 @@ deploy/                    # Dockerfile / compose / entrypoint
   `MASK`，明文只经 `reveal()` 取出；它不在 `sdk.__all__` 里，插件按 `R4` 直接从
   `contracts` 导入。要再写一个密钥类型之前先想清楚哨兵测试要多扫一遍哪些输出路径。
 
-`sdk/` 同样已冻结，**且从 `D42` 起是 `1.0.0`**（§7.6 的兼容承诺已起算）：`sdk.__all__` 与
+`sdk/` 同样已冻结，**且从 `D42` 起是 `1.x`**（`1.0.0` 起算 §7.6 的兼容承诺，`D45` 的
+纯新增让它到 `1.1.0`）：`sdk.__all__` 与
 `sdk.testing.__all__` 是规范性清单，有字面量快照测试；
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
@@ -440,12 +449,15 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **能力声明与开关同源**：`describe()` 交出的是「配置基线 ∪ thinking 开着时的 `reasoning`
   ∪ 缓存开着时的 `prompt_caching`」，反过来**声明了却没开开关是 `CONFIG_INVALID`**。
   两个方向都判死，`MOD-005` 才真的成立（与 `D20` 的 `enabled_tool_names(config)` 同一种做法）。
-- **thinking 块无法多轮回放，这是相对旧实现的真实能力回退。** Anthropic 要求续写时把
-  `thinking` 块（含 `signature`）原样回传，而 `ModelMessage` 没有放 provider 私有块的槽位，
-  `signature_delta` 因此被吞掉。写在插件 docstring 与 README 里，**不当成没发生**；
-  要修得先给 `contracts/model.py` 加一个 opaque 块槽位（`NFR-104` 的冻结表面变更）。
-  图像输入同理（`ModelMessage.content` 是纯 `str`），旧实现的 `_convert_image_block` 没有
-  搬运源。
+- ~~**thinking 块无法多轮回放**~~——**`D45` 修掉了**。`D32`–`D44` 期间它是相对旧实现的一处
+  真实能力回退：Anthropic 要求续写时把 `thinking` 块（含 `signature`）原样回传，而
+  `ModelMessage` 没有放 provider 私有块的槽位，`signature_delta` 因此被吞掉，thinking 与
+  工具调用**不能同时用**。`contracts.OpaqueBlock` 补上了那个槽位。
+  **只活到本轮 turn 结束**（opaque 块不进 `SessionMessage`），以及**不回放别家产出的块、
+  不回放缺 `signature` 的块**——两条都如实写在插件 docstring 与 README 里。
+  **图像输入仍然没有落点**（`ModelMessage.content` 是纯 `str`），旧实现的
+  `_convert_image_block` 因此仍然没有搬运源；`OpaqueBlock` 是 provider **私有**块的槽位，
+  不是多模态内容的槽位。
 
 `CapabilityDecl.namespace`（`D38-A`，`sdk/manifest.py` + `kernel/plugins/{declarations,host}.py`
 + `runtime/wiring.py`）是「能力名要连上外部服务才知道」的唯一出路，六条：
@@ -489,15 +501,19 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 
 `plugins/nucleamind-plugin-memory/`（`D39`，M5 的 Memory）六条：
 
-- **`CapabilityKind.MEMORY` 至今没有 kernel 消费者。** `memory_providers_from()` 除测试外
-  没有调用方、`runtime/bootstrap.py` 从不取它、`kernel/turn/context_builder.py` 只认
-  `ContextProvider`——因此**只注册一条 `MEMORY` 能力，记忆永远进不了模型**。本插件的记忆
-  靠自己那条 `CONTEXT:memory` 进上下文，`MEMORY:jsonl` 注册的意义是**契约形状**
-  （第三方换后端的对照目标）。下一个想用 `MEMORY` 的人先读这条，别以为它已经接上了。
+- ~~**`CapabilityKind.MEMORY` 至今没有 kernel 消费者。**~~ **`D44` 通电了**：装配根按
+  `memory.provider` 挑一条 `MEMORY` 能力交给组装器（`kernel/turn/memory.py`）。
+  **但那个键默认不写**，因此默认配置下本插件的记忆仍然只靠自己那条 `CONTEXT:memory`
+  进上下文。**两边同时开会重复召回**（kernel 侧只召 `agent`，而本插件的 `enabled_scopes`
+  默认已含 `agent`）——两条路径都是对的，只是不该同时开，处置写在插件 README 与
+  `MemorySection` 的 docstring 里。第三方现在可以只写一条 `MEMORY` 能力、不必自带
+  Context Provider。
 - **契约的 `MemoryProvider` 三个方法一个 `SessionKey` 都不带**，因此经那条接口只能服务
-  `agent` 级范围；`session` / `workspace` 由插件自己的四条通路（Context Provider /
-  三条工具 / 一条命令）承担，它们分别从 `SessionSnapshot.session_key` 与
-  `Correlation.session_key` 拿身份。**`CommandInvocation` 也只能走 `correlation`**——
+  `agent` 级范围——**`D44` 起这是契约上的决定而不是「目前这么理解」**
+  （`contracts/protocols.py::MemoryProvider`），kernel 侧召回因此只用
+  `MEMORY_RECALL_SCOPE = AGENT`。`session` / `workspace` 由插件自己的四条通路
+  （Context Provider / 三条工具 / 一条命令）承担，它们分别从 `SessionSnapshot.session_key`
+  与 `Correlation.session_key` 拿身份。**`CommandInvocation` 也只能走 `correlation`**——
   `InboundMessage` 只有 `channel_id + conversation_id`，缺 `scope`，拼不出 `SessionKey`。
 - **`FragmentScope.USER` 落不了地**：召回路径拿不到发送者身份（`SessionMessage` 一个
   sender 字段都没有），折成「按 conversation 存」会让群聊里 A 的用户记忆被召回给 B。
@@ -605,6 +621,56 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `tests/sdk/test_version.py` 那条「发 1.0 时本用例会失败」的提醒真的失败过一次，
   现在换成了 `major == 1`，`major == 2` 时同样会失败。**如实记着**：`D41`/`D42` 才发现那
   四个缺口，说明此前「表面已稳定」判断过一次早。1.0 承诺的是**从现在**起不再破坏性变更。
+
+`D43`（`channel.delivery_failed`）、`D44`（MEMORY 通电）与 `D45`（opaque 槽位 + SDK 1.1）
+十条：
+
+- **投递失败有了自己的事件族**（`EventFamily.CHANNEL` + `channel.delivery_failed`）。它消解
+  的是一条**真实存在的**矛盾：`Channel.deliver` 的 docstring 说投递失败抛
+  `EXTERNAL_CHANNEL`，而 `EDG-204` 要求 turn 仍走到终态，于是四个实现全都选了不抛——
+  一条写在契约上却没人遵守的约定比没有约定更坏。刻意不是 `turn.failed`（「答案没算出来」
+  与「答案没送出去」的处置不同：重跑 vs 重发），也不是 `plugin.failed`（内建 CLI 的投递
+  失败与插件无关，而它此前正是折进那条的）。
+- **兑现点只有一个**：`runtime/instance.py::outbound_router`（`OrchestratorDeps.deliver` 的
+  唯一构造者，从 `bootstrap.py` 搬出来——那个文件贴着 800 行上限，而「出站怎么走」本来就是
+  `instance.py` 的职责第二条）。合成回音（`[未受理：…]`）走 `AgentInstance._echo`，发同一个
+  事件、载荷加 `synthetic: True`——回音发不出去意味着用户连「被拒了」都不知道。
+- **`delivery_error()` 是折叠的唯一实现**：照约定抛的 `NucleaError` 原样带出
+  （`retryable` 是实现方的判断，不替它覆写）；其余折成 `EXTERNAL_CHANNEL` 而不是
+  `KERNEL_UNEXPECTED`（原因在外部平台那一侧），且**只放类型名不放异常消息**。
+- **discord / feishu 从此照约定抛**，这是 `D43` 真正的收益：它们此前用 `_quietly` 把投递
+  故障整个吞掉，「答案发不出去」在事件流里一个字都没有。只有正文会抛、指示器仍静默
+  （一个没清掉的「正在输入」是外观问题，一条没发出去的答案不是）。**飞书的失败信号是
+  `None` 返回值而不是异常**（`client.py` 四个方法都是），因此判据落在
+  `stream._send_plain` 的返回值上，且**部分成功不算失败**。
+- **`MemoryProvider` 是实例级（`AGENT`）记忆的接口，这是决定不是默认**（`D44`）。三个方法
+  一个 `SessionKey` 都不带，因此经它根本表达不出「哪个会话的记忆」。会话级与工作区级归
+  `ContextProvider`。**不加参数**——SDK 已发 1.0，那是 §7.6 意义上的破坏性变更；也**不要**
+  用「约定在 `query` 里编码会话 id」绕过它（两个后端会对同一个字符串有两种理解）。
+- **`memory.provider = None` 是默认，含义是「不启用」而不是「自动挑一个」。** 自动挑会让
+  「装上一个记忆插件」悄悄改变每一轮请求的内容。配了却不存在是 `CAPABILITY_MISSING`
+  （判定在 `kernel/turn/memory.py::select_memory` 一处）。**如实记着的代价**：memory 插件的
+  `enabled_scopes` 默认已含 `agent`，两边同时开会让同一条记忆在一轮里出现两次——两条路径
+  都是对的，只是不该同时开，处置写在插件 README 与 `MemorySection` 的 docstring 里。
+- **`priority_floor` 是 `kernel/turn/memory.py` 唯一会改写的字段。** `HISTORY_TRIM_PRIORITY`
+  是 0 而组装器按 priority 逆序丢弃，因此 priority 0 的记忆片段与会话历史在裁剪序里不可
+  区分——而记忆下一轮还能重新召回，历史丢了就是丢了。**`trust` 尤其不改**：声明 `SYSTEM`
+  的记忆进系统指令位置，那与一个 Context Provider 声明 `SYSTEM` 是同一件事、同一份
+  manifest 担保。失败按 `MEM-003` 分叉（默认 `degrade`，**但错误一定报出去**），
+  而**取消不走降级**（判据是 `ErrorCategory` 而不是逐个列举错误码）。
+- **召回落在 `context_builder.assemble(memory=…)` 而不是 orchestrator。** 召回就是上下文
+  组装的 a 步，放在外面会让「片段从哪来」有两个答案；而 `orchestrator.py` 也贴着 500 行
+  上限（`D44` 为了腾出那一行压缩了 `_emit` 的签名）。召回片段与 Provider 片段、命令片段
+  **完全同等**：同批拦截、同批放置、同批裁剪，没有旁路。
+- **`OpaqueBlock` 是 `EDG-305` 的受控例外**（`D45`）。受控的部分是「仍然只能是归一化
+  JSON、仍然带 `provider` 所有权标记、仍然不进 `SessionMessage`」；变的只是本轮内可以把
+  它交还给产出它的那一家。消费方**必须**按 `owned_by()` 过滤——两家供应商的 `thinking` 块
+  不是同一种东西。上界 `MAX_OPAQUE_BLOCKS = 64` 防的是**累积**（块随 assistant 消息一路
+  回放）；**它不算正文**，一条只有 thinking 块的消息对模型不构成发言。
+- **它只活到本轮 turn 结束，如实写在契约 docstring 里。** 需要回放的场景全都是同一条 turn
+  内的工具循环，因此够用。要跨 turn 得先决定「一份加密的思考签名该不该成为用户资产」
+  （`SES-006` 一旦发布就是契约），那是另一个决定。**同一个槽位也是多模态输入的落点**，
+  语音转写与图生图都卡在那里。
 
 `plugins/nucleamind-plugin-mcp/`（`D38-B`）是第一个桥接类插件，五条：
 
@@ -837,7 +903,8 @@ nm serve
 
 「扩展 Tool」里**刻意没做的两样**：参考实现的 `agent/tools/search.py` 是**文件搜索**，
 已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖；`providers/transcription.py`
-（语音转写）是另一类能力（音频输入），而契约层今天没有多模态输入位置。
+（语音转写）是另一类能力（音频输入），而契约层今天仍然没有多模态输入位置
+（`D45` 的 `OpaqueBlock` **不是**那个槽位，见下方清单）。
 「Cron」里刻意没做的两样：**heartbeat**（`HEARTBEAT.md`，用一条普通任务加一句「没有要紧的
 就回一个字」就能表达）与 **local trigger**（`nanobot trigger <id>`，它要一个进程外的入队
 通道与至少一次投递语义，是另一件事）。
@@ -849,10 +916,14 @@ nm serve
 `D32`–`D40` 已经把 M5 的五步法跑通九遍，**下一轮做别的模块时照它们的形状写**：
 a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 
-### `D42` 之后还没做的（按当时的判断排序）
+### `D45` 之后还没做的（按当时的判断排序）
 
 **M6「生态兼容」（OpenClaw 插件生态）没有立项**，它计划落在独立包
 `nucleamind-compat-openclaw` 里、不进本仓库，因此不阻塞下面任何一条。
+
+`D42` 之后的清单上，**前三条已经在 `D43`–`D45` 交掉**：`channel.delivery_failed`、
+`CapabilityKind.MEMORY` 通电、`MemoryProvider` 的形状（从「默认这么理解」升成契约上的
+决定），以及 `ModelMessage` 的 opaque 槽位。剩下的：
 
 刻意推迟、有记录的两条：
 
@@ -861,22 +932,22 @@ a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步�
 - **`state_version` 迁移机制**（P0 没有，版本不符即拒绝加载，升与降都拒）。
   在第一个插件真的要升 `state_version` 之前，写一套迁移框架就是在猜。
 
-已经识别、还没做的机制缺口：
+已经识别、还没做的：
 
-- **`CapabilityKind.MEMORY` 没有 kernel 消费者**（详见上面 `memory` 插件那一节的第一条）。
-  要让「换一个 MemoryProvider 即刻生效」成立，需要装配根加一条选择配置 + `MEM-003`
-  的降级策略 + `context_builder` 一条召回路径。**这是 M5 唯一一件「交了但没通电」的。**
-- **`Channel.deliver` 的契约 docstring 与 `EDG-204` 矛盾**：前者说投递失败抛
-  `EXTERNAL_CHANNEL`，后者要求投递失败时 turn 仍走到终态，于是四个现存实现**全都选了
-  不抛**。消解它要补一条 `channel.delivery_failed` 事件。
+- **出站附件通路没有生产者。** `ToolResult.artifacts` 至今零消费者，`image` 是它唯一的
+  生产者，而没有任何 Channel 能把那些字节发出去。`D42` 补的 `FileAccess.read_bytes`
+  **不解决这条**——缺的是出站侧那条路，不是读字节的方法。
+- **多模态输入没有落点。** `ModelMessage.content` 是纯 `str`，因此图像输入、语音转写
+  （M5 里刻意没做的 `providers/transcription.py`）与图生图都卡在同一处。`D45` 的
+  `OpaqueBlock` 是 provider **私有**块的槽位，**不是**多模态内容的槽位——那需要
+  `content` 从 `str` 变成块序列，是一次 major 级的破坏性变更（§7.6）。
 - **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
-  `feishu` / `cron` 都声明不出与自己实际行为对应的权限。要不要补取决于权限模型的定位：
-  当它是「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。
-- **`MemoryProvider` 的三个方法一个 `SessionKey` 都不带**，因此那条接口只能表达实例级
-  记忆。文档里写着「目前按后者理解，但那是默认而不是决定过的」。
-- **`ToolResult.artifacts` 与 `OutboundMessage` 的附件路径都还没有消费者**：`image` 是
-  前者唯一的生产者，而没有任何 Channel 能把那些字节发出去。`D42` 补的
-  `FileAccess.read_bytes` **不解决这条**——缺的是出站侧的附件通路。
+  `feishu` / `cron` 都声明不出与自己实际行为对应的权限。要不要补取决于权限模型的**定位**：
+  当它是「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。这是个定位问题，
+  不是工作量问题——先定位再动手。
+- **opaque 块跨 turn 拿不回来**（`D45` 如实记着）。它不进 `SessionMessage`，因此
+  `anthropic` 的 thinking 回放只在同一条 turn 的工具循环内成立。要跨 turn 得先决定
+  「一份加密的思考签名该不该成为用户资产」——`SES-006` 一旦发布就是契约。
 
 ### 入口点
 
@@ -891,7 +962,8 @@ a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步�
 - **抓网页 / 搜网**：官方插件 `plugins/nucleamind-plugin-web/`（`web.fetch` + `web.search`）
 - **图像生成**：官方插件 `plugins/nucleamind-plugin-image/`（`image.generate`）
 - **MCP 工具桥接**：官方插件 `plugins/nucleamind-plugin-mcp/`（一条命名空间声明）
-- **长期记忆**：官方插件 `plugins/nucleamind-plugin-memory/`（`/memory` 命令 + 三条工具 + 每轮自动召回）
+- **长期记忆**：官方插件 `plugins/nucleamind-plugin-memory/`（`/memory` 命令 + 三条工具 +
+  每轮自动召回）；kernel 侧的 `MEMORY` 召回由 `memory.provider` 开启（`D44`，默认关）
 - **定时任务**：官方插件 `plugins/nucleamind-plugin-cron/`（`/cron` 命令 + 三条工具 + `CHANNEL:cron` 调度循环）+ `nm serve`
 
 ## 架构约束与改造方向

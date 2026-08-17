@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-17（`D42` 收口，**M5 交齐 + SDK 1.0**）
-- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D42` 均已完成）。
+- 更新时间：2026-08-17（`D45` 收口，**M5 交齐 + SDK 1.1**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D45` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -19,6 +19,12 @@
   **`D42` 已交三条冻结表面变更并发布 `SDK 1.0.0`**：`ToolResult.trust`（工具结果真的被
   包成不可信数据块）、`FileAccess.read_bytes` / `write_bytes`、
   `HttpAccess.request(max_bytes=…)`，外加 `sdk.ManifestJsonSchema`。
+  **`D43`–`D45` 清掉了 `D42` 之后清单上的前三条**：`D43` 落地 `channel.delivery_failed`
+  （消解 `Channel.deliver` 与 `EDG-204` 那条真实矛盾，并把 discord / feishu 从「吞掉投递
+  故障」改成照约定抛）；`D44` 给 `CapabilityKind.MEMORY` 接上 kernel 消费者，
+  **M5 唯一一件「交了但没通电」的至此通电**；`D45` 给契约加了 **opaque 块槽位**
+  （`contracts.OpaqueBlock`），`anthropic` 的 thinking 块因此可以多轮回放，
+  **SDK 到 `1.1.0`**（纯新增）。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -38,7 +44,8 @@
   与 memory 在那里还在）。
 - 宿主的第三方依赖从 36 个降到 4 个（pydantic / httpx / jsonschema / packaging）。
   **能力所需的包由那个能力自己的发行包声明**，不回到宿主。
-- 当前目标是把剩下三项能力做成插件，Kernel 本身不再扩张。
+- **M5 已全部交齐**，没有待迁移的模块。`D43`–`D45` 清掉的是「机制缺口」而不是新能力：
+  一条矛盾的契约约定、一条交了没通电的能力、一个缺失的契约槽位。Kernel 本身不再扩张。
 - `references/` 保存本地参考源码并被 Git 忽略；其受版本控制的导航文档位于
   [`../references/`](../references/README.md)。
 
@@ -2127,6 +2134,103 @@
     需要跟着改。
   - 验收：`basedpyright` 0 error、`ruff` 全绿、**3628 passed / 10 skipped**。
 
+- **`D43` `channel.delivery_failed`：消解 `Channel.deliver` 与 `EDG-204` 的矛盾**
+  - **要解决的问题是一条真实存在的契约矛盾**，不是一次功能新增：`Channel.deliver` 的
+    docstring 写「投递失败抛 `EXTERNAL_CHANNEL`」，而 `EDG-204` 要求投递失败时 turn 仍走到
+    终态并完整持久化。抛出去会把一次**成功**的 turn 变成失败，于是四个现存实现
+    （`cli_entry` / `openai-api` / `discord` / `feishu`）**全都选了不抛**。一条写在契约上却
+    没人遵守的约定，比没有约定更坏。
+  - **新事件族 `EventFamily.CHANNEL` + `channel.delivery_failed`**。刻意**不是**
+    `turn.failed`：投递是 turn 的最后一步，模型输出与会话历史都已经正确产生了，记成 turn
+    失败会让「答案没算出来」与「答案没送出去」不可区分，而这两件事的处置完全不同
+    （重跑 vs 重发）。也**不是** `plugin.failed`——内建 CLI 的投递失败与插件无关，
+    而它此前正是被折进那条事件里的。
+  - **捕获点只有一处**：`runtime/instance.py::outbound_router`（`OrchestratorDeps.deliver`
+    的唯一构造者）。它从 `bootstrap.py` **搬了出来**：那个文件贴着 800 行上限，而「出站
+    怎么走」本来就是 `instance.py` 职责的第二条。事件带着完整的 `Correlation`（出站消息自带
+    `session_key + turn_id`），`OBS-002` 的按序重放不需要猜。合成回音（`[未受理：…]`）走
+    `AgentInstance._echo`，发同一个事件、载荷加 `synthetic: True`——回音发不出去意味着用户
+    连「被拒了」都不知道，那是最需要被看见的一种失败。
+  - **`delivery_error()` 是折叠的唯一实现**：照约定抛的 `NucleaError` 原样带出
+    （`retryable` 是实现方的判断，不替它覆写）；其余折成 `EXTERNAL_CHANNEL` 而不是
+    `KERNEL_UNEXPECTED`（原因在外部平台那一侧，记成内核异常会把排查方向指错），
+    且**只放异常类型名不放消息**（平台 SDK 的异常文本可能带 webhook URL 或令牌）。
+  - **兑现它，这才是本轮真正的收益**：discord 与 feishu 此前用 `_quietly` 把投递故障整个
+    吞掉，于是「答案发不出去」在事件流里一个字都没有——用户看到 bot 不说话，而日志一片
+    正常。两者改为照约定抛，**只有正文会抛、指示器仍静默**（一个没清掉的「正在输入」是外观
+    问题，一条没发出去的答案不是）。**飞书的失败信号是 `None` 返回值而不是异常**
+    （`client.py` 四个方法都是），因此判定落在 `stream._send_plain` 的返回值上，
+    且**部分成功不算失败**。两条原本钉住旧行为的用例随之反转。
+  - 验收：`ruff` 全绿、`basedpyright` 0 error、**3632 passed / 10 skipped**。
+
+- **`D44` `CapabilityKind.MEMORY` 通电：M5 唯一一件「交了但没通电」的补上了**
+  - **`D39` 交了 `MEMORY` 能力与一个实现它的插件，但 kernel 里没有消费者**：
+    `memory_providers_from()` 除测试外没有调用方、`context_builder` 只认
+    `ContextProvider`。因此**只注册一条 `MEMORY` 能力，记忆永远进不了模型**——那条能力当时
+    只是「契约形状」。本轮之后第三方可以只写一条 `MEMORY` 能力、不必自带 Context Provider。
+  - **形状先定死**：`MemoryProvider` 的三个方法**一个 `SessionKey` 都不带**，因此经它只能
+    表达实例级（`FragmentScope.AGENT`）记忆。这条从「目前这么理解」升成契约上的**决定**
+    （`contracts/protocols.py`）：会话级与工作区级归 `ContextProvider`（它的 `provide()`
+    拿得到 `SessionSnapshot.session_key`）。**不加 `scope_key` 参数**——SDK 已发 1.0，
+    那是 §7.6 意义上的破坏性变更；也**不许**用「约定在 `query` 里编码会话 id」绕过它
+    （两个后端会对同一个字符串有两种理解）。
+  - **`kernel/turn/memory.py`（新）**：`MemoryRecall` + `select_memory`。四条判定——
+    只用 `AGENT` 范围召回；**priority 有下界，且那是本模块唯一会改写的字段**
+    （`HISTORY_TRIM_PRIORITY` 是 0，priority 0 的记忆与会话历史在裁剪序里不可区分，
+    而记忆下一轮还能重新召回、历史丢了就是丢了——这是 kernel 自己的裁剪不变量，
+    不是对 Provider 语义的覆写；**`trust` 因此不改**）；失败按 `MEM-003` 分叉
+    （默认 `degrade`，**但错误一定经 `on_failure` 报出去**，降级不等于静默）而
+    **取消不走降级**（判据是 `ErrorCategory` 而不是逐个列举错误码）；空查询不打扰后端。
+  - **召回落在 `context_builder.assemble(memory=…)` 而不是 orchestrator**：召回就是上下文
+    组装的 a 步，放在外面会让「片段从哪来」有两个答案。召回片段与 Provider 片段、命令片段
+    **完全同等**——同批拦截、同批放置、同批裁剪，没有旁路（一条 `sensitivity=SECRET` 的
+    记忆照样进不了请求且记进 `dropped`，有用例钉着）。
+  - **新 `memory` 配置小节五个字段。`provider = None` 是默认，含义是「不启用」而不是
+    「自动挑一个」**——自动挑会让「装上一个记忆插件」悄悄改变每一轮请求的内容。
+    配了却不存在是 `CAPABILITY_MISSING` 并指向 `/memory/provider`，不是静默不启用。
+  - **两个文件撞上行数上限，各拆一次**：`kernel/config/sections.py`（九个小节 dataclass，
+    理由同 `D28` 的 `defaults.py`）与 `runtime/selection.py`（`select_model` /
+    `select_recall` / `require_sessions` 三项「配置指名一个、registry 里找它」）。
+    **两个拆分都原样再导出，既有 import 一个都没变。** `orchestrator.py` 加一个
+    `memory=deps.memory,` 就到了 501 行，为此压缩了 `_emit` 的签名。
+  - **如实记着的代价**：`memory` 插件的 `enabled_scopes` 默认已含 `agent`，两边同时开会让
+    同一条记忆在一轮里出现两次。**两条路径都是对的，只是不该同时开**——处置写进插件
+    README、`__init__.py`、`store.py` 与 `MemorySection` 的 docstring，不留给用户发现。
+  - 验收：`ruff` 全绿、`basedpyright` 0 error、**3658 passed / 10 skipped**、
+    `tests/architecture` 65 个、启动成本 501 ms（仍是告警不是失败）。
+
+- **`D45` `ModelMessage` 的 opaque 块槽位 + SDK 1.1.0**
+  - **`D32` 起记着的一处真实能力回退**：Anthropic 要求续写时把 `thinking` 块（含
+    `signature`）原样回传，而 `ModelMessage` 没有放 provider 私有块的槽位，
+    `signature_delta` 在流式解码里被直接吞掉——因此 `anthropic` 插件的 thinking 与工具调用
+    **不能同时用**。`D42` 判断它「不是同一量级」是对的：真正要决定的不是加不加字段，
+    而是所有权、上界与生命周期。
+  - **`contracts.OpaqueBlock(provider, kind, payload)`** 是 `EDG-305` 的**受控**例外。
+    受控的三处：`payload` 走 `normalize_metadata()`（SDK 对象连塞进来的机会都没有）；
+    `provider` 是所有权标记且消费方**必须**按 `owned_by()` 过滤（两家供应商的 `thinking`
+    块不是同一种东西）；它**不进 `SessionMessage`**，因此活不过本轮 turn。
+  - 另外三项：`ModelResponse/ModelMessage.provider_blocks`（只有 assistant 能带、
+    上界 `MAX_OPAQUE_BLOCKS = 64` 防随消息累积、**不算正文**——一条只有 thinking 块的消息
+    对模型不构成发言）、`ChunkKind.OPAQUE` + `ModelChunk.block`（流式下 opaque 块必须与
+    文本、工具调用走同一条通路，否则 `StreamFolder` 收不到它）、`StreamFolder` 按到达顺序
+    累积 + `folding.assistant_message()` 原样搬到下一轮。**Kernel 从不读它们的内容。**
+  - **anthropic 插件**：`decode.py` 把两种思考块解成 `OpaqueBlock`（流式下
+    `content_block_start` / `thinking_delta` / `signature_delta` **三处到达**，按 `index`
+    拼装；opaque 分片排在 `finish()` 最前面，因为 Anthropic 要求 thinking 块排在同一条
+    assistant 轮的开头且保持原序——**序摆在解码侧，编码侧因此不需要再排一次**）；
+    `wire.thinking_blocks()` 编回线格式并跳过三种情况：别家产出的、缺 `signature` 的
+    （Anthropic 直接拒绝，留一半比不留更糟）、不认识的 kind。
+    `PROVIDER_NAME` / `THINKING_KINDS` 移到 `wire.py`——`settings` 已经 import 它，
+    反向会成环。`provider_metadata` 里的 `dropped_thinking_blocks` 改成 `thinking_blocks`：
+    现在没有东西被丢掉了，留着那个名字会说反话。
+  - **`SDK 1.1.0`**：五项全是新增，声明 `">=1.0"` 的插件一个字都不用改。想用 `OpaqueBlock`
+    的插件把 `sdk_range` 写成 `">=1.1,<2.0"`。
+  - **仍然没解决的一条，如实记着**：`ModelMessage.content` 仍是纯 `str`，因此**多模态输入
+    还是没有落点**。`OpaqueBlock` 是 provider **私有**块的槽位（内容对 Kernel 无意义），
+    而多模态内容恰恰是 Kernel 要参与裁剪与预算的东西——那要让 `content` 变成块序列，
+    是一次 major 级变更。
+  - 验收：`ruff` 全绿、`basedpyright` 0 error、**3680 passed / 10 skipped**。
+
 
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -2238,10 +2342,24 @@
   本体、`CONTEXT:memory` 每轮自动召回、三条 `TOOL:memory.*`、`COMMAND:memory`，
   JSONL + 提交水位 + 自写关键词打分，**零新依赖**），外加一次冻结表面变更
   **`sdk.testing.MemoryProviderContract`**（第 6 个契约基类 + 一个反向样例）。
-  探查中发现的决定性事实：**`CapabilityKind.MEMORY` 至今没有 kernel 消费者**，
+  探查中发现的决定性事实：**当时 `CapabilityKind.MEMORY` 没有 kernel 消费者**，
   因此本插件自产自销、`kernel/` 一行未改（详见下方「`D39` 留下的事实」）。
-  **`plugins/` 目前有八个官方插件**：`openai-api`、`anthropic`、`discord`、`feishu`、
-  `web`、`image`、`mcp`、`memory`。
+  **`D44` 已经通电**（`memory.provider` 显式开启，默认关；两边同时开会重复召回）。
+  **`plugins/` 目前有九个官方插件**：`openai-api`、`anthropic`、`discord`、`feishu`、
+  `web`、`image`、`mcp`、`memory`、`cron`。
+  `D40` 已完成，**M5 的最后一项「Cron / Automation」交齐**（`cron` 插件，Kernel 一行未改）。
+  `D41` 已完成，插件纳入 basedpyright + 两条清单守卫；`D42` 已完成，三条冻结表面变更 +
+  SDK 1.0.0。
+  `D43` 已完成，`channel.delivery_failed`（新事件族 `CHANNEL`，捕获点只有
+  `runtime/instance.py::outbound_router` 一处；discord / feishu 从吞掉投递故障改成照约定抛）。
+  `D44` 已完成，`CapabilityKind.MEMORY` 通电（`kernel/turn/memory.py` + `memory` 配置小节 +
+  `context_builder.assemble(memory=…)`；`MemoryProvider` 只服务实例级记忆从「默认这么理解」
+  升成契约上的决定），同 PR 拆出 `kernel/config/sections.py` 与 `runtime/selection.py`。
+  `D45` 已完成，`contracts.OpaqueBlock` + `ChunkKind.OPAQUE` + 两个 `provider_blocks` 字段
+  （`anthropic` 的 thinking 块可以多轮回放，**SDK 1.1.0**）。
+  `runtime/` 至此有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
+  `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
+  `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`。
 - [`开发方案`](./development-plan.md) 已完成评审修订。把 P0 改造范围拆成 32 个可独立
   验收的模块（`D00`–`D31`），分 9 个阶段推进：
   - 阶段 0 先做 `D00` 仓库重构（受限的结构与命名迁移，遗留配置、环境变量和状态目录
@@ -2293,7 +2411,7 @@
 （见文首）：Model Provider 止步于内建 `model-openai` + `anthropic`，Channel 只做 `feishu`，
 WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只是历史对照。
 
-`D41`/`D42` 已经把当时清单上那几件**动作明确**的做完了：
+`D41`–`D45` 已经把当时清单上那几件**动作明确**的做完了：
 
 - **`D41`**：插件进 basedpyright（`include` 加两条 glob，`exclude` 恰好四个碰 CI 缺席 SDK
   的模块），并给两张手工维护的清单各加一条守卫（`tests/architecture/test_ci_plugin_list.py`
@@ -2304,15 +2422,30 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 - **`D42`**：三条冻结表面变更 + SDK 1.0.0。`ToolResult.trust`（默认 `UNTRUSTED`，包裹与
   `ContextFragment` 共用 `wrap_untrusted`）、`FileAccess` 的二进制读写、
   `HttpAccess.request(max_bytes=…)`。**完整流式刻意没做**（没有消费者）；
-  **`ModelMessage` 的 opaque 块槽位这一轮没动**（见下面第 1 条）。
+  **`ModelMessage` 的 opaque 块槽位这一轮没动**（`D45` 补上了）。
+- **`D43`**：`channel.delivery_failed`。消解 `Channel.deliver` 的 docstring 与 `EDG-204`
+  那条**真实存在**的矛盾——契约要求投递失败抛，而抛出去会把一次成功的 turn 变成失败，
+  于是四个实现全都选了不抛。新事件族 `CHANNEL`，捕获点只有
+  `runtime/instance.py::outbound_router` 一处。**兑现它**：discord 与 feishu 从「用
+  `_quietly` 把投递故障整个吞掉」改成照约定抛，「答案发不出去」从此在事件流里看得见。
+- **`D44`**：`CapabilityKind.MEMORY` 通电。`kernel/turn/memory.py`（`MemoryRecall` +
+  `select_memory`）+ `memory` 配置小节 + `context_builder.assemble(memory=…)`。
+  **M5 唯一一件「交了但没通电」的至此通电**；`MemoryProvider` 只服务实例级（`AGENT`）
+  记忆这一点从「默认这么理解」升成契约上的**决定**。同 PR 拆出
+  `kernel/config/sections.py` 与 `runtime/selection.py`（两个文件都撞上了行数上限）。
+- **`D45`**：`contracts.OpaqueBlock` + `ChunkKind.OPAQUE` + 两个 `provider_blocks` 字段 +
+  `ModelChunk.block`，**全部只增不改 → SDK 1.1.0**。`anthropic` 的 thinking 块因此可以
+  多轮回放，`D32` 起记着的那处真实能力回退消除。**它只活到本轮 turn 结束**（opaque 块不进
+  `SessionMessage`），如实写在契约 docstring 里。
 
-因此下一轮的候选是「四件挂着的独立事项」里**剩下的那几件**，加上两条刻意推迟的机制
-（插件热更新、`state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，
-它计划落在独立包 `nucleamind-compat-openclaw` 里、不进本仓库，因此不阻塞任何一条。
+因此下一轮的候选是下面清单里**剩下的那几件**，加上两条刻意推迟的机制（插件热更新、
+`state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，它计划落在独立包
+`nucleamind-compat-openclaw` 里、不进本仓库，因此不阻塞任何一条。
 
 **「扩展 Tool」里刻意没做的两样**：参考实现的 `agent/tools/search.py` 是**文件搜索**，
 已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖；`providers/transcription.py`
-（语音转写）是另一类能力（音频输入），而契约层今天没有多模态输入位置。
+（语音转写）是另一类能力（音频输入），而契约层今天**仍然**没有多模态输入位置——
+`D45` 的 `OpaqueBlock` 是 provider **私有**块的槽位，不是多模态内容的槽位。
 **「Cron」里刻意没做的两样**：heartbeat 与 local trigger（理由见 `D40` 条目）。
 
 **五步法在本仓库已经跑通九遍**（`D32` anthropic、`D33` discord、`D34` feishu、`D35` 收尾、
@@ -2357,56 +2490,111 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 四件挂着的独立事项（`D42` 之后剩两件半）
+### 挂着的独立事项（`D45` 之后剩四件，全部需要先做一个决定）
 
-1. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审，**`D42` 没做**）：给
-   `ModelMessage` 加一个 **provider-opaque 块槽位**。Anthropic 要求多轮续写时把
-   `thinking` 块（含 `signature`）原样回传，而契约层现在没有地方放它——`anthropic` 插件
-   因此在「thinking 开启 + 工具调用多轮」这个组合下无法回放思考块。同一个槽位也是多模态
-   输入的落点，值得一次性想清楚而不是为某一家开一个字段。**`D42` 刻意没碰它**：另外三条
-   都是加一个字段或一个参数，这一条要先决定「opaque 块的所有权与序列化」，不是同一量级。
+`D42` 之后清单上的**前四条已经交掉**，逐条留下判据：
 
-2. **`Channel.deliver` 的契约 docstring 与 `EDG-204` 有一处未解决的矛盾**（`D33` 提出，
-   **仍未解决**）：前者写「投递失败抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有
-   try/except，真抛会把一次成功的 turn 变成失败。四个现存实现（`cli_entry` /
-   `openai-api` / `discord` / `feishu`）都选了不抛。要解决它就要补
-   `channel.delivery_failed` 事件。
+- **`ModelMessage` 的 provider-opaque 块槽位** ✅ `D45`。`OpaqueBlock(provider, kind,
+  payload)` + `ChunkKind.OPAQUE` + `ModelResponse/ModelMessage.provider_blocks` +
+  `ModelChunk.block`。它是 `EDG-305` 的**受控**例外：受控的部分是「仍然只能是归一化 JSON、
+  仍然带所有权标记（消费方必须按 `owned_by()` 过滤）、仍然不进 `SessionMessage`」。
+  **`D42` 当时判断它「不是同一量级」是对的**——真正要决定的不是加不加字段，而是所有权、
+  上界（`MAX_OPAQUE_BLOCKS = 64`，防的是随 assistant 消息累积）与生命周期（本轮内）。
+- **`Channel.deliver` 与 `EDG-204` 的矛盾** ✅ `D43`。消解它的是新事件而不是改约定——
+  「投递失败了」必须有人说出来，而能说的只有实现方自己。
+- **三条冻结表面缺口** ✅ `D42`（两条半：`ToolResult.trust` 完整，`FileAccess` 的二进制面
+  补齐但 `image` 那一半是「两个目录树」而不是缺方法，`HttpAccess` 的字节上界补齐而完整
+  流式刻意没做——没有消费者）。
+- **`MemoryProvider` 的形状 + `MEMORY` 没有 kernel 消费者** ✅ `D44`。**决定是「后者」**：
+  `MemoryProvider` 就是实例级（`AGENT`）长期记忆的接口，会话级与工作区级归
+  `ContextProvider`。不加 `scope_key`——SDK 已发 1.0，那是 §7.6 意义上的破坏性变更。
+  通电靠 `memory.provider` 显式开启（**默认关**，自动挑会让「装上一个记忆插件」悄悄改变
+  每一轮请求的内容）。**如实记着的代价**：memory 插件的 `enabled_scopes` 默认已含 `agent`，
+  两边同时开会重复召回。
 
-3. **三条冻结表面缺口 —— `D42` 全部补掉。** 留在这里作为记录与后续判据：
-   - **`ToolResult.trust`** ✅。默认 `UNTRUSTED`，只接受 `SYSTEM` / `UNTRUSTED` 两档；
-     包裹在 `ToolResult.as_model_text(source=…)`，与 `ContextFragment` 共用
-     `contracts.context.wrap_untrusted`；`fold_tool_result` **在截断之后**包裹，
-     `source` 取 `call.name`。`web` 与 `memory` 自加的横幅随之删除。
-     **别再写「横幅是提醒不是隔离」——现在是隔离。**
-   - **`FileAccess.read_bytes` / `write_bytes`** ✅，但**没有解决 `image` 那一半**：
-     它写的是自己的 state_dir，而 `ctx.fs` 的根是 workspace——那是两个目录树，不是缺个
-     方法。原来的注释把原因记成「没有 `write_bytes`」，只对了一半，现已改正。
-     `discord` 发 workspace 附件那一半确实解决了，但**出站附件通路仍然没有生产者**，
-     所以 `ToolResult.artifacts` 至今零消费者（见下）。
-   - **`HttpAccess.request(max_bytes=…)`** ✅（下载上界落在读取上，`truncated` 标着）。
-     **完整流式仍没做**：今天没有消费者——两个 provider 消费 SSE 走 raw httpx，
-     `openai-api` 产出 SSE 用 aiohttp——而守卫的重定向重校验正发生在响应头与响应体之间，
-     为一个没有消费者的用例设计要长期兼容的接口只能设计错。
+剩下的四件，**每一件都是先要一个决定而不是先要工时**：
 
-4. **`MemoryProvider` 的接口形状与它的使用场景对不上**（`D39` 提出，**仍未解决**）：
-   三个方法**都不带 `SessionKey`**，因此经这条契约只能表达实例级（`agent`）的记忆——
-   `session` / `workspace` 范围在它上面无从定位。`memory` 插件因此绕开了自己注册的那条
-   `MEMORY` 能力，用内部的 session 感知 store 服务四条通路。要么给三个方法加一个
-   `scope_key`（冻结表面变更），要么承认 `MemoryProvider` 就是「实例级长期记忆」的接口、
-   把会话级记忆归给 `ContextProvider`——**目前是后者，但那是默认而不是决定过的**。
-   相关但独立的一条：**`CapabilityKind.MEMORY` 至今没有 kernel 消费者**，
-   要让「换一个后端即刻生效」成立还需要装配根的选择配置 + `MEM-003` 降级策略 +
-   `context_builder` 的召回路径。**这是 M5 唯一一件「交了但没通电」的。**
+1. **出站附件通路没有生产者。** `ToolResult.artifacts` 至今零消费者，`image` 是它唯一的
+   生产者，而没有任何 Channel 能把那些字节发出去。`D42` 补的 `FileAccess.read_bytes`
+   **不解决这条**——缺的是出站侧那条路。要决定的是：附件走 `OutboundMessage.attachments`
+   的路径引用（Channel 自己读盘）还是字节（Kernel 读、Channel 发）？前者让 Channel 拿到
+   一个 workspace 之外的绝对路径，后者让 `OutboundMessage` 可能很大。
 
-5. **两条刻意推迟、有记录的机制**（不是遗漏）：
+2. **多模态输入没有落点。** `ModelMessage.content` 是纯 `str`，因此图像输入、语音转写
+   （M5 里刻意没做的 `providers/transcription.py`）与图生图都卡在同一处。**`D45` 的
+   `OpaqueBlock` 不是这个槽位**——它是 provider 私有块的槽位，内容对 Kernel 无意义；
+   多模态内容恰恰是 Kernel 要参与裁剪与预算的东西。要做得让 `content` 从 `str` 变成块序列,
+   那是 **major 级**的破坏性变更（§7.6），牵动 `SessionMessage` / `ContextFragment` /
+   两个 provider 的 wire 编码。
+
+3. **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
+   `feishu` / `cron` 都声明不出与自己实际行为对应的权限。**这是个定位问题**：当权限模型是
+   「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。先定位再动手。
+
+4. **两条刻意推迟、有记录的机制**（不是遗漏）：
    - **插件热更新**（技术方案 §10.4 写着「首版不做」）。它要求 registry 可变，而
      「解析后只读」（`NFR-403`）是一大批现有不变量的地基——真要做是一个独立里程碑。
    - **`state_version` 迁移机制**（P0 没有，版本不符即拒绝加载，升与降都拒）。
      在第一个插件真的要升 `state_version` 之前，写一套迁移框架就是在猜。
 
-6. **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
-   `feishu` / `cron` 都声明不出与自己实际行为对应的权限。要不要补取决于权限模型的定位：
-   当它是「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。
+一条相关但更小的：**opaque 块跨 turn 拿不回来**（`D45` 如实记着）。它不进
+`SessionMessage`，因此 `anthropic` 的 thinking 回放只在同一条 turn 的工具循环内成立。
+要跨 turn 得先决定「一份加密的思考签名该不该成为用户资产」——`SES-006` 一旦发布就是契约。
+
+### `D43`–`D45` 留下的、后续必须用到的事实
+
+1. **投递失败与 turn 失败是两件事，事件名必须分得开。** 「答案没算出来」重跑，
+   「答案没送出去」重发。`D43` 之前它被折进 `plugin.failed`——内建 CLI 的投递失败与插件
+   无关，那条记法从一开始就是错的。**新增事件族要同时改两处快照**：
+   `contracts/events.py::EventFamily` 与 `tests/contracts/test_events.py` 的
+   `EVENT_NAME_SNAPSHOT`（字面量，那是刻意的评审闸门）。
+
+2. **飞书的失败信号是 `None` 返回值而不是异常**（`client.py` 四个方法都是这样）。
+   因此「让 feishu 报出投递失败」不是加一个 `except`，而是**看返回值**——`D43` 的判定落在
+   `stream._send_plain` 上，且**部分成功不算失败**（长正文拆成多条，前两条到了就不是
+   「一个字都没送到」）。下一个碰它的人先读这条。
+
+3. **`kernel/` 的 500 行上限会在加依赖时先撞上你。** `D44` 给 `orchestrator.py` 加一个
+   `memory=deps.memory,` 就到了 501 行。**不要为此把逻辑塞进别处**：正确的动作是问「这段
+   逻辑该在哪」——召回是上下文组装的 a 步，因此它落在 `context_builder.assemble()` 而不是
+   orchestrator。同一轮还拆出了 `kernel/config/sections.py`（九个小节 dataclass，
+   理由同 `D28` 的 `defaults.py`）与 `runtime/selection.py`（三项「配置指名一个、registry
+   里找它」）。**两个拆分都原样再导出，既有 import 一个都没变。**
+
+4. **加一个配置小节要改五处**：`schema.SECTION_SPECS`（唯一依据）、`sections.py` 的
+   dataclass、`validate_config()` 的构造、`defaults.py` 的常量（如果镜像自 `kernel.turn`
+   就必须加一条逐项对照测试）、`document.py` 的渲染。**漏掉最后一处的后果是
+   `nm config show` 里没有它**，而那不会让任何测试失败——`D44` 是靠通读 `document.py` 发现的。
+
+5. **`priority_floor` 是 kernel 唯一会改写 Provider 交出来的片段的地方**（`D44`）。
+   判据是「这条改写是 kernel 自己的裁剪不变量，还是对 Provider 语义的覆写」：
+   `HISTORY_TRIM_PRIORITY = 0` 是 kernel 常量，priority 0 的记忆与历史在裁剪序里不可区分，
+   而历史丢了就是丢了——这是前者。**`trust` 是后者，因此不改**：声明 `SYSTEM` 的记忆进系统
+   指令位置，与一个 Context Provider 声明 `SYSTEM` 是同一件事、同一份 manifest 担保。
+
+6. **降级必须报出去，取消不走降级**（`D44`，`MEM-003`）。前者：一个被吞掉的后端故障会让
+   「记忆一直召不回来」查不出原因。后者：取消不是后端故障而是这条 turn 该停了，折成
+   「这轮没有记忆」会让一条已被取消的 turn 带着半份上下文继续跑。**判据是
+   `ErrorCategory` 而不是逐个列举错误码**——`CODE_CATEGORIES` 已经是那份归类的唯一来源。
+
+7. **加一个 `ChunkKind` 取值要看三处消费者**（`D45`）：`StreamFolder.push`（累积）、
+   `engine.py`（发 delta 事件）、`sdk/testing/fakes.py`（假 provider 产出什么）。
+   `ModelChunk.__post_init__` 的 `expectations` 表是全部载荷约束的唯一来源，
+   新 kind 不进那张表就会 `KeyError` 而不是报一句人话。
+
+8. **`PROVIDER_NAME` 从 `settings.py` 移到了 `wire.py`**（`D45`，anthropic）。理由是环：
+   `settings` 已经 import `wire`，而 `OpaqueBlock.provider` 的取值属于线格式一侧的身份。
+   `settings.py` 原样再导出它。**下一个要在 `wire` 里用 `settings` 常量的人先看这条**——
+   那个方向是不通的。
+
+9. **opaque 块的顺序是行为。** Anthropic 要求续写时 thinking 块排在同一条 assistant 轮的
+   **最前面且保持原序**。`D45` 把序摆在解码侧（`StreamDecoder.finish()` 先发 opaque 分片、
+   按 `index` 升序），因此 `wire.encode_messages` 不需要再排一次。改任一侧要想到另一侧。
+
+10. **SDK minor 只允许新增，而「新增」包括枚举取值。** `D45` 的五项全是新增 → `1.1.0`，
+    声明 `">=1.0"` 的插件一个字都不用改。想用 `OpaqueBlock` 的插件把 `sdk_range` 写成
+    `">=1.1,<2.0"`——`contracts` 虽然不由 `sdk` 导出（`R4` 让插件直接 import 它），
+    `sdk_range` 仍然是「我需要多新的宿主」唯一的声明处。
 
 ### `D41`/`D42` 留下的、后续必须用到的事实
 
