@@ -11,8 +11,9 @@ repository now contains only the new architecture.
 
 The kernel is complete and usable: contracts, turn engine, configuration,
 observability, routing, plugin runtime, six built-in capabilities, and the `nm`
-CLI. Remaining work is capability plugins — Memory, extended tools, and
-cron/automation.
+CLI. Capability plugins are delivered too — nine official plugins ship in
+[`plugins/`](./plugins/README.md), covering an extra model provider, three
+channels, web/image/MCP tools, long-term memory, and cron automation.
 
 - The Python package is `nucleamind`, the distribution is `nucleamind`, and the
   only CLI command is `nm`. No `nanobot` alias is kept.
@@ -60,6 +61,11 @@ python -m venv .venv
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-discord
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-feishu
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-web
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-image
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-mcp
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-memory
+.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-cron
 ```
 
 On Windows use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
@@ -93,17 +99,23 @@ nm permissions
 
 ## Documentation
 
+Start here:
+
+- [Getting started](./docs/getting-started.md) — install, `nm init`, first turn
+- [Configuration reference](./docs/configuration.md) — every field, every layer
+- [CLI reference](./docs/cli.md) — all eight subcommands and their exit codes
+- [Deployment](./docs/deployment.md) — Docker, compose, systemd
+
+Also:
+
+- [Documentation index](./docs/README.md)
+- [Writing a plugin](./docs/plugin-development.md)
+- [Permission model](./docs/permissions.md)
 - [Development background](./docs/project/开发背景.md)
 - [Repository instructions](./AGENTS.md)
 - [Architecture constraints](./.agent/design.md)
 - [Security boundaries](./.agent/security.md)
 - [Common implementation gotchas](./.agent/gotchas.md)
-- [Documentation index](./docs/README.md)
-- [Writing a plugin](./docs/plugin-development.md)
-
-User-facing documentation (installation, configuration reference, CLI reference,
-deployment) has not been written for the new kernel yet. `nm init` writes a
-config with a `$schema` reference, and `nm --help` lists every subcommand.
 
 ## Attribution
 

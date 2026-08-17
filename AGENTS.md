@@ -91,6 +91,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `kernel/config/sections.py` 与 `runtime/selection.py`）、`D45` 给契约加了
   **opaque 块槽位**（`contracts.OpaqueBlock` + `ChunkKind.OPAQUE`，
   `anthropic` 的 thinking 块因此可以多轮回放，**`SDK 1.1.0`**）；
+  **`D46` 补齐了新层的用户文档**（`docs/` 四篇：`getting-started` / `configuration` /
+  `cli` / `deployment`，外加 `tests/e2e/test_user_docs.py` 的三条防漂移守卫），
+  同 PR 修掉 `deploy/` 的三处陈旧项；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`，
@@ -230,6 +233,9 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   **默认值常量写进 `defaults.py`**（`D28` 从 `schema.py` 拆出，它撞上了 500 行上限）：
   那里只有镜像自 `kernel.turn` / `kernel.routing` / `kernel.plugins` 的字面量，每一组都有
   一条逐项对照测试；`schema.py` 从它 import 再原样再导出，因此既有引用一个都没变。
+  **`docs/configuration.md` 的字段表是第六处**（`D46`）：它由
+  `tests/e2e/test_user_docs.py` 与 `SECTION_SPECS` 逐项比对（名字 + 默认值，不比对说明
+  文字——那会让每次改文案都失败一次），加字段漏改它会红。
 - **`kernel/config/` 全包不写任何文件**（`EDG-501`）：`config.json` 只以 `"rb"` 打开且只在
   `sources.read_config_file` 一处。`D24` 的 `scaffold.py` / `json_schema.py` 也不例外——
   它们只**渲染**，落盘在 `runtime/first_run.py`（`O_CREAT|O_EXCL`，没有 `--force`，

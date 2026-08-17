@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-17（`D45` 收口，**M5 交齐 + SDK 1.1**）
-- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D45` 均已完成）。
+- 更新时间：2026-08-17（`D46` 收口，**用户文档补齐**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D46` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -25,6 +25,11 @@
   **M5 唯一一件「交了但没通电」的至此通电**；`D45` 给契约加了 **opaque 块槽位**
   （`contracts.OpaqueBlock`），`anthropic` 的 thinking 块因此可以多轮回放，
   **SDK 到 `1.1.0`**（纯新增）。
+  **`D46` 补齐了新层的用户文档**：`docs/getting-started.md`（装包 → `nm init` → 凭据 →
+  第一次对话 → 装插件）、`docs/configuration.md`（实例布局 + 四层优先级 + `${VAR}` 语义 +
+  **九个小节的逐字段表**）、`docs/cli.md`（八个子命令的参数、退出码与「不做什么」）、
+  `docs/deployment.md`（Docker / compose / systemd + 「权限模型没有监听端口这一种」）。
+  三条防漂移守卫落在 `tests/e2e/test_user_docs.py`，同 PR 修掉 `deploy/` 的三处陈旧项。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -2357,6 +2362,11 @@
   升成契约上的决定），同 PR 拆出 `kernel/config/sections.py` 与 `runtime/selection.py`。
   `D45` 已完成，`contracts.OpaqueBlock` + `ChunkKind.OPAQUE` + 两个 `provider_blocks` 字段
   （`anthropic` 的 thinking 块可以多轮回放，**SDK 1.1.0**）。
+  `D46` 已完成，用户文档四篇 + `tests/e2e/test_user_docs.py`（配置字段表 == `SECTION_SPECS`、
+  CLI 子命令 == `main.py` 的派发分支、插件安装清单 == 磁盘上的发行包，每条都带自证用例），
+  `docs/README.md` 里那句「新层的用户文档尚未写」至此作废；同 PR 修掉 `deploy/` 的三处
+  陈旧项（compose 的构建参数名写成 `NANOBOT_CHANNELS` 而 Dockerfile 要 `NUCLEAMIND_PLUGINS`、
+  默认值 `whatsapp` 这个插件不存在、`EXPOSE 18790` 而默认端口是 8760）。
   `runtime/` 至此有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`。
@@ -2726,7 +2736,8 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   夹具会以 `PermissionError` 报错，而那与被测代码无关。
 - **`docs/` 只剩三篇能力文档**（`session-storage` / `permissions` / `plugin-development`）。
   21 篇描述被继承实现的文档随 `D35` 删除。新层的用户文档（安装、配置字段、CLI 参考、
-  部署）**尚未写**——**一条能力以插件形态落地时，在同一个 PR 里写它的文档**。
+  部署）**由 `D46` 补齐**——`docs/{getting-started,configuration,cli,deployment}.md`。
+  **一条能力以插件形态落地时，在同一个 PR 里写它的文档**。
   `D36`–`D38` 的三个插件各自带一份 README（配置表 + 已知边界 + 不做的事），
   `plugins/README.md` 的清单同步更新；`plugin-development.md` 因 `D38-A` 多了 §7.5
   （它的代码块由 `tests/e2e/test_plugin_docs.py` 直接执行）。

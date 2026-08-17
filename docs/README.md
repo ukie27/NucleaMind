@@ -5,14 +5,18 @@ nanobot 实现的文档一并删除——它们教人跑的是 `nanobot onboard`
 已经不存在的命令，留着比没有更糟。需要确认旧行为时读 `references/nanobot/`
 （见 [`references/README.md`](./references/README.md)）。
 
-新层的**用户**文档（安装、配置字段、CLI 参考、部署）尚未写。当前的权威来源是代码本身与
-`nm` 的内置帮助：`nm init` 生成一份带 `$schema` 的 `config.json`，`nm --help` 列出全部
-子命令，`nm capabilities` 说明哪些能力真的生效了。
+新层的**用户**文档（安装、配置字段、CLI 参考、部署）在 `D46` 补齐，见下表。它们与代码
+之间有守卫：`tests/e2e/test_user_docs.py` 把配置字段表与 `SECTION_SPECS`、CLI 子命令清单
+与 `runtime/cli/main.py` 的派发分支、插件安装清单与磁盘上的发行包各比对一次。
 
 ## 现有文档
 
 | 目标 | 文档 |
 |---|---|
+| 第一次把它跑起来 | [`getting-started.md`](./getting-started.md) |
+| 查配置字段与优先级 | [`configuration.md`](./configuration.md) |
+| 查 `nm` 的参数与退出码 | [`cli.md`](./cli.md) |
+| 部署成常驻服务 | [`deployment.md`](./deployment.md) |
 | 了解项目方向 | [`project/开发背景.md`](./project/开发背景.md) |
 | 遵循仓库开发规则 | [`../AGENTS.md`](../AGENTS.md) |
 | 接手当前开发工作 | [`project/README.md`](./project/README.md) |
@@ -29,6 +33,10 @@ nanobot 实现的文档一并删除——它们教人跑的是 `nanobot onboard`
   保留的诚实声明——**应用级权限不是进程隔离**。
 - [`plugin-development.md`](./plugin-development.md) 的代码块由
   `tests/e2e/test_plugin_docs.py` **直接执行**，因此不会漂移。
+
+四篇用户文档里，`configuration.md` 的字段表与 `cli.md` 的子命令清单同样由测试钉着
+（`tests/e2e/test_user_docs.py`）。**加一个配置字段要连它一起改**——这是
+「加一个配置小节要改五处」那份清单之外的第六处。
 
 官方插件各自带 README，说明自己的配置项与已知边界：
 [`plugins/README.md`](../plugins/README.md)。

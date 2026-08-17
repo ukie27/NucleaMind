@@ -46,8 +46,8 @@ ENV HOME=/home/nanobot
 # Ensure crash output reaches container logs.
 ENV PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1
 
-# The OpenAI-compatible HTTP plugin listens here when enabled.
-EXPOSE 18790
+# The OpenAI-compatible HTTP plugin listens here when enabled (its DEFAULT_PORT).
+EXPOSE 8760
 
 ENTRYPOINT ["entrypoint.sh"]
 # `D31` 之后默认跑无头模式：装了 Channel 插件就服务它们，没装就以退出码 1 说明。

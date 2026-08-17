@@ -3,7 +3,9 @@ x-common-config: &common-config
     context: ..
     dockerfile: deploy/Dockerfile
     args:
-      NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-whatsapp}
+      # 逗号分隔的官方插件目录后缀，对应 plugins/nucleamind-plugin-<名字>/。
+      # 装进镜像还不等于启用——启用要写进 config.json 的 plugins.enabled。
+      NUCLEAMIND_PLUGINS: ${NUCLEAMIND_PLUGINS:-openai-api}
   volumes:
     - ~/.nucleamind:/home/nanobot/.nucleamind
   cap_drop:
