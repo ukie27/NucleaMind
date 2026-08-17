@@ -35,6 +35,7 @@ from nucleamind.contracts import (
     ToolInvocation,
     ToolResult,
     ToolSpec,
+    TrustLevel,
 )
 
 from .channel import CronScheduler
@@ -195,6 +196,11 @@ class _Tool:
     #: 成功时的副作用档位。
     side_effect: SideEffect = SideEffect.NONE
 
+    #: 成功时正文的可信度（`D42`）。默认是自己的话——三条工具交出的都是本插件渲染的
+    #: 回执。**`cron.list` 例外**：它把任务正文原样印出来，而那段文字是谁创建任务谁写的
+    #: （群聊里任何人都能敲 `/cron`），因此它声明 `UNTRUSTED`。
+    trust: TrustLevel = TrustLevel.SYSTEM
+
     async def execute(self, invocation: ToolInvocation, cancel: CancelSignal) -> ToolResult:
         """**约定不抛**。**取消语义**：入口检查一次；一次调用只有一次读/写盘往返。"""
         started = time.perf_counter()
@@ -211,6 +217,8 @@ class _Tool:
                 side_effect=SideEffect.NONE,
                 error=error,
                 duration_ms=_elapsed_ms(started),
+                # 失败正文是本层自己写的文案，不含外部内容（`D42`）。
+                trust=TrustLevel.SYSTEM,
             )
         text, cut = _truncate(content, _MAX_RESULT_CHARS)
         return ToolResult(
@@ -221,6 +229,7 @@ class _Tool:
             side_effect=self.side_effect,
             data=data,
             duration_ms=_elapsed_ms(started),
+            trust=self.trust,
         )
 
     async def run(
@@ -324,6 +333,10 @@ class CronListTool(_Tool):
     """列出本会话的定时任务。"""
 
     __slots__ = ()
+
+    #: **唯一一条不可信的**：列表把每个任务的正文原样印出来，而那段文字是创建任务的人
+    #: 写的——群聊里任何人都能敲 `/cron`，模型自己也能调 `cron.schedule`。
+    trust = TrustLevel.UNTRUSTED
 
     async def run(
         self, invocation: ToolInvocation, cancel: CancelSignal

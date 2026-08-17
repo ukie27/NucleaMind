@@ -21,11 +21,13 @@
 
 - **`ToolResult.artifacts` 今天在全项目零消费者，本插件是它的第一个生产者。**
   生成的图只能由用户到目录里去看：`OutboundMessage` 的附件路径没有生产者，
-  `sdk.api.FileAccess` 也没有 `read_bytes`（`D33` 已把它记为契约变更候选），
-  因此没有任何 Channel 能把这些字节发出去。
-- **不用 `ctx.fs`，如实声明 `fs:write` 并直接用 `pathlib`。** `FileAccess` 只有
-  `read_text` / `write_text` / `list_dir`，表达不了二进制写入。`builtins/session_jsonl/`
-  的同一条先例：门面能力不足时，诚实声明比绕道更符合权限模型的意义。
+  因此没有任何 Channel 能把这些字节发出去。（`D42` 给 `FileAccess` 补了
+  `read_bytes` / `write_bytes`，**这条边界没有因此变化**——缺的从来不是读字节的方法，
+  是出站侧的附件通路。）
+- **不用 `ctx.fs`，如实声明 `fs:write` 并直接用 `pathlib`。** `ctx.fs` 的根是实例的
+  workspace，而图落在插件自己的 state_dir——这不是缺个方法，是两个目录树，详见
+  `storage.py`。`builtins/session_jsonl/` 的同一条先例：门面够不着的地方，
+  诚实声明比绕道更符合权限模型的意义。
 - **不用 `ctx.net`，如实声明 `net` 并直接用 httpx。** 图像端点由运维配置（要能指到本地
   ollama 与自建网关），而 SSRF 守卫按设计拒绝私有地址。**模型在这里决定不了任何地址**，
   它只给 prompt——这与 `web.fetch` 恰好相反，那一条必须走守卫。
@@ -149,7 +151,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="image",
     version="0.1.0",
-    sdk_range=">=0.1.0,<0.2.0",
+    sdk_range=">=1.0.0,<2.0.0",
     setup="nucleamind_plugin_image:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name=GENERATE_TOOL),),
     permissions=(
@@ -159,7 +161,7 @@ MANIFEST: Final = PluginManifest(
         ),
         PermissionDecl(
             kind=PermissionKind.FS_WRITE,
-            reason="把生成的图像写进插件自己的状态目录（FileAccess 没有 write_bytes）。",
+            reason="把生成的图像写进插件自己的状态目录（在 ctx.fs 的 workspace 根之外）。",
         ),
         PermissionDecl(
             kind=PermissionKind.SECRET,

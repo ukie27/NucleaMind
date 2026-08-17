@@ -206,6 +206,8 @@ class _Tool:
                 side_effect=SideEffect.NONE,
                 error=error,
                 duration_ms=_elapsed_ms(started),
+                # 失败正文是本层自己写的文案，不含外部内容（`D42`）。
+                trust=TrustLevel.SYSTEM,
             )
         text, cut = _truncate(content, self._limit)
         return ToolResult(
@@ -216,10 +218,17 @@ class _Tool:
             side_effect=self.side_effect,
             data=data,
             duration_ms=_elapsed_ms(started),
+            trust=self.trust,
         )
 
     #: 成功时的副作用档位。只读工具是 `NONE`，写入与删除是 `OCCURRED`。
     side_effect: SideEffect = SideEffect.NONE
+
+    #: 成功时正文的可信度（`D42`）。默认不可信——`memory.recall` 交出的是**存进来的
+    #: 记录本身**，而写入侧统一按 `UNTRUSTED` 收（`record.from_fragment` 忽略调用方
+    #: 声明的 trust），召回时改口说它可信就把那条判定作废了。两条写类工具的回执是自己
+    #: 的话，各自声明 `SYSTEM`。
+    trust: TrustLevel = TrustLevel.UNTRUSTED
 
     async def run(
         self, invocation: ToolInvocation, cancel: CancelSignal
@@ -233,6 +242,8 @@ class MemoryRememberTool(_Tool):
     __slots__ = ()
 
     side_effect = SideEffect.OCCURRED
+    #: 回执是本工具自己的话（「已记住，id=…」），不是被记住的那段内容。
+    trust = TrustLevel.SYSTEM
 
     async def run(
         self, invocation: ToolInvocation, cancel: CancelSignal
@@ -312,6 +323,8 @@ class MemoryForgetTool(_Tool):
     __slots__ = ()
 
     side_effect = SideEffect.OCCURRED
+    #: 回执是本工具自己的话。删除不回显被删内容，因此不含外部文本。
+    trust = TrustLevel.SYSTEM
 
     async def run(
         self, invocation: ToolInvocation, cancel: CancelSignal

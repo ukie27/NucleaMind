@@ -97,6 +97,10 @@ class HttpResponse:
     status: int
     headers: Mapping[str, str]
     body: bytes
+    #: `body` 是否因为 `request(max_bytes=...)` 被截断（`D42`）。
+    #: **必须有这一位**：没有它，「正好等于上界」与「被截断了」长得一模一样，
+    #: 而调用方对这两件事的处理完全不同（后者要告诉模型内容不完整）。
+    truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,24 @@ class FileAccess(Protocol):
         """
         ...
 
+    async def read_bytes(self, path: str) -> bytes:
+        """读取二进制文件。
+
+        **异常约定**与 `read_text()` 逐条相同。差别只有一个：`read_text()` 用
+        `errors="replace"` 解码，因此它对一个 PNG 也「成功」，只是交回一串替换字符——
+        要原字节就必须走这条。
+
+        `D42` 补的。在那之前 `FileAccess` 只有文本面，于是**要发二进制的插件只能绕过门面**：
+        `image` 如实声明 `fs:write` 之后直接用 `pathlib`（写在它的 README 里），
+        `discord` 干脆发不出 workspace 里的附件。一个「绕过它才能干活」的权限门面，
+        挡住的只是守规矩的人。
+        """
+        ...
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        """原子写入二进制文件，需要 `fs:write`。**异常约定**同 `write_text()`。"""
+        ...
+
     async def list_dir(self, path: str) -> tuple[str, ...]:
         """列出目录下的条目名（不递归）。
 
@@ -159,6 +181,7 @@ class HttpAccess(Protocol):
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
         timeout_ms: int = 30_000,
+        max_bytes: int | None = None,
     ) -> HttpResponse:
         """发起一次 HTTP 请求。
 
@@ -166,10 +189,23 @@ class HttpAccess(Protocol):
         拒绝。这是插件唯一的出网路径：直接用 httpx 当然也能连出去，但那样就绕过了守卫，
         评审时能一眼看见（这正是应用级权限的意义）。
 
+        `max_bytes` 给响应体一个**下载上界**（`D42` 补的）：到量即停止读取并断开，
+        `HttpResponse.truncated` 标着。不给就整份读完。
+
+        在此之前门面只有「读完再说」一种行为，于是 `web.fetch` 对着一个几百 MB 的 URL
+        会先把它整个装进内存、再截断到几 KB——它的 `max_bytes` 配置项名字对了、
+        施加的位置晚了一步。**上界必须落在读取上，不是落在读完之后。**
+
+        **刻意没有做完整的流式接口。** 那需要把响应对象的生命周期交给调用方（异步上下文
+        管理器），而守卫的重定向重校验正发生在响应头与响应体之间；今天没有任何一个消费者
+        需要它——两个模型 provider 消费 SSE 但走的是 raw httpx（端点由运维配置、私有网段
+        常见，守卫会按设计拒掉），`openai-api` 产出 SSE 用的是 aiohttp。为一个没有消费者
+        的用例设计一个要长期兼容的接口，只能设计错。
+
         **异常约定**：未授权抛 `PERMISSION_DENIED`；目标被守卫拒绝抛
         `PERMISSION_DENIED` 并在 `detail` 说明原因；网络失败抛 `EXTERNAL_SERVICE` 类错误
         并如实标注 `retryable`；超时抛 `TIMEOUT` 类错误。**非 2xx 不是异常**——它是结果，
-        由调用方按业务判断。
+        由调用方按业务判断。`max_bytes` 非正抛 `INPUT_MALFORMED`。
         """
         ...
 

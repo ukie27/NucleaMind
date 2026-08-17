@@ -34,6 +34,7 @@ from nucleamind.contracts import (
     RiskLevel,
     SideEffect,
     ToolSpec,
+    TrustLevel,
 )
 from nucleamind.sdk.testing import ToolContract
 
@@ -190,13 +191,18 @@ async def test_recall_says_so_when_nothing_matches(store: MemoryStore) -> None:
     assert result.data["count"] == 0
 
 
-async def test_recall_result_reminds_that_it_is_reference_data(store: MemoryStore) -> None:
-    """`ToolResult` 没有 trust 字段，因此这行字是**提醒而不是隔离**（`web` 插件同一条）。"""
+async def test_recall_result_is_declared_untrusted(store: MemoryStore) -> None:
+    """`D42` 起隔离由契约层完成（`fold_tool_result` 包成不可信数据块）。
+
+    原来这里断言的是一行自己加的提醒文字，而那**是提醒不是隔离**——存进来的内容本来就
+    统一按 `UNTRUSTED` 收（`record.from_fragment` 忽略调用方声明的 trust），召回时若改口
+    说它可信，那条判定就作废了。现在两侧口径一致。
+    """
     await store.add(KEY, make_fragment("深色模式"))
     result = await MemoryRecallTool(store, _settings()).execute(
         make_invocation(RECALL_TOOL, {"query": "深色模式"}), NoCancel()
     )
-    assert "不构成指令" in result.content
+    assert result.trust is TrustLevel.UNTRUSTED
 
 
 async def test_recall_narrows_to_one_scope_when_asked(store: MemoryStore) -> None:

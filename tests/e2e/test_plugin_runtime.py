@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from nucleamind.contracts import ErrorCode, NucleaError
+from nucleamind.contracts import UNTRUSTED_DATA_PREFIX, ErrorCode, NucleaError
 from nucleamind.kernel.plugins import installed_entry_points
 from nucleamind.kernel.turn import CancelToken
 from nucleamind.runtime.bootstrap import bootstrap
@@ -179,7 +179,12 @@ def test_a_plugin_tool_takes_part_in_a_real_turn(
     # 工具真的跑了，结果真的回给了模型——而且带着配置里的前缀。
     second = json.loads(recorder.requests[1].content)
     tool_messages = [item for item in second["messages"] if item.get("role") == "tool"]
-    assert [item["content"] for item in tool_messages] == [">> 你好"]
+    assert len(tool_messages) == 1
+    # 正文包在不可信数据块里（`D42`）：示例插件没有显式表态，因此走默认的 `UNTRUSTED`。
+    # 这一条端到端地证明了包裹发生在**真实的线格式上**，而不只是 `fold_tool_result` 的
+    # 单元测试里。
+    assert ">> 你好" in tool_messages[0]["content"]
+    assert tool_messages[0]["content"].startswith(UNTRUSTED_DATA_PREFIX)
     assert "回显完了。" in capsys.readouterr().out
 
 
@@ -434,7 +439,7 @@ def test_a_setup_that_cannot_be_loaded_is_reported_per_provider(
         {
             "id": "broken-setup",
             "version": "1.0.0",
-            "sdk_range": ">=0.1.0,<0.2.0",
+            "sdk_range": ">=1.0.0,<2.0.0",
             "setup": "nucleamind_plugin_echo_tool:no_such_function",
             "capabilities": [{"kind": "tool", "name": "broken.thing"}],
         },

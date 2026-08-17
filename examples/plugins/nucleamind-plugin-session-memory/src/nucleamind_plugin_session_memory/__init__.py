@@ -46,7 +46,7 @@ OVERRIDE_TARGET: Final = "builtin:jsonl"
 MANIFEST: Final = PluginManifest(
     id="session-memory",
     version="0.1.0",
-    sdk_range=">=0.1.0,<0.2.0",
+    sdk_range=">=1.0.0,<2.0.0",
     setup="nucleamind_plugin_session_memory:setup",
     capabilities=(
         CapabilityDecl(

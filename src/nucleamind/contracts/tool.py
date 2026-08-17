@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
+from .context import TrustLevel, wrap_untrusted
 from .errors import ErrorCode, NucleaError
 from .ids import Correlation, validate_identifier
 from .metadata import EMPTY_METADATA, normalize_metadata
@@ -47,6 +48,11 @@ MAX_TOOL_RESULT_LENGTH: Final = 64 * 1024
 
 #: 工具名形状：小写、点分命名空间，如 `fs.read`、`shell.exec`（技术方案 §8.2）。
 _TOOL_NAME_PATTERN: Final = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
+
+
+#: 工具结果允许的两档可信度。`OPERATOR` / `USER` 在这里没有意义——工具结果既不是运维
+#: 写下的配置，也不是用户说的话；放行它们只会让 `trust` 这个字段有四种读法而只有两种后果。
+_TOOL_RESULT_TRUST: Final = frozenset({TrustLevel.SYSTEM, TrustLevel.UNTRUSTED})
 
 
 class PermissionKind(StrEnum):
@@ -225,6 +231,13 @@ class ToolResult:
     `artifacts` 指向不适合进上下文的大产物（`TOL-003`）。
     `duration_ms` 与 `error.detail` 构成「安全的诊断信息」——堆栈不进这里，
     `NucleaError` 在构造时已完成脱敏。
+
+    **`trust` 决定 `content` 进模型时要不要被包成不可信数据块**（`D42`）。
+    在它之前，工具结果一律以裸文本进入 tool 消息，于是 `web.fetch` 抓回来的网页与
+    `memory.recall` 召回的记录只能靠工具自己在正文里加一行**提醒性**横幅——
+    那挡不住「忽略以上指令」，两个官方插件的 README 里都如实写着「是提醒不是隔离」。
+    现在隔离由契约层完成（与 `ContextFragment` 同一个 `wrap_untrusted`），
+    工具因此没有「自己拼一段文本混进去」的绕行路径。
     """
 
     call_id: str
@@ -236,9 +249,19 @@ class ToolResult:
     artifacts: tuple[ArtifactRef, ...] = ()
     error: NucleaError | None = None
     duration_ms: int = 0
+    #: **默认不可信**，因为绝大多数工具的产出里有外部内容（文件、命令输出、网页、
+    #: 远端服务的响应）。默认值必须是安全的那一个：一个忘了表态的工具应当被包起来，
+    #: 而不是默认拿到裸文本待遇。工具确信正文是自己的话时显式写 `SYSTEM`。
+    trust: TrustLevel = TrustLevel.UNTRUSTED
 
     def __post_init__(self) -> None:
         validate_identifier("tool_result.call_id", self.call_id)
+        if self.trust not in _TOOL_RESULT_TRUST:
+            raise NucleaError(
+                ErrorCode.INPUT_MALFORMED,
+                "工具结果的 trust 只能是 SYSTEM 或 UNTRUSTED。",
+                detail={"call_id": self.call_id, "trust": self.trust.value},
+            )
         if self.ok != (self.error is None):
             raise NucleaError(
                 ErrorCode.KERNEL_INVARIANT_VIOLATED,
@@ -265,3 +288,20 @@ class ToolResult:
             object.__setattr__(
                 self, "data", normalize_metadata(self.data, field="tool_result.data")
             )
+
+    def as_model_text(self, *, source: str) -> str:
+        """交给模型的最终文本。`UNTRUSTED` 的结果包成带来源标注的数据块。
+
+        与 `ContextFragment.as_model_text()` 共用 `wrap_untrusted`，因此两条通路上的
+        「不可信内容」在模型眼里长得一模一样——`EDG-306` 要的正是这个。
+
+        **`source` 由调用方给，不是工具自己写的字段。** 折叠这条结果的是 Kernel，
+        它知道这次调用的工具名（`ToolCall.name`）；让工具自报来源，等于把数据块上那句
+        「这段东西是谁给的」也交给不可信的一方。
+
+        **包裹在截断之后发生**，因此最终文本会比 `tool_result_max_bytes` 长出包装那几行。
+        反过来（先包再截）会把闭合标记截掉，而一个没有闭合的数据块正是它要防的东西。
+        """
+        if self.trust is not TrustLevel.UNTRUSTED:
+            return self.content
+        return wrap_untrusted(self.content, source=source)

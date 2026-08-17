@@ -173,7 +173,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="anthropic",
     version="0.1.0",
-    sdk_range=">=0.1.0,<0.2.0",
+    sdk_range=">=1.0.0,<2.0.0",
     setup="nucleamind_plugin_anthropic:setup",
     # **不写 `overrides`**：本插件与内建 `openai` 并存而不是取代它，因此 `D30` 的
     # `on_disable` 表态要求不适用（那条只对声明过覆盖的插件生效）。

@@ -118,7 +118,7 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
         frozenset({"locator", "media_type", "description", "size_bytes"}),
     ),
     ToolResult: (
-        "§10.5 Tool Result 输出（七条）",
+        "§10.5 Tool Result 输出（七条）+ D42 的 trust",
         frozenset(
             {
                 "call_id",
@@ -130,6 +130,10 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
                 "artifacts",
                 "error",
                 "duration_ms",
+                # `D42` 加的，**不在 §10.5 那七条里**——需求写的是「输出有哪些部分」，
+                # 而这一条说的是「其中的正文进模型时按什么身份出现」。它对应的是
+                # `EDG-306`（不可信内容必须被包裹），原来只覆盖 `ContextFragment`。
+                "trust",
             }
         ),
     ),

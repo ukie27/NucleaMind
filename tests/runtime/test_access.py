@@ -170,6 +170,61 @@ async def test_writing_leaves_no_temporary_file_behind(tmp_path: Path) -> None:
     assert [p.name for p in (tmp_path / "ws").iterdir()] == ["a.txt"]
 
 
+# ------------------------------------------------- 二进制读写（`D42`）
+
+
+async def test_bytes_round_trip(tmp_path: Path) -> None:
+    access = _fs(tmp_path, "fs:read", "fs:write")
+    payload = bytes(range(256))
+    await access.write_bytes("blob.bin", payload)
+    assert await access.read_bytes("blob.bin") == payload
+
+
+async def test_read_bytes_is_the_only_way_to_get_the_original_bytes(tmp_path: Path) -> None:
+    """`read_text` 用 `errors="replace"`，因此它对一个 PNG 也「成功」——只是内容变了。
+
+    这条就是 `read_bytes` 存在的理由：在它之前，一个想读二进制的插件唯一的选择是
+    绕过门面直接 `open()`。
+    """
+    access = _fs(tmp_path, "fs:read", "fs:write")
+    payload = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xFE])
+    await access.write_bytes("img.png", payload)
+    assert await access.read_bytes("img.png") == payload
+    assert (await access.read_text("img.png")).encode("utf-8") != payload
+
+
+async def test_bytes_obey_the_same_two_grants(tmp_path: Path) -> None:
+    """读写分离对二进制面同样成立（`NFR-302`），不是只挡文本那两个方法。"""
+    reader = _fs(tmp_path, "fs:read")
+    (tmp_path / "ws" / "a.bin").write_bytes(b"x")
+    assert await reader.read_bytes("a.bin") == b"x"
+    with pytest.raises(NucleaError) as caught:
+        await reader.write_bytes("a.bin", b"y")
+    assert caught.value.code is ErrorCode.PERMISSION_DENIED
+
+    writer = _fs(tmp_path, "fs:write")
+    await writer.write_bytes("b.bin", b"y")
+    with pytest.raises(NucleaError):
+        await writer.read_bytes("b.bin")
+
+
+async def test_bytes_writes_are_guarded_by_the_same_path_rules(tmp_path: Path) -> None:
+    access = _fs(tmp_path, "fs:write")
+    with pytest.raises(NucleaError) as caught:
+        await access.write_bytes("../escape.bin", b"x")
+    assert caught.value.code is ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE
+
+
+async def test_a_failed_bytes_write_leaves_no_temporary_file(tmp_path: Path) -> None:
+    """写失败不得留下半份文件——目标是个目录，替换必然失败。"""
+    access = _fs(tmp_path, "fs:write")
+    (tmp_path / "ws" / "taken").mkdir()
+    with pytest.raises(NucleaError) as caught:
+        await access.write_bytes("taken", b"x")
+    assert caught.value.code is ErrorCode.PERSISTENCE_WRITE_FAILED
+    assert [p.name for p in (tmp_path / "ws").iterdir()] == ["taken"]
+
+
 # ---------------------------------------------------------------- 子进程
 
 
@@ -301,6 +356,57 @@ async def test_a_non_2xx_is_a_result_not_an_exception() -> None:
         "GET", "https://example.com/"
     )
     assert response.status == 503
+
+
+# --------------------------------------------------- 下载上界（`D42`）
+
+
+async def test_max_bytes_truncates_and_says_so() -> None:
+    body = b"x" * 5000
+    response = await _net(handler=lambda request: httpx.Response(200, content=body)).request(
+        "GET", "https://example.com/", max_bytes=100
+    )
+    assert (len(response.body), response.truncated) == (100, True)
+
+
+async def test_a_body_exactly_at_the_cap_is_not_reported_as_truncated() -> None:
+    """「正好等于上界」是完整内容。谎报会让调用方给模型加一句不实的省略提示。"""
+    body = b"x" * 100
+    response = await _net(handler=lambda request: httpx.Response(200, content=body)).request(
+        "GET", "https://example.com/", max_bytes=100
+    )
+    assert (response.body, response.truncated) == (body, False)
+
+
+async def test_without_a_cap_nothing_is_truncated() -> None:
+    body = b"x" * 5000
+    response = await _net(handler=lambda request: httpx.Response(200, content=body)).request(
+        "GET", "https://example.com/"
+    )
+    assert (len(response.body), response.truncated) == (5000, False)
+
+
+async def test_a_non_positive_cap_is_rejected() -> None:
+    """`0` 不是「不限」——那是 `None`。静默把它当成不限就是无声地取消一道防线。"""
+    with pytest.raises(NucleaError) as caught:
+        await _net(handler=lambda request: httpx.Response(200)).request(
+            "GET", "https://example.com/", max_bytes=0
+        )
+    assert caught.value.code is ErrorCode.INPUT_MALFORMED
+
+
+async def test_the_cap_survives_a_redirect() -> None:
+    """上界作用在**最终**那次响应上，而重定向链上每一跳都仍然过守卫。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": "https://example.com/b"})
+        return httpx.Response(200, content=b"y" * 900)
+
+    response = await _net(handler=handler).request(
+        "GET", "https://example.com/a", max_bytes=50
+    )
+    assert (len(response.body), response.truncated) == (50, True)
 
 
 @pytest.mark.parametrize(

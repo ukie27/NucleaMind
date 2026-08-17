@@ -41,6 +41,7 @@ from nucleamind.contracts import (
     ToolInvocation,
     ToolResult,
     ToolSpec,
+    TrustLevel,
 )
 from nucleamind.contracts.tool import MAX_TOOL_RESULT_LENGTH
 
@@ -325,7 +326,12 @@ class ShellExecutor:
     def _failure(
         self, call_id: str, error: NucleaError, *, limit: int, started: float
     ) -> ToolResult:
-        """执行之前的失败：进程没起来，`side_effect=NONE` 是实话。"""
+        """执行之前的失败：进程没起来，`side_effect=NONE` 是实话。
+
+        **`trust=SYSTEM`**：正文是本层自己写的错误文案，一个字节的子进程输出都没有
+        （进程压根没起来）。另外三条结果保持默认的 `UNTRUSTED`——它们带的是 stdout /
+        stderr，那正是「工具结果里的外部内容」最典型的样子（`D42`）。
+        """
         content, truncated = _truncate(error.user_message, min(limit, MAX_TOOL_RESULT_LENGTH))
         return ToolResult(
             call_id=call_id,
@@ -335,4 +341,5 @@ class ShellExecutor:
             side_effect=SideEffect.NONE,
             error=error,
             duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            trust=TrustLevel.SYSTEM,
         )

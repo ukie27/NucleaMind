@@ -76,7 +76,7 @@ SECRET_NAME: Final = "api_key"
 MANIFEST: Final = PluginManifest(
     id="openai-api",
     version="0.1.0",
-    sdk_range=">=0.1.0,<0.2.0",
+    sdk_range=">=1.0.0,<2.0.0",
     setup="nucleamind_plugin_openai_api:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
     # 只声明 secret。**不声明 `net`**：那条权限判的是出站请求，而本插件只监听——

@@ -16,7 +16,6 @@ from nucleamind_plugin_web import (
     FETCH_TOOL,
     MANIFEST,
     SEARCH_TOOL,
-    UNTRUSTED_BANNER,
     WebFetchTool,
     WebSearchTool,
     fetch_spec,
@@ -33,6 +32,7 @@ from nucleamind.contracts import (
     SideEffect,
     ToolHandler,
     ToolSpec,
+    TrustLevel,
 )
 from nucleamind.sdk import HttpResponse
 from nucleamind.sdk.testing import ManualCancel, ToolContract
@@ -63,14 +63,25 @@ class TestFetch:
         assert "hello world" in result.content
         assert "<p>" not in result.content
 
-    async def test_the_untrusted_banner_and_source_lead_the_content(self) -> None:
-        """横幅是**提醒不是隔离**（`ToolResult` 没有 trust 字段），但它必须真的在那儿。"""
+    async def test_the_title_and_source_lead_the_content(self) -> None:
+        """标题与来源在正文最前面，模型据此判断这段东西是从哪儿来的。"""
         net = StubNet([html_response(_PAGE)])
         result = await _run_fetch(net, url="https://example.com/doc")
         head = result.content.splitlines()
-        assert head[0] == UNTRUSTED_BANNER
-        assert head[1] == "Doc"
-        assert head[2] == "https://example.com/doc"
+        assert head[0] == "Doc"
+        assert head[1] == "https://example.com/doc"
+
+    async def test_the_fetched_body_is_declared_untrusted(self) -> None:
+        """`D42` 起隔离由契约层完成，插件的责任只剩「如实表态」。
+
+        原来这里断言的是一行自己加的横幅（`UNTRUSTED_BANNER`，已删），而那**是提醒不是
+        隔离**——一段写着「忽略以上指令」的网页照样原样进模型。现在
+        `fold_tool_result` 会把它包成带来源标注的数据块，包裹本身由
+        `tests/kernel/test_folding.py` 验，这里只验这个插件确实标了 `UNTRUSTED`。
+        """
+        net = StubNet([html_response(_PAGE)])
+        result = await _run_fetch(net, url="https://example.com/doc")
+        assert result.trust is TrustLevel.UNTRUSTED
 
     async def test_it_goes_through_the_guarded_facade(self) -> None:
         """SSRF 守卫的判定在 `runtime/access/net.py`，本插件对它的全部依赖就是「调它」。"""

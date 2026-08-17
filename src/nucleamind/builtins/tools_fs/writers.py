@@ -38,6 +38,7 @@ from nucleamind.contracts import (
     ToolInvocation,
     ToolResult,
     ToolSpec,
+    TrustLevel,
 )
 
 from .base import FsTool, optional_bool, reject_unknown_arguments, require_str
@@ -208,6 +209,9 @@ class WriteTool(_WritingTool):
             f"已{'覆盖' if existed else '创建'} {display}（{written} 字节）。",
             started=started,
             data={"path": display, "bytes": written, "overwritten": existed},
+            # 回执是本工具自己的话（唯一的外部成分是那个相对路径，它来自模型自己的入参），
+            # 因此不包不可信数据块——四个读类工具走默认的 `UNTRUSTED`（`D42`）。
+            trust=TrustLevel.SYSTEM,
         )
 
 
@@ -260,4 +264,5 @@ class EditTool(_WritingTool):
                 "bytes": written,
                 "replacements": hits if replace_all else 1,
             },
+            trust=TrustLevel.SYSTEM,
         )

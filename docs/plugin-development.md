@@ -41,7 +41,7 @@ MANIFEST = PluginManifest(
     version="0.1.0",
     # 你支持的 SDK 区间。宿主落在区间外时拒绝加载并报 PLUGIN_SDK_INCOMPATIBLE，
     # 不带病运行。
-    sdk_range=">=0.1.0,<0.2.0",
+    sdk_range=">=1.0.0,<2.0.0",
     setup="nucleamind_plugin_my_plugin:setup",
     # 有约束力的全集：setup 里注册的每一项都必须在这里声明，反之亦然。
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="my.tool"),),

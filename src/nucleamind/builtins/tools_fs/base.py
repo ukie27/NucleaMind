@@ -29,6 +29,7 @@ from nucleamind.contracts import (
     SideEffect,
     ToolInvocation,
     ToolResult,
+    TrustLevel,
 )
 
 from .content import truncate
@@ -131,11 +132,16 @@ def success(
     data: Mapping[str, JsonValue] | None = None,
     duration_ms: int = 0,
     truncated: bool = False,
+    trust: TrustLevel = TrustLevel.UNTRUSTED,
 ) -> ToolResult:
     """构造一个成功结果，顺带把 `content` 收进上限（`TOL-003`）。
 
     `truncated` 是**或**上去的：调用方可能已经在更早的地方截过一次（`fs.read` 的
     `max_read_bytes`、`fs.grep` 的匹配数封顶），那一次也算截断。
+
+    **`trust` 由调用方给，默认不可信**（`D42`）。四个读类工具交出的是磁盘上的内容——
+    文件正文、匹配行、目录里的名字——那些一个字都不是本工具写的。只有 `fs.write` 的
+    回执是自己的话，它显式传 `SYSTEM`。
     """
     text, cut = truncate(content, limit)
     return ToolResult(
@@ -146,6 +152,7 @@ def success(
         side_effect=side_effect,
         data=data,
         duration_ms=duration_ms,
+        trust=trust,
     )
 
 
@@ -157,7 +164,12 @@ def failure(
     side_effect: SideEffect = SideEffect.NONE,
     duration_ms: int = 0,
 ) -> ToolResult:
-    """把一个错误折成结果（`ok=False` 必带 `error`，契约已强制）。"""
+    """把一个错误折成结果（`ok=False` 必带 `error`，契约已强制）。
+
+    **失败一律 `SYSTEM`**：`user_message` 是本层自己写的固定文案，越界错误的 `detail`
+    里也只有插件给的那个相对串（见 `paths.py`）。把它包成不可信数据块，会让「工具没能
+    做成这件事」读起来像一段来路不明的文本，而模型接下来要照它改正参数。
+    """
     text, truncated = truncate(error.user_message, limit)
     return ToolResult(
         call_id=call_id,
@@ -167,6 +179,7 @@ def failure(
         side_effect=side_effect,
         error=error,
         duration_ms=duration_ms,
+        trust=TrustLevel.SYSTEM,
     )
 
 
@@ -238,8 +251,9 @@ class FsTool:
         started: float,
         data: Mapping[str, JsonValue] | None = None,
         truncated: bool = False,
+        trust: TrustLevel = TrustLevel.UNTRUSTED,
     ) -> ToolResult:
-        """子类构造成功结果的统一出口。"""
+        """子类构造成功结果的统一出口。`trust` 默认不可信，见 `success()`。"""
         return success(
             invocation.call.call_id,
             content,
@@ -248,6 +262,7 @@ class FsTool:
             data=data,
             duration_ms=_elapsed_ms(started),
             truncated=truncated,
+            trust=trust,
         )
 
 

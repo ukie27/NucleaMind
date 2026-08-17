@@ -52,9 +52,17 @@ class GuardedFileAccess:
         target = self._guard(self._read, PermissionKind.FS_READ).resolve(path)
         return await asyncio.to_thread(self._read_sync, target, path)
 
+    async def read_bytes(self, path: str) -> bytes:
+        target = self._guard(self._read, PermissionKind.FS_READ).resolve(path)
+        return await asyncio.to_thread(self._read_bytes_sync, target, path)
+
     async def write_text(self, path: str, content: str) -> None:
         target = self._guard(self._write, PermissionKind.FS_WRITE).resolve(path)
-        await asyncio.to_thread(self._write_sync, target, path, content)
+        await asyncio.to_thread(self._write_sync, target, path, content.encode("utf-8"))
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        target = self._guard(self._write, PermissionKind.FS_WRITE).resolve(path)
+        await asyncio.to_thread(self._write_sync, target, path, data)
 
     async def list_dir(self, path: str) -> tuple[str, ...]:
         target = self._guard(self._read, PermissionKind.FS_READ).resolve(path)
@@ -68,12 +76,23 @@ class GuardedFileAccess:
         except OSError as exc:
             raise self._read_failed(shown, exc) from exc
 
-    def _write_sync(self, target: Path, shown: str, content: str) -> None:
+    def _read_bytes_sync(self, target: Path, shown: str) -> bytes:
+        try:
+            return target.read_bytes()
+        except OSError as exc:
+            raise self._read_failed(shown, exc) from exc
+
+    def _write_sync(self, target: Path, shown: str, payload: bytes) -> None:
+        """文本与二进制共用这一段。
+
+        文本那条在调用点就 `encode("utf-8")` 了——写入的原子性、临时文件命名与失败清理
+        对两者逐字相同，分成两份实现只会让「不得留下半份文件」有两处可以各自出错。
+        """
         temp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(temp, "wb") as handle:  # noqa: PTH123
-                handle.write(content.encode("utf-8"))
+                handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp, target)

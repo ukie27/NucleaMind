@@ -31,7 +31,7 @@ SDK_PUBLIC_NAMES: Final[tuple[str, ...]] = (
     "HttpAccess",
     "HttpResponse",
     # `D41` 新增：manifest 的 `config_schema` 所用的 JSON Schema 类型。它**必须**在这张
-    # 表里——`contracts.JsonSchema` 与它静态上不可互换（前者的容器协变、后者不变），
+    # 表里——`contracts.JsonSchema` 进不了 pydantic 模型（见 `sdk/manifest.py`），
     # 而插件写 `CONFIG_SCHEMA` 时需要一个有兼容承诺的名字可标注。
     "ManifestJsonSchema",
     "NucleaAPI",
@@ -94,7 +94,11 @@ API_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
         {"plugin_id", "config", "state_dir", "logger", "events", "spawn_task", "fs", "net",
          "shell", "secret", "instance", "turns"}
     ),
-    FileAccess: frozenset({"read_text", "write_text", "list_dir"}),
+    # `D42` 补上二进制读写：在那之前要发二进制的插件只能绕过门面直接用 `pathlib`
+    # （`image` 就是这么做的），一个绕过它才能干活的权限门面挡不住任何人。
+    FileAccess: frozenset(
+        {"read_text", "write_text", "read_bytes", "write_bytes", "list_dir"}
+    ),
     HttpAccess: frozenset({"request"}),
     ShellAccess: frozenset({"run"}),
     EventSubscriber: frozenset({"subscribe"}),

@@ -259,7 +259,7 @@ async def test_a_failing_cli_override_falls_back_to_the_builtin(tmp_path: Path) 
     broken = PluginManifest(
         id="cli-broken",
         version="0.1.0",
-        sdk_range=">=0.1.0,<0.2.0",
+        sdk_range=">=1.0.0,<2.0.0",
         setup="tests.runtime.test_bootstrap:setup_broken_cli",
         capabilities=(
             CapabilityDecl(

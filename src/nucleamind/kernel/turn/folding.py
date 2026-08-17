@@ -34,6 +34,7 @@ from nucleamind.contracts import (
     TokenUsage,
     ToolCall,
     ToolResult,
+    TrustLevel,
 )
 
 from .cancel import CANCEL_REASON_CODES
@@ -194,10 +195,21 @@ def fold_tool_result(
 
     占位只作用于**消息**：工具确实返回了空，`ToolResult.content` 保持空才是真话；而模型那边
     必须收到一条非空消息。
+
+    **不可信包裹在截断之后**（`D42`，`ToolResult.as_model_text`）：先包再截会把闭合标记
+    截掉，而一个没有闭合的数据块正是它要防的东西。代价是最终消息比
+    `tool_result_max_bytes` 长出包装那几行——这个量是常数，而截掉闭合标记的后果不是。
+
+    **`source` 取 `call.name`**：数据块上那句「这段东西是谁给的」由 Kernel 填，
+    不是工具自报的字段。
     """
     content, truncated = limits.truncate_tool_result(result.content)
     folded = result if not truncated else replace(result, content=content, truncated=True)
-    text = content if content.strip() else EMPTY_TOOL_RESULT_TEXT.format(tool=call.name)
+    text = (
+        folded.as_model_text(source=call.name)
+        if content.strip()
+        else EMPTY_TOOL_RESULT_TEXT.format(tool=call.name)
+    )
     return folded, ModelMessage(role=Role.TOOL, content=text, tool_call_id=call.call_id)
 
 
@@ -214,6 +226,7 @@ def unknown_tool_result(call: ToolCall, available: tuple[str, ...] = ()) -> Tool
         content=f"错误：工具 {call.name} 不存在。本轮可用的工具：{names}。",
         truncated=False,
         side_effect=SideEffect.NONE,
+        trust=TrustLevel.SYSTEM,
         error=NucleaError(
             ErrorCode.CAPABILITY_MISSING,
             "模型请求了一个本轮不可用的工具。",
@@ -230,6 +243,7 @@ def blocked_result(call: ToolCall, reason: str) -> ToolResult:
         content=f"错误：工具 {call.name} 的本次调用被策略阻止。原因：{reason}",
         truncated=False,
         side_effect=SideEffect.NONE,
+        trust=TrustLevel.SYSTEM,
         error=NucleaError(
             ErrorCode.PERMISSION_DENIED,
             "工具调用被 Hook 阻止。",
@@ -250,6 +264,7 @@ def skipped_result(call: ToolCall, reason: CancelReason) -> ToolResult:
         content=f"错误：turn 已被取消，工具 {call.name} 未执行。",
         truncated=False,
         side_effect=SideEffect.NONE,
+        trust=TrustLevel.SYSTEM,
         error=NucleaError(
             CANCEL_REASON_CODES[reason],
             "turn 取消，工具未执行。",
@@ -288,5 +303,6 @@ def escaped_result(call: ToolCall, error: Exception) -> ToolResult:
         content=f"错误：工具 {call.name} 执行失败（{type(error).__name__}）：{error}",
         truncated=False,
         side_effect=SideEffect.UNKNOWN,
+        trust=TrustLevel.SYSTEM,
         error=wrapped,
     )

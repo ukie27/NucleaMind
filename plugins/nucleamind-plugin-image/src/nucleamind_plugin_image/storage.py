@@ -3,11 +3,15 @@
 职责：决定落点、原子写入、构造产物引用。
 不负责：拿到那些字节（`tool.py` / `wire.py`）、决定目录来自哪个配置键（`settings.py`）。
 
-**为什么不用 `ctx.fs`**：`sdk.api.FileAccess` 只有 `read_text` / `write_text` / `list_dir`,
-**没有 `write_bytes`**。图像是二进制，`write_text` 表达不了它。因此本模块直接用 `pathlib`，
-而 manifest **如实声明 `fs:write`**——`builtins/session_jsonl/` 的同一条先例：门面能力不足时，
-诚实声明比绕道更符合「应用级权限的价值是让越界意图可审计」。`FileAccess.write_bytes`
-已与 `read_bytes`（`D33` 提出）一起记为契约变更候选。
+**为什么不用 `ctx.fs`**：它的根是实例的 **workspace**，而图落在插件自己的 **state_dir**
+（或运维配置的绝对路径）——`PathGuard` 对越界与绝对路径一律拒绝，这不是缺个方法，
+是两个目录树。因此本模块直接用 `pathlib`，而 manifest **如实声明 `fs:write`**，
+与 `builtins/session_jsonl/` 同一条先例：门面够不着的地方，诚实声明比绕道更符合
+「应用级权限的价值是让越界意图可审计」。
+
+`D42` 给 `FileAccess` 补了 `read_bytes` / `write_bytes`——**这个插件仍然用不上它们**。
+原来这段话把原因记成「没有 `write_bytes`」，那只是当时最显眼的那一半；真正的原因是落点
+不在 `ctx.fs` 的根里。补完方法之后重新看一遍，才把这条分清楚。
 
 **文件名是内容寻址的**（`image-<sha256 前 16 位>.<ext>`）。两条好处都是真的：同样的字节
 永远落在同一个文件上（重跑不会堆出一堆一模一样的图），而文件名里不含 prompt——

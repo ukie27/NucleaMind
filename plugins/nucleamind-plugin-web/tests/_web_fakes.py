@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from nucleamind.contracts import (
     ErrorCode,
@@ -28,7 +29,7 @@ from nucleamind.sdk.testing import FakePluginContext, make_correlation
 class RecordedRequest:
     """`StubNet` 收到的一次请求。"""
 
-    __slots__ = ("body", "headers", "method", "timeout_ms", "url")
+    __slots__ = ("body", "headers", "max_bytes", "method", "timeout_ms", "url")
 
     def __init__(
         self,
@@ -37,12 +38,15 @@ class RecordedRequest:
         headers: Mapping[str, str] | None,
         body: bytes | None,
         timeout_ms: int,
+        max_bytes: int | None,
     ) -> None:
         self.method = method
         self.url = url
         self.headers = dict(headers or {})
         self.body = body
         self.timeout_ms = timeout_ms
+        #: `D42` 起 `web.fetch` 必须把字节上界交给门面，而不是自己读完再切。
+        self.max_bytes = max_bytes
 
 
 class StubNet:
@@ -71,13 +75,22 @@ class StubNet:
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
         timeout_ms: int = 30_000,
+        max_bytes: int | None = None,
     ) -> HttpResponse:
-        self.requests.append(RecordedRequest(method, url, headers, body, timeout_ms))
+        self.requests.append(
+            RecordedRequest(method, url, headers, body, timeout_ms, max_bytes)
+        )
         if self._error is not None:
             raise self._error
         if not self._responses:
             raise AssertionError("StubNet 的脚本已经用完，但又来了一次请求")
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if max_bytes is None or len(response.body) <= max_bytes:
+            return response
+        # **替身必须照做**：真门面在 `max_bytes` 处停止读取并标 `truncated`
+        # （`runtime/access/net.py`）。不照做的话，「上界交给了门面」这件事在用例里
+        # 就看不出效果——`web.fetch` 从 `D42` 起不再自己切第二刀。
+        return replace(response, body=response.body[:max_bytes], truncated=True)
 
 
 class WebContext(FakePluginContext):

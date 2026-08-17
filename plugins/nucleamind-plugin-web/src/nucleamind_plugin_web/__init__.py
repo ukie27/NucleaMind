@@ -26,15 +26,16 @@
   模型只控制 query——自托管 SearXNG 常在私有网段，`ctx.net` 会按设计拒掉它。后一条与内建
   `model_openai` 要连本地 vLLM / Ollama 是同一条先例：门面能力不足时，**如实声明 `net`
   权限**比绕道更符合「应用级权限的价值是让越界意图可审计」。
-- **抓回来的正文是不可信数据，而 `ToolResult` 没有 trust 字段。** 契约层的
-  `UNTRUSTED_DATA_PREFIX` 包裹（`contracts/context.py::as_model_text`）只作用于
-  `ContextFragment`，工具结果不经过那条路径。本插件在正文前加一行横幅
-  （`tools.UNTRUSTED_BANNER`），那是**提醒而不是隔离**——一段写着「忽略以上指令」的网页
-  仍然会原样进模型。要真正解决它得给 `ToolResult` 一个 trust 槽位，那是冻结表面变更
-  （`NFR-104`）。
-- **`ctx.net.request` 不能流式**：它一次性返回完整 `body: bytes`，因此超大页面只能**先
-  下完再截断**（`fetch.max_bytes` 作用在解码之前，但字节已经进过内存），靠 `timeout_ms`
-  兜底。要按字节提前中断得给 `HttpAccess` 加一个流式方法。
+- **抓回来的正文是不可信数据，`D42` 起真的被隔离了。** 那次给 `ToolResult` 加了 `trust`
+  字段，`fold_tool_result` 因此把 `UNTRUSTED` 的结果包成带来源标注的数据块——与
+  `ContextFragment` 共用 `contracts.context.wrap_untrusted`，内容里自带的闭合标记会被中和。
+  本插件两条工具都走默认的 `UNTRUSTED`，不再自己加横幅（原来那行 `UNTRUSTED_BANNER`
+  已删）。**仍要如实说的是**：这是「标注 + 隔离」，不是内容审查——模型仍然读得到那段
+  文本，只是它以数据而不是指令的身份出现。
+- **`ctx.net.request` 仍不能流式，但字节上界真的生效了。** `D42` 给它加了 `max_bytes`：
+  读到上界即停止并断开，`HttpResponse.truncated` 标着。在那之前 `fetch.max_bytes` 只在
+  整份响应体进过内存**之后**才切一刀。完整的流式接口（把响应生命周期交给调用方）今天
+  没有消费者，因此刻意没做——见 `sdk/api.py::HttpAccess.request` 的那段说明。
 
 **只 import `nucleamind.contracts` 与 `nucleamind.sdk`**（依赖规则 `R4`）；`httpx` 是
 `web.search` 的实现细节，在 `tools.py` 里惰性 import。**`MANIFEST` 在模块顶层且导入无副作用**
@@ -91,7 +92,6 @@ from .settings import (
 from .tools import (
     FETCH_TOOL,
     SEARCH_TOOL,
-    UNTRUSTED_BANNER,
     WebFetchTool,
     WebSearchTool,
     fetch_spec,
@@ -115,7 +115,6 @@ __all__ = [
     "SEARCH_TOOL",
     "SECRET_NAME",
     "TAVILY_ENDPOINT",
-    "UNTRUSTED_BANNER",
     "CustomBackend",
     "FetchSettings",
     "MediaKind",
@@ -214,7 +213,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="web",
     version="0.1.0",
-    sdk_range=">=0.1.0,<0.2.0",
+    sdk_range=">=1.0.0,<2.0.0",
     setup="nucleamind_plugin_web:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.TOOL, name=FETCH_TOOL),

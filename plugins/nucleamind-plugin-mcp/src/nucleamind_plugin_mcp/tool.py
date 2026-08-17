@@ -37,6 +37,7 @@ from nucleamind.contracts import (
     ToolInvocation,
     ToolResult,
     ToolSpec,
+    TrustLevel,
 )
 
 from .session import McpSession, RemoteTool
@@ -175,6 +176,10 @@ class BridgedTool:
             side_effect=SideEffect.UNKNOWN,
             data=data,
             duration_ms=_elapsed_ms(started),
+            # 远端 server 交回来的文本。**它与 `side_effect=UNKNOWN` 是同一条判断**：
+            # 我们对那一端一无所知，因此既不敢说它没有副作用，也不敢说它的输出是可信
+            # 指令（`D42`；默认值就是它，写出来是为了让这条判断在代码里可见）。
+            trust=TrustLevel.UNTRUSTED,
         )
 
     def _session(self) -> McpSession:
@@ -203,6 +208,9 @@ class BridgedTool:
             side_effect=side_effect,
             error=error,
             duration_ms=_elapsed_ms(started),
+            # 本地生成的失败文案（连不上、超时、参数不合）。远端**自己报告**的失败
+            # 走上面那条 `is_error` 分支，那段文本是它写的，保持不可信。
+            trust=TrustLevel.SYSTEM,
         )
 
 

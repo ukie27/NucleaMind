@@ -105,9 +105,16 @@ class GuardedHttpAccess:
         headers: Mapping[str, str] | None = None,
         body: bytes | None = None,
         timeout_ms: int = 30_000,
+        max_bytes: int | None = None,
     ) -> HttpResponse:
         import httpx  # noqa: PLC0415 - 惰性，见模块 docstring
 
+        if max_bytes is not None and max_bytes <= 0:
+            raise NucleaError(
+                ErrorCode.INPUT_MALFORMED,
+                "max_bytes 必须为正。",
+                detail={"plugin": self._plugin_id, "max_bytes": max_bytes},
+            )
         current = url
         async with httpx.AsyncClient(
             follow_redirects=False,
@@ -116,13 +123,16 @@ class GuardedHttpAccess:
         ) as client:
             for _ in range(MAX_REDIRECTS + 1):
                 await self._check(current)
-                response = await self._send(client, method, current, headers, body)
+                response, payload, cut = await self._send(
+                    client, method, current, headers, body, max_bytes
+                )
                 location = response.headers.get("location")
                 if response.status_code not in _REDIRECT_STATUSES or not location:
                     return HttpResponse(
                         status=response.status_code,
                         headers=dict(response.headers),
-                        body=response.content,
+                        body=payload,
+                        truncated=cut,
                     )
                 current = str(response.url.join(location))
                 # 303 与「POST 收到 301/302」按 RFC 9110 转成 GET；照做而不是原样重发，
@@ -140,11 +150,39 @@ class GuardedHttpAccess:
         url: str,
         headers: Mapping[str, str] | None,
         body: bytes | None,
-    ) -> httpx.Response:
+        max_bytes: int | None = None,
+    ) -> tuple[httpx.Response, bytes, bool]:
+        """发一次并把响应体读出来。返回 `(响应, 响应体, 是否被截断)`。
+
+        **`max_bytes` 必须让读取本身停下来**，不能读完再切——后者对着一个几百 MB 的 URL
+        照样会把它整个装进内存，而那正是这个参数要防的事（`D42`）。因此有上界时走
+        `client.stream()`，攒够就 `break`（`async with` 退出时断开连接）。
+
+        没有上界时保持 `client.request()` 的老路：多一条分支比让所有既有调用都改走流式
+        安全——后者会改变超时的计时口径（读满整个 body 与拿到响应头是两件事）。
+        """
         import httpx  # noqa: PLC0415 - 同上
 
         try:
-            return await client.request(method, url, headers=dict(headers or {}), content=body)
+            if max_bytes is None:
+                response = await client.request(
+                    method, url, headers=dict(headers or {}), content=body
+                )
+                return response, response.content, False
+            chunks: list[bytes] = []
+            size = 0
+            async with client.stream(
+                method, url, headers=dict(headers or {}), content=body
+            ) as response:
+                async for chunk in response.aiter_bytes():
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size >= max_bytes:
+                        break
+            payload = b"".join(chunks)
+            # 最后一片可能跨过上界，切到正好。「== max_bytes 且流已尽」不算截断——
+            # 那份内容是完整的，谎报 `truncated` 会让调用方给模型加一句不实的省略提示。
+            return response, payload[:max_bytes], len(payload) > max_bytes
         except httpx.TimeoutException as exc:
             raise NucleaError(
                 ErrorCode.TIMEOUT_HTTP_REQUEST,

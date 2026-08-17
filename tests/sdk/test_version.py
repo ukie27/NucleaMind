@@ -13,12 +13,17 @@ def test_sdk_version_is_a_valid_pep440_version() -> None:
     assert Version(SDK_VERSION)
 
 
-def test_sdk_version_is_pre_one_for_now() -> None:
-    """§7.6 的兼容承诺从 1.0.0 起算；Kernel 未落地前不宣布 1.0。
+def test_sdk_version_is_one_point_x() -> None:
+    """§7.6 的兼容承诺已经起算（`D42` 发的 1.0.0）。
 
-    发 1.0 时本用例会失败——那是刻意的提醒：同一个 PR 里要一并确认兼容承诺已可兑现。
+    原来这里断言的是 `major == 0`，并在 docstring 里写着「发 1.0 时本用例会失败——那是
+    刻意的提醒」。它**真的按设计失败了一次**，`D42` 顺着它确认了承诺可兑现：十一个官方
+    插件验证过这个表面，`D41`/`D42` 补齐了它们撞出来的四个缺口。
+
+    往后 `major == 2` 时这条同样会失败，同样是刻意的：那意味着一次破坏性变更，
+    需要有人确认 §7.6 的迁移与维护窗口都安排好了。
     """
-    assert Version(SDK_VERSION).major == 0
+    assert Version(SDK_VERSION).major == 1
 
 
 @pytest.mark.parametrize(

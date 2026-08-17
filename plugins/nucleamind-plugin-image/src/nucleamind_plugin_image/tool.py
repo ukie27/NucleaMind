@@ -32,6 +32,7 @@ from nucleamind.contracts import (
     ToolInvocation,
     ToolResult,
     ToolSpec,
+    TrustLevel,
 )
 from nucleamind.sdk import PluginContext
 
@@ -207,6 +208,9 @@ def _success(
         data=data,
         artifacts=artifacts,
         duration_ms=_elapsed_ms(started),
+        # 正文是本工具自己的话（几行「已生成 N 张图像」加落盘路径）。**图像字节本身
+        # 从不进上下文**，它们经 `artifacts` 引用（`D42`）。
+        trust=TrustLevel.SYSTEM,
     )
 
 
@@ -223,6 +227,7 @@ def _failure(
         side_effect=SideEffect.NONE,
         error=error,
         duration_ms=_elapsed_ms(started),
+        trust=TrustLevel.SYSTEM,
     )
 
 

@@ -292,7 +292,10 @@ async def test_tool_result_is_truncated_by_limit() -> None:
     completed = events_of(events, ToolCallCompleted)[0]
     assert isinstance(completed, ToolCallCompleted)
     assert completed.result.truncated is True
-    assert len(completed.message.content.encode()) == 32
+    # 预算作用在**结果正文**上。消息还要多一层不可信数据块（`D42`），
+    # 那几行是常数开销，不受 `tool_result_max_bytes` 管——见 `fold_tool_result`。
+    assert len(completed.result.content.encode()) == 32
+    assert completed.result.content in completed.message.content
 
 
 async def test_parallel_batch_really_overlaps() -> None:
@@ -659,7 +662,7 @@ async def test_after_tool_call_replacement_is_still_truncated() -> None:
     completed = events_of(events, ToolCallCompleted)[0]
     assert isinstance(completed, ToolCallCompleted)
     assert completed.result.truncated is True
-    assert len(completed.message.content.encode()) == 10
+    assert len(completed.result.content.encode()) == 10
 
 
 async def test_observer_hook_cannot_change_the_response() -> None:
