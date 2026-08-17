@@ -76,6 +76,13 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`plugins/nucleamind-plugin-cron/`，一份 manifest 五条能力：`CHANNEL:cron` 调度器本体 +
   三条 `TOOL:cron.*` + `COMMAND:cron`），**Kernel 一行未改、零新依赖**。
   **M5 至此交齐，`references/nanobot/` 的迁移清单清空**；
+  `D41` 已把**插件纳入 basedpyright** 并为两张容易漂移的清单各加一条守卫
+  （`tests/architecture/{test_ci_plugin_list,test_type_check_scope}.py`；
+  `D36`–`D40` 连着五轮漏改 CI 安装清单，约 1100 个用例在 CI 里从未跑过），
+  同 PR 修掉它当场抓出的 `sdk.EventHandler` 缺陷；
+  **`D42` 已交三条冻结表面变更并发布 `SDK 1.0.0`**（`ToolResult.trust`、
+  `FileAccess.read_bytes/write_bytes`、`HttpAccess.request(max_bytes=…)`，
+  外加 `sdk.ManifestJsonSchema`）；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`access/` 与 `cli/`，
@@ -132,7 +139,8 @@ deploy/                    # Dockerfile / compose / entrypoint
   `MASK`，明文只经 `reveal()` 取出；它不在 `sdk.__all__` 里，插件按 `R4` 直接从
   `contracts` 导入。要再写一个密钥类型之前先想清楚哨兵测试要多扫一遍哪些输出路径。
 
-`sdk/` 同样已冻结：`sdk.__all__` 与 `sdk.testing.__all__` 是规范性清单，有字面量快照测试；
+`sdk/` 同样已冻结，**且从 `D42` 起是 `1.0.0`**（§7.6 的兼容承诺已起算）：`sdk.__all__` 与
+`sdk.testing.__all__` 是规范性清单，有字面量快照测试；
 `NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
 写内建能力或插件时，先继承 `sdk.testing` 的 6 个契约测试基类
@@ -140,6 +148,10 @@ deploy/                    # Dockerfile / compose / entrypoint
 传的实参下跑，`isinstance` 又只查属性存在性，见下方 `plugins/nucleamind-plugin-memory/`
 那条。那条 `inspect.signature` 守卫在 `D40` 的 `cron` 里已经照抄了一遍
 （`test_cron_plugin.py`，并扩到 `Channel` 的四个方法），**新插件继续照抄**。
+**`D41` 起插件也在 basedpyright 范围内**，那是同一类问题的第二道网——它当场抓到了
+`sdk.EventHandler` 那个「同步 handler 每来一个事件多产一条异常 Task」的缺陷；
+`inspect.signature` 守卫仍然要写，两者盖住的不是同一片地方（类型检查看不到
+`register_*` 那一刻传进去的是哪个对象）。
 
 **`D22` 给 `PluginContext` 加了 `instance` 与 `turns`**（类型是 `contracts` 的
 `InstanceView` / `TurnControl`，`sdk.__all__` 因此一个字都没变）。它们是插件读取实例自身
@@ -468,11 +480,12 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **`PLUGIN_LOAD_FAILED` 是提供方级的**：一份 manifest 里的两条能力共命运。`web` 因此把
   凭据解析推迟到第一次调用（缺 `api_key` 只让 `web.search` 那一次失败，不牵连
   `web.fetch`），代价是配置里少一个凭据不会在启动时报出来。
-- **工具结果没有 trust 字段**：`contracts/context.py::as_model_text` 的
-  `UNTRUSTED_DATA_PREFIX` 包裹只作用于 `ContextFragment`。`web.fetch` 的横幅是**提醒不是
-  隔离**，README 与 docstring 里都这么写着——**别改成「已隔离」**。`FileAccess` 没有
-  `read_bytes` / `write_bytes`（`image` 因此如实声明 `fs:write` 直接用 `pathlib`），
-  `HttpAccess` 不能流式（`web.fetch` 因此只能先下完再截断）。三条都是冻结表面的缺口。
+- **那三条冻结表面缺口已在 `D42` 补掉**（原文如实记着它们是缺口，见下方 `D41`/`D42` 一节）：
+  `ToolResult.trust` 让工具结果真的被包成不可信数据块（`web.fetch` 与 `memory.recall`
+  自加的横幅随之删除，**别再写「横幅是提醒不是隔离」——现在是隔离**）；
+  `FileAccess.read_bytes` / `write_bytes` 补齐了二进制面（但 `image` 仍用 `pathlib`，
+  原因是落点在 `ctx.fs` 的根之外，不是缺方法）；`HttpAccess.request` 有了 `max_bytes`
+  下载上界（完整流式仍没做，理由在 `sdk/api.py`）。
 
 `plugins/nucleamind-plugin-memory/`（`D39`，M5 的 Memory）六条：
 
@@ -544,6 +557,54 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   于是注入的时钟只管调度循环，而「排一条一分钟后的一次性任务」跑去和真实墙钟比——
   用例因此在真实日期越过某条线之后才开始失败。**插件里凡是有注入时钟的，
   就不该再有第二处 `datetime.now()`。**
+
+`D41`（守卫）与 `D42`（三条冻结表面变更 + SDK 1.0）七条：
+
+- **插件在 basedpyright 范围内**（`pyproject.toml` 的 `include` 加了两条 glob）。这不是
+  洁癖：`D39` 的 `handle(invocation, cancel)` 与 `D41` 抓到的 `EventHandler` 都是**测试
+  全绿而实际会炸**——契约测试基类只在你自己传的实参下跑，`isinstance` 对
+  `runtime_checkable` Protocol 又只查属性存在性。`exclude` 里有且只有四个模块
+  （`discord/gateway`、`feishu/{client,gateway}`、`mcp/client`），因为 CI 用 `--no-deps`
+  装插件、那三个平台 SDK 在 CI 里不存在，本地与 CI 的诊断对不上。
+  **两张清单都有守卫**：`tests/architecture/test_ci_plugin_list.py`（CI 安装清单 == 磁盘
+  上的发行包）与 `test_type_check_scope.py`（exclude == import 了那三个包的模块集合）。
+  加官方插件要同时改 `ci.yml`；在第二个模块里 import 平台 SDK 会让后者失败，那正是该有
+  人看一眼的时刻。
+- **`sdk.EventHandler` 同时接受同步与协程**（`Callable[[RuntimeEvent], Awaitable[None] | None]`）。
+  `EventBus` 的订阅面本来就是同步的，而桥接层原来无条件把返回值喂给 `create_task`——
+  同步 handler 于是先被正常调用、再在一条无人认领的 Task 里 `await None` 抛 `TypeError`。
+  判据是**返回值**而不是 `iscoroutinefunction`（后者认不出 `partial`、`__call__` 是 async
+  的对象、返回协程的普通函数）。同步 handler 就地跑完、不派生 Task、无 loop 时也照跑。
+- **`ToolResult.trust` 默认 `UNTRUSTED`，只接受两档**（`SYSTEM` / `UNTRUSTED`）。
+  包裹在 `ToolResult.as_model_text(source=...)`，与 `ContextFragment` 共用
+  `contracts.context.wrap_untrusted`——**那是全项目唯一的实现**，两处各拼一遍字符串就等于
+  「不可信内容长什么样」有两个定义。`fold_tool_result` **在截断之后**包裹（先包再截会把
+  闭合标记截掉），`source` 取 `call.name` 而不是工具自报的字段。默认值必须是安全的那一个：
+  一个忘了表态的工具应当被包起来。**声明 `SYSTEM` 的都是「正文是自己的话」**：Kernel 四条
+  合成结果、`fs` 的写回执与失败、`shell` 起不来、`image`、`mcp` 的本地失败、`memory` 的写
+  回执、`cron` 的 schedule/cancel。**`cron.list` 反过来声明 `UNTRUSTED`**——它原样印任务
+  正文，那是创建者写的。
+- **`ManifestJsonSchema = Mapping[str, object]` 是 manifest `config_schema` 的类型**，
+  插件用它标注 `CONFIG_SCHEMA`。四个候选都试过（`sdk/manifest.py` 里逐条记着）：
+  `contracts.JsonValue` **进不了 pydantic 模型**（`typing._eval_type` 在生成 core schema
+  之前就 `RecursionError`）、pydantic 自带的 `JsonValue` 用**不变的 `list`** 因此
+  `sorted(...)` 赋不进去、`TypeAliasType` basedpyright 不认、只放宽一层会让深度 1 与
+  深度 2 的坏值报出两套说法。递归判定因此落在 `PluginManifest._check_config_schema`
+  （报 JSON Pointer，带深度上界——自引用文档在类型上合法）。交给接受
+  `contracts.JsonSchema` 的调用方只走 `PluginManifest.json_schema` 那一次收窄。
+- **`ctx.fs` 的根是 workspace，不是 state_dir。** `D42` 补了 `read_bytes` / `write_bytes`
+  （`read_text` 用 `errors="replace"`，它对一个 PNG 也「成功」），但 `image` **仍然用
+  `pathlib`**——它写的是自己的 state_dir，那是两个目录树而不是缺个方法。原来那条注释把
+  原因记成「没有 `write_bytes`」，只对了一半；下一个想「用了新方法就能不绕道」的人先读这条。
+- **`ctx.net.request(max_bytes=...)` 是下载上界，落在读取上**（到量即断开，
+  `HttpResponse.truncated` 标着）。`web.fetch` 原来的 `max_bytes` 只在整份响应体进过内存
+  **之后**才切一刀。**完整流式刻意没做**：今天没有消费者（两个 provider 消费 SSE 走 raw
+  httpx，`openai-api` 产出 SSE 用 aiohttp），而守卫的重定向重校验正发生在响应头与响应体
+  之间——为一个没有消费者的用例设计要长期兼容的接口，只能设计错。
+- **SDK 已发 `1.0.0`**，§7.6 的兼容承诺从此起算（minor 只允许新增、语义变更必须 major）。
+  `tests/sdk/test_version.py` 那条「发 1.0 时本用例会失败」的提醒真的失败过一次，
+  现在换成了 `major == 1`，`major == 2` 时同样会失败。**如实记着**：`D41`/`D42` 才发现那
+  四个缺口，说明此前「表面已稳定」判断过一次早。1.0 承诺的是**从现在**起不再破坏性变更。
 
 `plugins/nucleamind-plugin-mcp/`（`D38-B`）是第一个桥接类插件，五条：
 
@@ -732,7 +793,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m pytest tests/architecture -q
 .venv\Scripts\python.exe scripts/check_startup_cost.py --check
 
-# 严格类型检查（与 CI 一致）
+# 严格类型检查（与 CI 一致）。**`D41` 起覆盖 `src/` + 两棵插件树**，
+# 因此它要求插件已 editable 装进环境（否则那些包 import 不到，诊断全变成 reportMissingImports）。
 uv sync --all-extras --dev
 uv run --no-sync basedpyright
 
@@ -760,7 +822,7 @@ nm serve
 - 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
   对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
-## 剩余工作与迁移参考（`D40` 之后）
+## 剩余工作与迁移参考（`D42` 之后）
 
 `legacy/` 已经不存在。**M5 至此全部交齐**，项目范围本轮收窄成：
 
@@ -786,6 +848,35 @@ nm serve
 
 `D32`–`D40` 已经把 M5 的五步法跑通九遍，**下一轮做别的模块时照它们的形状写**：
 a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
+
+### `D42` 之后还没做的（按当时的判断排序）
+
+**M6「生态兼容」（OpenClaw 插件生态）没有立项**，它计划落在独立包
+`nucleamind-compat-openclaw` 里、不进本仓库，因此不阻塞下面任何一条。
+
+刻意推迟、有记录的两条：
+
+- **插件热更新**（技术方案 §10.4 写着「首版不做」）。它要求 registry 可变，而
+  「解析后只读」（`NFR-403`）是一大批现有不变量的地基——真要做是一个独立里程碑。
+- **`state_version` 迁移机制**（P0 没有，版本不符即拒绝加载，升与降都拒）。
+  在第一个插件真的要升 `state_version` 之前，写一套迁移框架就是在猜。
+
+已经识别、还没做的机制缺口：
+
+- **`CapabilityKind.MEMORY` 没有 kernel 消费者**（详见上面 `memory` 插件那一节的第一条）。
+  要让「换一个 MemoryProvider 即刻生效」成立，需要装配根加一条选择配置 + `MEM-003`
+  的降级策略 + `context_builder` 一条召回路径。**这是 M5 唯一一件「交了但没通电」的。**
+- **`Channel.deliver` 的契约 docstring 与 `EDG-204` 矛盾**：前者说投递失败抛
+  `EXTERNAL_CHANNEL`，后者要求投递失败时 turn 仍走到终态，于是四个现存实现**全都选了
+  不抛**。消解它要补一条 `channel.delivery_failed` 事件。
+- **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
+  `feishu` / `cron` 都声明不出与自己实际行为对应的权限。要不要补取决于权限模型的定位：
+  当它是「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。
+- **`MemoryProvider` 的三个方法一个 `SessionKey` 都不带**，因此那条接口只能表达实例级
+  记忆。文档里写着「目前按后者理解，但那是默认而不是决定过的」。
+- **`ToolResult.artifacts` 与 `OutboundMessage` 的附件路径都还没有消费者**：`image` 是
+  前者唯一的生产者，而没有任何 Channel 能把那些字节发出去。`D42` 补的
+  `FileAccess.read_bytes` **不解决这条**——缺的是出站侧的附件通路。
 
 ### 入口点
 

@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-17（`D40` 收口，**M5 交齐**）
-- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D40` 均已完成）。
+- 更新时间：2026-08-17（`D42` 收口，**M5 交齐 + SDK 1.0**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D42` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -14,6 +14,11 @@
   （一份 manifest 五条能力：`CHANNEL:cron` + 三条 `TOOL:cron.*` + `COMMAND:cron`），
   **Kernel 一行未改、零新依赖**。**M5 至此全部交齐**，
   `references/nanobot/` 的迁移清单清空。
+  `D41` 已把**插件纳入 basedpyright** 并为两张容易漂移的清单各加守卫
+  （CI 安装清单、类型检查排除清单）；它同 PR 修掉了自己抓出的 `sdk.EventHandler` 缺陷。
+  **`D42` 已交三条冻结表面变更并发布 `SDK 1.0.0`**：`ToolResult.trust`（工具结果真的被
+  包成不可信数据块）、`FileAccess.read_bytes` / `write_bytes`、
+  `HttpAccess.request(max_bytes=…)`，外加 `sdk.ManifestJsonSchema`。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1754,8 +1759,9 @@
   - **两条如实记着的边界**：① **五种权限里没有「连接一个聊天平台」这一种**——`net` 判的是
     经 `ctx.net` 门面的出站请求，而 `discord.py` 自己开连接，因此本插件除两条 `secret` 外
     声明不出任何权限而它确实会连出去（与 `openai-api` 那条「没有『监听端口』」并列）；
-    ② **出站 workspace 附件传不出去**（`FileAccess` 没有 `read_bytes`），发一条文本标记而
-    不是假装发过——今天新层也没有任何地方产出带附件的出站消息。
+    ② **出站 workspace 附件传不出去**（当时 `FileAccess` 没有 `read_bytes`；`D42` 补了它，
+    但**这条边界没有因此消失**——新层至今没有任何地方产出带附件的出站消息，缺的是出站侧
+    的附件通路）。发一条文本标记而不是假装发过。
   - **`kernel/config/schema.py` 又撞上 500 行上限**，把诊断视图 `to_json` 拆到
     `document.py`（`D13` → `fields.py`、`D24` → 六个 `*_at()`、`D28` → `defaults.py` 之后
     同一条规则的第四次应用：先挪走「只是把已有结构换个形状」的派生物，不动字段表）。
@@ -1794,14 +1800,14 @@
     配置里少一个 `api_key` 不会在启动时报出来。有一条 e2e 用例断言这两件事同时成立。
   - **凭据缺失不静默回退到 DuckDuckGo**（旧实现会）。配了 tavily 却没给 key，得到的是一条
     指名道姓的错误，而不是一份来自另一个后端、看起来一切正常的结果（原则 7）。
-  - **抓回来的正文前那行横幅是提醒不是隔离。** `ToolResult` 没有 trust 字段——
-    `contracts/context.py::as_model_text` 的 `UNTRUSTED_DATA_PREFIX` 包裹只作用于
-    `ContextFragment`，工具结果不经过那条路径。一段写着「忽略以上指令」的网页仍然会原样
-    进模型。要真正解决它得给 `ToolResult` 一个 trust 槽位——那是 `NFR-104` 的冻结表面变更，
-    **列为契约变更候选**。
-  - **`ctx.net` 不能流式**：`HttpAccess.request` 一次性返回完整 `body: bytes`，因此
-    `fetch.max_bytes` 作用在解码之前但那些字节已经进过内存，无法按字节提前中断，只能靠
-    `timeout_ms` 兜底。要改得给 `HttpAccess` 加一个流式方法。
+  - ~~**抓回来的正文前那行横幅是提醒不是隔离。**~~ **`D42` 已解决**：`ToolResult.trust`
+    落地，`fold_tool_result` 把它包成带来源标注的数据块，那行横幅（`UNTRUSTED_BANNER`）
+    已删。当时的记述是：「`ToolResult` 没有 trust 字段，
+    `contracts/context.py::as_model_text` 的包裹只作用于 `ContextFragment`，一段写着
+    「忽略以上指令」的网页仍然会原样进模型」——这条**列为契约变更候选之后真的被做了**。
+  - ~~**`ctx.net` 不能流式**~~ **`D42` 已把上界挪到读取上**（`request(max_bytes=…)`）。
+    当时的记述是：`fetch.max_bytes` 作用在解码之前但那些字节已经进过内存，无法按字节提前
+    中断。**完整的流式接口仍然没做**（没有消费者），因此这条只解决了一半。
   - **正文抽取用标准库 `html.parser`，不是浏览器**：JS 渲染的内容、表格的视觉布局、CSS
     隐藏的节点都拿不到或分不清，如实写在 docstring 与 README 里。踩到并修掉的两个真问题：
     ① 未知 charset 退回 UTF-8 时**先严格试一次**，否则一份完好的正文会带上「可能有乱码」
@@ -1829,16 +1835,19 @@
     字节都没到目标路径上。**取消不删已落盘的图**：取消不是回滚，而那些字节是用户已经
     付过钱的。
   - **三条如实记着的边界**：① **`ToolResult.artifacts` 今天在全项目零消费者，本插件是它的
-    第一个生产者**——`OutboundMessage` 的附件路径没有生产者、`FileAccess` 也没有
-    `read_bytes`（`D33` 已记为契约变更候选），因此没有任何 Channel 能把这些字节发出去；
-    ② **不用 `ctx.fs`**，`FileAccess` 只有 `read_text` / `write_text` / `list_dir`，
-    表达不了二进制写入，因此如实声明 `fs:write` 并直接用 `pathlib`（`session_jsonl` 先例）；
+    第一个生产者**——`OutboundMessage` 的附件路径没有生产者，因此没有任何 Channel 能把这些
+    字节发出去（当时也记了「`FileAccess` 没有 `read_bytes`」，`D42` 补了它而**这条边界没变**
+    ——缺的是出站侧的附件通路）；
+    ② **不用 `ctx.fs`**：当时记的原因是它只有文本面，**那只对了一半**；真正的原因是
+    `ctx.fs` 的根是 workspace 而图落在插件自己的 state_dir，两个目录树。因此即使 `D42`
+    补了 `write_bytes`，这里仍然如实声明 `fs:write` 并直接用 `pathlib`（`session_jsonl` 先例）；
     ③ **不用 `ctx.net`**，图像端点由运维配置（要能连本地 ollama），而**模型在这里决定不了
     任何地址**——这与 `web.fetch` 恰好相反。
   - **`setup()` 不创建目录**：为一个可能永远不被调用的工具建目录，是在没人要求的时候动
     用户的磁盘。有一条用例钉着。
   - **语音转写（旧实现的 `providers/transcription.py`）不做**：它是另一类能力（音频输入），
-    而契约层今天没有多模态输入位置。参考图 / 图生图同理（要 `FileAccess.read_bytes`）。
+    而契约层今天没有多模态输入位置。参考图 / 图生图同理（`D42` 之后 `FileAccess.read_bytes`
+    已经有了，但缺的是**多模态输入位置**，不是读字节的方法）。
   - 验收：新层 87 + 4 个用例；e2e 那条走**真实装配根**，断言图落在
     `<instance>/plugins/image/images/` 里——落点由装配根分配，插件自己只知道 `ctx.state_dir`。
 
@@ -2039,6 +2048,85 @@
     把 `jobs.json` 写坏：实例照常启动、`/cron list` 明说损坏并点名备份、
     `jobs.json.corrupt-<时间戳>` 留在原处。
 
+- **`D41` 守卫 CI 清单与类型检查范围，并把插件纳入 basedpyright**（无新模块，两条守卫 +
+  一处真实缺陷）
+  - **先修了一个 CI 一直红的真问题。** `pytest` 的 `testpaths` 收集整个 `plugins/`，
+    而每棵插件测试树第一行就 `import nucleamind_plugin_<id>`；`web` / `image` / `mcp` /
+    `memory` / `cron` 五个插件从没进过 `ci.yml` 的安装清单，所以那约 1100 个用例在 CI 里
+    **不是「少跑几个」，是收集期 `ModuleNotFoundError` 直接中断整个作业**。卸载 `cron`
+    复现验证过（`Interrupted: 7 errors during collection`）。本地装了插件所以没人看见。
+    `a7bda23` 补齐清单，`D41` 加守卫堵复发。
+  - **两条守卫**（`tests/architecture/`）：`test_ci_plugin_list.py` 断言 CI 的安装清单 ==
+    `plugins/` ∪ `examples/plugins/` 下有 `pyproject.toml` 的目录集合（不解析 YAML——
+    架构守卫刻意不装可选依赖，正则扫原文即可，读的就是人会去改的那几行）；
+    `test_type_check_scope.py` 断言 basedpyright 的 `include` 覆盖两棵插件树、`exclude`
+    **恰好等于** import 了 CI 缺席 SDK（`discord` / `lark_oapi` / `mcp`）的模块集合。
+    两条各带一个**自证用例**：找不到任何插件 / 任何 SDK 边界模块时失败——一条恒真的断言
+    在报表里也是绿的。后者顺带钉住了 `D33` 定下的「每个插件只有一两个模块碰 SDK」。
+  - **纳入范围当场抓到一个真缺陷**：`sdk.EventHandler` 声明
+    `Callable[[RuntimeEvent], Awaitable[None]]`，而 `EventBus` 的订阅面本来就是同步的，
+    官方插件 `feishu`（工具提示）与 `openai-api`（用量统计）注册的都是同步 handler。
+    `PluginEventBridge` 无条件把返回值喂给 `create_task`，于是同步 handler 先被正常调用、
+    再在一条无人认领的 Task 里 `await None` 抛 `TypeError`，只留下一句
+    "Task exception was never retrieved"。**这与 `D39` 漏掉 `handle(invocation, cancel)`
+    是同一类：测试全绿而实际会炸。** 修法是放宽返回类型为 `Awaitable[None] | None`，
+    桥接层按**返回值**分派（不是 `iscoroutinefunction`——它认不出 `partial`、`__call__`
+    是 async 的对象、返回协程的普通函数）；同步 handler 就地跑完、不派生 Task、
+    无 loop 时也照跑（`dropped` 只记协程那一半）。
+  - **`sdk.ManifestJsonSchema`**（进 `sdk.__all__`）：八个官方插件的 `config_schema` 在
+    严格模式下全部报 `reportArgumentType`。四个候选逐个试过并记在
+    `sdk/manifest.py` 里：`contracts.JsonValue` 进不了 pydantic 模型
+    （`typing._eval_type` 在生成 core schema **之前**就 `RecursionError`）、pydantic 自带的
+    `JsonValue` 用**不变的 `list`**（`sorted(...)` 赋不进去，双向推断够不着函数调用的返回
+    值）、`TypeAliasType` 的具名递归 basedpyright 1.39 不认、只放宽一层会让深度 1 与深度 2
+    的坏值报出两套说法（pydantic 的 union 校验在字段校验器**之前**跑）。结论：类型只说
+    「是个 JSON 对象」，递归判定归 `PluginManifest._check_config_schema`（报 JSON Pointer、
+    带深度上界——自引用文档在类型上完全合法），对外的收窄出口只有
+    `PluginManifest.json_schema` 一处。
+  - 其余 45 条是 `Unknown` 泄漏，按既有的 cast-after-isinstance 形状收在边界上，
+    外加 13 处「声明 `Mapping` 而工厂是裸 `dict`」的 `default_factory` 参数化。
+  - 验收：`basedpyright` **0 error（215 个文件，含两棵插件树）**、`ruff` 全绿、
+    **3606 passed / 10 skipped**；`tests/architecture` 65 个。
+
+- **`D42` 三条冻结表面变更 + 发布 SDK 1.0.0**（三条都被两个以上官方插件真实撞过，
+  合成一次 `NFR-104` 评审）
+  - **A. `ToolResult.trust`**（`contracts/tool.py`）。在此之前工具结果一律以裸文本进
+    tool 消息，于是 `web.fetch` 抓回的网页与 `memory.recall` 召回的记录只能靠工具自己加
+    一行**提醒性**横幅——那挡不住「忽略以上指令」，两个插件的 README 里都如实写着
+    「是提醒不是隔离」。现在隔离由契约层完成：默认 `UNTRUSTED`（安全的那一个），
+    只接受 `SYSTEM` / `UNTRUSTED` 两档（`OPERATOR` / `USER` 在工具结果上没有意义）；
+    `ToolResult.as_model_text(source=…)` 与 `ContextFragment` 共用
+    `contracts.context.wrap_untrusted`（**从后者提出，全项目唯一实现**）；
+    `fold_tool_result` **在截断之后**包裹（先包再截会把闭合标记截掉），`source` 取
+    `call.name` 而不是工具自报的字段。声明 `SYSTEM` 的都是「正文是自己的话」：Kernel 四条
+    合成结果、`fs` 的写回执与失败、`shell` 起不来、`image`、`mcp` 的本地失败、`memory` 的
+    写回执、`cron` 的 schedule/cancel；**`cron.list` 反过来声明 `UNTRUSTED`**——它原样印
+    任务正文，那是创建者写的。`web` 的 `UNTRUSTED_BANNER` 与 `memory` 召回时自加的提醒
+    一并删除。
+  - **B. `FileAccess.read_bytes` / `write_bytes`**（`sdk/api.py` + `runtime/access/files.py`）。
+    `read_text` 用 `errors="replace"`，因此它对一个 PNG 也「成功」，只是内容变了。
+    **顺带纠正了 `image` 一条误导性注释**：它用不上这两个方法，真正的原因是落点在
+    state_dir 而 `ctx.fs` 的根是 workspace——两个目录树，不是缺个方法。原来的注释把原因
+    记成「没有 `write_bytes`」，只对了一半；补完方法之后重新看一遍才分清。
+  - **C. `HttpAccess.request(max_bytes=…)` + `HttpResponse.truncated`**。`web.fetch` 的
+    `max_bytes` 原来只在整份响应体进过内存**之后**才切一刀，对着一个几百 MB 的 URL 等于
+    没有上界。现在上界落在**读取**上（有上界时走 `client.stream()`，到量即 `break`），
+    「正好等于上界且流已尽」不算截断。**完整流式刻意没做**：今天没有消费者——两个 provider
+    消费 SSE 走 raw httpx，`openai-api` 产出 SSE 用 aiohttp——而守卫的重定向重校验正发生在
+    响应头与响应体之间，为一个没有消费者的用例设计要长期兼容的接口只能设计错。
+  - **SDK 1.0.0**。0.x 的条件写的是「`D30` 插件里程碑达成后」；`D30` 之后又过了十一个官方
+    插件，`D41` 把它们全部纳入类型检查、`D42` 补齐了它们撞出来的四个缺口。
+    `tests/sdk/test_version.py` 那条「发 1.0 时本用例会失败——那是刻意的提醒」**真的失败过
+    一次**，顺着它确认承诺可兑现，然后换成 `major == 1`（`major == 2` 时同样会失败）。
+    十一个 manifest 的 `sdk_range` 一并改为 `>=1.0.0,<2.0.0`。**如实记着**：那四个缺口是
+    `D41`/`D42` 才发现的，说明此前「表面已稳定」判断过一次早——1.0 承诺的是**从现在**起
+    不再破坏性变更，不是追认此前每一版都对。
+  - **本轮改动的爆炸半径只有 6 条用例**（`trust` 默认 `UNTRUSTED` 之后）：一条字段可追溯性
+    快照、两条用**消息**长度验截断的 engine 用例（改成验 `result.content`——预算作用在结果
+    正文上，包装那几行是常数开销）、两条 folding 用例、一条 e2e。都不是意外，都是断言口径
+    需要跟着改。
+  - 验收：`basedpyright` 0 error、`ruff` 全绿、**3628 passed / 10 skipped**。
+
 
 ## 正在进行
 - `D00`、`D01` 已完成，阶段 0 工程基座收口；`D02`–`D06` 已完成，契约层三层（基础 /
@@ -2205,10 +2293,22 @@
 （见文首）：Model Provider 止步于内建 `model-openai` + `anthropic`，Channel 只做 `feishu`，
 WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只是历史对照。
 
-因此下一轮的候选不再是「再搬一个模块」，而是下面「四件挂着的独立事项」里那几次**冻结表面
-变更**——它们各自都要走 `NFR-104` 的评审，且**都已经被两个以上的插件真实撞上过**
-（`ToolResult` 的 trust 字段撞了两次、`FileAccess` 的字节读写撞了两次）。
-`CapabilityKind.MEMORY` 至今没有 kernel 消费者也在那份清单里。
+`D41`/`D42` 已经把当时清单上那几件**动作明确**的做完了：
+
+- **`D41`**：插件进 basedpyright（`include` 加两条 glob，`exclude` 恰好四个碰 CI 缺席 SDK
+  的模块），并给两张手工维护的清单各加一条守卫（`tests/architecture/test_ci_plugin_list.py`
+  与 `test_type_check_scope.py`）。它当场抓到 `sdk.EventHandler` 声明 `Awaitable[None]`
+  而两个官方插件注册的是同步 handler，每来一个事件多产一条 `TypeError` 任务。
+  顺带发现 `D36`–`D40` 连着五轮漏改 CI 安装清单，约 1100 个用例在 CI 里从未跑过
+  （`a7bda23` 先修症状，守卫堵复发）。
+- **`D42`**：三条冻结表面变更 + SDK 1.0.0。`ToolResult.trust`（默认 `UNTRUSTED`，包裹与
+  `ContextFragment` 共用 `wrap_untrusted`）、`FileAccess` 的二进制读写、
+  `HttpAccess.request(max_bytes=…)`。**完整流式刻意没做**（没有消费者）；
+  **`ModelMessage` 的 opaque 块槽位这一轮没动**（见下面第 1 条）。
+
+因此下一轮的候选是「四件挂着的独立事项」里**剩下的那几件**，加上两条刻意推迟的机制
+（插件热更新、`state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，
+它计划落在独立包 `nucleamind-compat-openclaw` 里、不进本仓库，因此不阻塞任何一条。
 
 **「扩展 Tool」里刻意没做的两样**：参考实现的 `agent/tools/search.py` 是**文件搜索**，
 已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖；`providers/transcription.py`
@@ -2224,10 +2324,13 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   不在包里、也 import 不到，因此「搬」在物理上就不成立。
 - c/d/e 步：`legacy/` 已经没有对应目录可删，因此这三步退化成「切换调用方 + 更新文档」。
 
-写新插件时**从第一天就按守卫的形状切**（`D32`–`D40` 逐条踩出来的）：
+写新插件时**从第一天就按守卫的形状切**（`D32`–`D42` 逐条踩出来的）：
 
 - 单文件 ≤800 行、`Any` 须带 `# boundary:`、测试树也不许 import `kernel/`——
   `tests/architecture/` 的三条守卫对 `plugins/` **全目录**生效，包括测试。
+- **加插件要同时改 `.github/workflows/ci.yml` 的安装清单**（`D41` 起有守卫盯着，
+  漏了直接红）。理由：`testpaths` 收集整个 `plugins/`，插件没 editable 装进环境就是
+  **收集期 `ModuleNotFoundError`**，不是「少跑几个用例」。
 - **测试模块名要带插件前缀**（`test_feishu_stream.py` / `_mcp_fakes.py` / `_cron_fakes.py`）。
   `testpaths` 一次收集整个 `plugins/`，而 pytest 按模块名去重：两个插件各有一个
   `test_stream.py` 时，先导入的会顶掉后一个，另一棵测试树整体 `ImportError`。
@@ -2236,48 +2339,103 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   因此**测试树在没有平台 SDK 的环境里必须全绿**。`D38-B` 把这条守成了一条 **AST 断言**
   （扫 import 语句而不是文本包含，另配一条自证用例），下一个插件照抄它。
   `D40` 把它扩成「整棵源码树只 import 标准库 + `nucleamind`」的一条断言。
+  **`D41` 又给它加了一层**：碰那三个 CI 缺席 SDK 的模块必须恰好等于 basedpyright 的
+  `exclude` 清单，在第二个模块里 import 平台 SDK 会让守卫失败。
 - 会发 HTTP 的插件照抄零网络闸门那条 autouse 夹具（现在有八份，判据逐条相同、
   刻意不共享——`R4` 够不着彼此）。
-- **照抄 `inspect.signature` 那条守卫**（`D39` 起，`D40` 扩到了 `Channel` 的四个方法）：
-  插件不在 basedpyright 的 `include` 里，而 `isinstance` 对 Protocol 只查属性存在性,
-  签名不一致因此**没有别的自动闸门**。
+- **照抄 `inspect.signature` 那条守卫**（`D39` 起，`D40` 扩到了 `Channel` 的四个方法）。
+  `D41` 之后插件**已经在** basedpyright 范围内，但这条守卫仍然要写：类型检查看不到
+  `register_*` 那一刻传进去的是哪个对象，两者盖住的不是同一片地方。
+- **`CONFIG_SCHEMA` 标注成 `sdk.ManifestJsonSchema`**（`D42` 起）。不要标
+  `contracts.JsonSchema`——那个类型进不了 pydantic 模型，理由与另外三个被否掉的候选
+  逐条记在 `sdk/manifest.py::ManifestJsonSchema` 的注释里。
+- **工具结果要表态 `trust`**（`D42` 起）。默认是 `UNTRUSTED`（安全的那一个），
+  正文确实是工具自己的话时才写 `SYSTEM`——回执、错误文案属于后者，文件内容、命令输出、
+  网页、远端响应属于前者。
 - **有注入时钟的插件不该再有第二处 `datetime.now()`**（`D40` 踩到）：两个时钟会让用例只
   覆盖其中一个，而另一个跑去和真实墙钟比。
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 四件挂着的独立事项
+### 四件挂着的独立事项（`D42` 之后剩两件半）
 
-1. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审）：给 `ModelMessage` 加一个
-   **provider-opaque 块槽位**。Anthropic 要求多轮续写时把 `thinking` 块（含 `signature`）
-   原样回传，而契约层现在没有地方放它——`anthropic` 插件因此在「thinking 开启 + 工具调用
-   多轮」这个组合下无法回放思考块。同一个槽位也是多模态输入的落点，值得一次性想清楚
-   而不是为某一家开一个字段。
+1. **一次契约变更候选**（`D32` 提出，要走 `NFR-104` 的评审，**`D42` 没做**）：给
+   `ModelMessage` 加一个 **provider-opaque 块槽位**。Anthropic 要求多轮续写时把
+   `thinking` 块（含 `signature`）原样回传，而契约层现在没有地方放它——`anthropic` 插件
+   因此在「thinking 开启 + 工具调用多轮」这个组合下无法回放思考块。同一个槽位也是多模态
+   输入的落点，值得一次性想清楚而不是为某一家开一个字段。**`D42` 刻意没碰它**：另外三条
+   都是加一个字段或一个参数，这一条要先决定「opaque 块的所有权与序列化」，不是同一量级。
 
-2. **`Channel.deliver` 的契约 docstring 与 `EDG-204` 有一处未解决的矛盾**（`D33` 提出）：
-   前者写「投递失败抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有 try/except，真抛会把
-   一次成功的 turn 变成失败。四个现存实现（`cli_entry` / `openai-api` / `discord` /
-   `feishu`）都选了不抛。要解决它就要补 `channel.delivery_failed` 事件。
+2. **`Channel.deliver` 的契约 docstring 与 `EDG-204` 有一处未解决的矛盾**（`D33` 提出，
+   **仍未解决**）：前者写「投递失败抛 `EXTERNAL_CHANNEL`」，而 `emit_outbound` 没有
+   try/except，真抛会把一次成功的 turn 变成失败。四个现存实现（`cli_entry` /
+   `openai-api` / `discord` / `feishu`）都选了不抛。要解决它就要补
+   `channel.delivery_failed` 事件。
 
-3. **三条冻结表面上的缺口，`D36`/`D37` 各撞上一条**（都要走 `NFR-104` 的评审）：
-   - **`ToolResult` 没有 trust 字段。** `contracts/context.py::as_model_text` 的
-     `UNTRUSTED_DATA_PREFIX` 包裹只作用于 `ContextFragment`，工具结果不经过那条路径。
-     `web.fetch` 抓回来的网页因此只能靠一行**提醒性**横幅，挡不住一段写着「忽略以上指令」
-     的正文。
-   - **`sdk.api.FileAccess` 没有 `read_bytes` / `write_bytes`。** 前者（`D33` 提出）让
-     Channel 发不出 workspace 附件，后者（`D37`）让 `image` 插件只能声明 `fs:write` 后
-     直接用 `pathlib`。
-   - **`HttpAccess.request` 不能流式。** `web.fetch` 因此只能先下完整个响应体再截断，
-     无法按字节提前中断连接。
-   - **`ToolResult` 那条 `D39` 又撞了一次**：`memory.recall` 的输出同样只能靠一行提醒性
-     文字。这是第二个撞上它的插件，值得作为「该做了」的信号。
+3. **三条冻结表面缺口 —— `D42` 全部补掉。** 留在这里作为记录与后续判据：
+   - **`ToolResult.trust`** ✅。默认 `UNTRUSTED`，只接受 `SYSTEM` / `UNTRUSTED` 两档；
+     包裹在 `ToolResult.as_model_text(source=…)`，与 `ContextFragment` 共用
+     `contracts.context.wrap_untrusted`；`fold_tool_result` **在截断之后**包裹，
+     `source` 取 `call.name`。`web` 与 `memory` 自加的横幅随之删除。
+     **别再写「横幅是提醒不是隔离」——现在是隔离。**
+   - **`FileAccess.read_bytes` / `write_bytes`** ✅，但**没有解决 `image` 那一半**：
+     它写的是自己的 state_dir，而 `ctx.fs` 的根是 workspace——那是两个目录树，不是缺个
+     方法。原来的注释把原因记成「没有 `write_bytes`」，只对了一半，现已改正。
+     `discord` 发 workspace 附件那一半确实解决了，但**出站附件通路仍然没有生产者**，
+     所以 `ToolResult.artifacts` 至今零消费者（见下）。
+   - **`HttpAccess.request(max_bytes=…)`** ✅（下载上界落在读取上，`truncated` 标着）。
+     **完整流式仍没做**：今天没有消费者——两个 provider 消费 SSE 走 raw httpx，
+     `openai-api` 产出 SSE 用 aiohttp——而守卫的重定向重校验正发生在响应头与响应体之间，
+     为一个没有消费者的用例设计要长期兼容的接口只能设计错。
 
-4. **`MemoryProvider` 的接口形状与它的使用场景对不上**（`D39` 提出）：三个方法
-   **都不带 `SessionKey`**，因此经这条契约只能表达实例级（`agent`）的记忆——
+4. **`MemoryProvider` 的接口形状与它的使用场景对不上**（`D39` 提出，**仍未解决**）：
+   三个方法**都不带 `SessionKey`**，因此经这条契约只能表达实例级（`agent`）的记忆——
    `session` / `workspace` 范围在它上面无从定位。`memory` 插件因此绕开了自己注册的那条
    `MEMORY` 能力，用内部的 session 感知 store 服务四条通路。要么给三个方法加一个
    `scope_key`（冻结表面变更），要么承认 `MemoryProvider` 就是「实例级长期记忆」的接口、
    把会话级记忆归给 `ContextProvider`——**目前是后者，但那是默认而不是决定过的**。
+   相关但独立的一条：**`CapabilityKind.MEMORY` 至今没有 kernel 消费者**，
+   要让「换一个后端即刻生效」成立还需要装配根的选择配置 + `MEM-003` 降级策略 +
+   `context_builder` 的召回路径。**这是 M5 唯一一件「交了但没通电」的。**
+
+5. **两条刻意推迟、有记录的机制**（不是遗漏）：
+   - **插件热更新**（技术方案 §10.4 写着「首版不做」）。它要求 registry 可变，而
+     「解析后只读」（`NFR-403`）是一大批现有不变量的地基——真要做是一个独立里程碑。
+   - **`state_version` 迁移机制**（P0 没有，版本不符即拒绝加载，升与降都拒）。
+     在第一个插件真的要升 `state_version` 之前，写一套迁移框架就是在猜。
+
+6. **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
+   `feishu` / `cron` 都声明不出与自己实际行为对应的权限。要不要补取决于权限模型的定位：
+   当它是「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。
+
+### `D41`/`D42` 留下的、后续必须用到的事实
+
+- **两张手工维护的清单现在各有一条守卫**：CI 的插件安装清单必须等于磁盘上的发行包集合
+  （`test_ci_plugin_list.py`），basedpyright 的 `exclude` 必须恰好等于「import 了 CI 缺席
+  SDK」的模块集合（`test_type_check_scope.py`）。两条都带一个**自证用例**——
+  找不到任何插件 / 任何 SDK 边界模块时要失败，否则一条恒真的断言在报表里也是绿的。
+- **插件不在类型检查范围里，就没有任何自动闸门能发现签名与契约不一致。** `D39` 的
+  `handle(invocation, cancel)` 与 `D41` 的 `EventHandler` 都是**测试全绿而实际会炸**：
+  契约测试基类只在你自己传的实参下跑，`isinstance` 对 `runtime_checkable` Protocol 又只查
+  属性存在性。这是同一个教训的第二次。
+- **`contracts.JsonValue` 永远进不了 pydantic 模型。** `typing._eval_type` 在 pydantic
+  生成 core schema **之前**就 `RecursionError`（它是带前向引用的匿名递归 Union），因此
+  `SkipValidation` / `PlainValidator` / 自定义 `__get_pydantic_core_schema__` 一个都救不
+  回来。pydantic 自带的 `JsonValue` 又用**不变的 `list`**，`sorted(...)` 这类非字面量赋不
+  进去；`TypeAliasType` 的具名递归 pydantic 认而 basedpyright 1.39 不认。四档都试过，
+  结论是 `Mapping[str, object]` + 一个真的走一遍文档的校验器（报 JSON Pointer、带深度上界）。
+- **不可信包裹的实现只有一份**（`contracts.context.wrap_untrusted`），`ContextFragment` 与
+  `ToolResult` 共用。两处各拼一遍字符串就等于「不可信内容长什么样」有两个定义，
+  而模型侧的提示词只认得其中一个。**包裹必须在截断之后**：先包再截会把闭合标记截掉，
+  而一个没有闭合的数据块正是它要防的东西。代价是最终消息比 `tool_result_max_bytes` 长出
+  包装那几行——那是常数，如实记着。
+- **`ctx.fs` 的根是实例的 workspace，不是插件的 state_dir。** 想「用了新的
+  `write_bytes` 就能不绕道」的人先读这条：那是两个目录树，`PathGuard` 对越界与绝对路径
+  一律拒绝。`session_jsonl` / `image` / `memory` / `cron` 都用 `pathlib` + 如实声明权限。
+- **SDK 已发 1.0.0，§7.6 的兼容承诺从此起算。** `tests/sdk/test_version.py` 那条
+  「发 1.0 时本用例会失败」的提醒真的失败过一次，现在换成 `major == 1`，`major == 2` 时
+  同样会失败。**如实记着**：那四个缺口是 `D41`/`D42` 才发现的，说明此前「表面已稳定」
+  判断过一次早。1.0 承诺的是**从现在**起不再破坏性变更，不是追认此前每一版都对。
 
 ### `D40` 留下的、后续必须用到的事实
 
