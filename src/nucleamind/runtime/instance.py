@@ -26,13 +26,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from nucleamind.contracts import (
     CancelSignal,
     Channel,
     CliEntry,
+    Correlation,
     ErrorCode,
     EventName,
     HookContext,
@@ -73,7 +74,7 @@ from .plugin_context import PluginRuntime, RuntimePluginContext
 
 #: `TurnReceipt` 从这里再导出一次：`embed/` 只能 import `contracts/` 与 `runtime/`（`R5`），
 #: 而一次 `submit()` 的返回值类型在 `kernel/turn/`。转发比让门面用 `object` 诚实得多。
-__all__ = ["AgentInstance", "Closer", "TurnReceipt"]
+__all__ = ["AgentInstance", "Closer", "TurnReceipt", "delivery_error", "outbound_router"]
 
 #: 停止时要跑的一件收尾事。用 callable 而不是一张「谁要关」的类型表：
 #: 模型的 `aclose()`、sink 的 `close()` 与锁的 `release()` 没有共同接口，
@@ -266,7 +267,7 @@ class AgentInstance:
         async def handle(message: InboundMessage) -> None:
             receipt = await self.orchestrator.handle(message)
             if not receipt.admitted:
-                await self._safe(channel.deliver(_rejection(message, receipt)))
+                await self._echo(channel, _rejection(message, receipt))
 
         async def dropped(message: InboundMessage, error: NucleaError) -> None:
             await self._dropped(channel, message, error)
@@ -296,7 +297,7 @@ class AgentInstance:
         orchestrator，而 turn 事件只有那一个发布点。理由写在 `contracts/events.py`。
         """
         receipt = TurnReceipt(turn_id=TurnId(uuid.uuid4().hex), admitted=False, error=error)
-        await self._safe(channel.deliver(_rejection(message, receipt)))
+        await self._echo(channel, _rejection(message, receipt))
         self.bus.publish(
             EventName.INSTANCE_INPUT_DROPPED,
             payload={
@@ -312,6 +313,99 @@ class AgentInstance:
             await awaitable
         except Exception as exc:  # noqa: BLE001 - 见 docstring
             self.bus.publish(EventName.PLUGIN_FAILED, error=_as_nuclea(exc))
+
+    async def _echo(self, channel: Channel, message: OutboundMessage) -> None:
+        """投递一条**合成的回音**（背压/去重的 `[未受理：…]`），失败只记不抛。
+
+        与 `bootstrap.py::deliver` 分开是因为它走的不是 `OrchestratorDeps.deliver`：
+        这些消息由泵自己合成，orchestrator 根本没见过它们。但**失败的记法必须相同**——
+        `D43` 之前这里折的是 `plugin.failed`，于是「回音发不出去」与「某个插件炸了」在
+        事件流里长得一样，而前者恰恰是用户什么都收不到的那种情况。
+        """
+        try:
+            await channel.deliver(message)
+        except Exception as exc:  # noqa: BLE001 - 见 docstring
+            self.bus.publish(
+                EventName.CHANNEL_DELIVERY_FAILED,
+                correlation=Correlation(
+                    instance_id=self.instance_id,
+                    session_key=message.session_key,
+                    turn_id=message.turn_id,
+                ),
+                payload={
+                    "channel": message.channel_id,
+                    "conversation": message.conversation_id,
+                    "stream_state": message.stream_state.value,
+                    # 这一条是合成回音而不是模型输出。两者的处置不同：回音发不出去意味着
+                    # 用户连「被拒了」都不知道。
+                    "synthetic": True,
+                },
+                error=delivery_error(exc),
+            )
+
+
+def outbound_router(
+    by_channel: Mapping[str, Channel], bus: EventBus
+) -> Callable[[OutboundMessage], Awaitable[None]]:
+    """造 `OrchestratorDeps.deliver`：按 `channel_id` 把出站消息路由回对应 Channel。
+
+    **它在这里而不是在装配根里**：`bootstrap.py` 只负责「装」，而「出站怎么走」是本模块
+    的职责第二条。它贴着 800 行上限，把一段有分支的运行期逻辑塞进去只会让下一次改动更难。
+
+    找不到对应 Channel 时**静默丢弃**（`MSG-006`：寻址在消息自己身上）：那是
+    `embed.submit()` 这类没有 Channel 的调用方的正常情形，它拿的是 `TurnReceipt.messages`。
+
+    **投递失败折成一条 `channel.delivery_failed`，不上抛**（`D43`、`EDG-204`）：这一步在
+    turn 的最后，模型输出与会话历史都已经正确产生了，让它把 turn 变成 `FAILED` 等于用
+    「没送出去」冒充「没算出来」。这里是那条约定的兑现点——
+    `contracts/protocols.py::Channel.deliver` 因此可以照约定抛 `EXTERNAL_CHANNEL`。
+    `BaseException`（取消、Ctrl-C）放行。
+    """
+
+    async def deliver(message: OutboundMessage) -> None:
+        channel = by_channel.get(message.channel_id)
+        if channel is None:
+            return
+        try:
+            await channel.deliver(message)
+        except Exception as exc:  # noqa: BLE001 - 见 docstring
+            bus.publish(
+                EventName.CHANNEL_DELIVERY_FAILED,
+                # 关联标识齐全，因此这条事件挂在**它所属的那个 turn** 上：出站消息自带
+                # `session_key + turn_id`，`OBS-002` 的按序重放不需要再猜。
+                correlation=Correlation(
+                    instance_id=bus.instance_id,
+                    session_key=message.session_key,
+                    turn_id=message.turn_id,
+                ),
+                payload={
+                    "channel": message.channel_id,
+                    "conversation": message.conversation_id,
+                    "stream_state": message.stream_state.value,
+                },
+                error=delivery_error(exc),
+            )
+
+    return deliver
+
+
+def delivery_error(exc: Exception) -> NucleaError:
+    """把一次投递失败折成 `NucleaError`。`bootstrap.py` 的路由点共用它。
+
+    照约定抛 `EXTERNAL_CHANNEL` 的实现原样带出（`retryable` 是实现方的判断，这里不覆写）；
+    其余异常折成 `EXTERNAL_CHANNEL` 而不是 `KERNEL_UNEXPECTED`——投递失败的原因在外部
+    平台那一侧，把它记成内核异常会把排查方向指错。**只放类型名不放异常消息**：平台 SDK
+    的异常文本可能带着 webhook URL 或令牌。
+    """
+    if isinstance(exc, NucleaError):
+        return exc
+    return NucleaError(
+        ErrorCode.EXTERNAL_CHANNEL,
+        "出站消息投递失败。",
+        detail={"exception": type(exc).__name__},
+        # 未按约定抛 `NucleaError` 的实现没有告诉我们能不能重试，因此不替它猜。
+        retryable=False,
+    )
 
 
 def _as_nuclea(exc: Exception) -> NucleaError:

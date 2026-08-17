@@ -451,10 +451,13 @@ class Channel(Protocol):
         缓冲（流式 edit-in-place 那类）不需要加锁。
 
         **异常约定**：投递失败抛 `EXTERNAL_CHANNEL` 并如实标注 `retryable`。
-        **但两个现存实现都选择不抛**（`builtins/cli_entry/console.py`、官方插件
-        `openai-api`）：`emit_outbound` 没有 try/except，真抛出去会把一次成功的 turn
-        变成失败，而 `EDG-204` 要的恰恰是「投递失败时 turn 继续到终态并完整持久化」。
-        这条矛盾如实记在这里，等 `channel.delivery_failed` 事件落地时一并解决。
+        **抛出是安全的**：出站路由点捕获它、发一条 `channel.delivery_failed`，turn 照样
+        走到自己的终态并完整持久化（`EDG-204`）。因此实现方**不需要**为了保住 turn 而把
+        投递故障吞成成功——那样「消息一直发不出去」就只能靠用户来发现。
+
+        `D43` 之前这里与 `EDG-204` 是矛盾的：本 docstring 要求抛，而抛出去会把一次成功的
+        turn 变成失败，于是四个实现全都选了不抛。消解它的是那条事件，而不是改这条约定——
+        「投递失败了」必须有人说出来，能说的只有实现方自己。
         **取消语义**：不接受取消——投递是 turn 的最后一步，此时取消只会让用户什么也收不到。
         """
         ...

@@ -39,7 +39,6 @@ from nucleamind.contracts import (
     ModelInfo,
     ModelProvider,
     NucleaError,
-    OutboundMessage,
     Plugin,
     PluginId,
     ProviderId,
@@ -94,7 +93,7 @@ from nucleamind.kernel.turn import (
 )
 from nucleamind.sdk import CapabilityDecl, PluginContext, PluginManifest
 
-from .instance import AgentInstance, Closer
+from .instance import AgentInstance, Closer, outbound_router
 from .introspection import build_instance_view, build_turn_control
 from .inventory import PluginInventory
 from .plugin_context import PluginRuntime, RuntimePluginContext, build_plugin_context
@@ -703,15 +702,7 @@ def _assemble(
     )
     by_channel = dict(channels)
 
-    async def deliver(message: OutboundMessage) -> None:
-        """按 `channel_id` 路由回对应 Channel（`MSG-006`：寻址在消息自己身上）。
-
-        找不到对应 Channel 时**静默丢弃**：那是 `embed.submit()` 这类没有 Channel 的
-        调用方的正常情形，它拿的是 `TurnReceipt.messages`。
-        """
-        channel = by_channel.get(message.channel_id)
-        if channel is not None:
-            await channel.deliver(message)
+    deliver = outbound_router(by_channel, bus)
 
     def report_failure(error: NucleaError) -> None:
         """Hook 失败的去向。`publish()` 有返回值，`on_failure` 要的是 `None`——

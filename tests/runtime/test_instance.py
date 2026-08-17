@@ -27,7 +27,7 @@ from nucleamind.contracts import (
 from nucleamind.kernel.plugins import PluginPhase
 from nucleamind.kernel.turn import CancelToken
 from nucleamind.runtime.cli.commands.run import _Interrupts
-from nucleamind.runtime.instance import AgentInstance
+from nucleamind.runtime.instance import AgentInstance, delivery_error
 
 from ._support import (
     MULTI_CHANNEL_ID,
@@ -435,3 +435,129 @@ async def test_stop_drains_every_lane(tmp_path: Path) -> None:
         channel.push(inbound(f"c{index}", "在吗", message_id=f"s{index}"))
     await instance.stop()
     assert all(fanout.lanes() == 0 for fanout in instance._fanouts) or not instance._fanouts  # noqa: SLF001
+
+
+# --------------------------------------------- 投递失败：`channel.delivery_failed`（`D43`）
+
+
+def _events(instance: AgentInstance) -> list[object]:
+    """订阅并收集全部事件。断言的是「哪条事件出现了、哪条没有」。"""
+    seen: list[object] = []
+    instance.bus.subscribe(seen.append)
+    return seen
+
+
+def _names(seen: list[object]) -> list[EventName]:
+    return [event.name for event in seen]  # type: ignore[attr-defined]
+
+
+async def test_a_failing_delivery_does_not_fail_the_turn(tmp_path: Path) -> None:
+    """`EDG-204` 与 `Channel.deliver` 的 docstring 从此不再矛盾。
+
+    契约说投递失败抛 `EXTERNAL_CHANNEL`，而这条 turn 的模型输出与会话历史都已经正确产生
+    了——它必须走到 `turn.completed`。「答案没算出来」与「答案没送出去」的处置不同
+    （重跑 vs 重发），因此后者有自己的事件名。
+    """
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    seen = _events(instance)
+    try:
+        await instance.start()
+        channel = multi_channel(instance)
+        channel.fail_delivery_with = NucleaError(
+            ErrorCode.EXTERNAL_CHANNEL, "平台拒收。", retryable=True
+        )
+        channel.push(inbound("c0", "在吗", message_id="m0"))
+        await _wait_for(lambda: EventName.TURN_COMPLETED in _names(seen))
+
+        names = _names(seen)
+        assert EventName.CHANNEL_DELIVERY_FAILED in names
+        assert EventName.TURN_FAILED not in names
+        # 投递失败不该被折进 `plugin.failed`——内建 CLI 的投递失败与插件无关，而 `D43`
+        # 之前它正是那么记的。
+        assert EventName.PLUGIN_FAILED not in names
+    finally:
+        channel.fail_delivery_with = None
+        await instance.stop()
+
+
+async def test_the_delivery_failure_event_points_at_the_turn_it_belongs_to(
+    tmp_path: Path,
+) -> None:
+    """`OBS-002`：这条事件挂在它所属的那个 turn 上，不需要靠猜。
+
+    出站消息自带 `session_key + turn_id`，因此关联标识是齐的——发一条 `correlation=None`
+    的事件等于让排查的人回到「按时间戳对齐」。
+    """
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    seen = _events(instance)
+    try:
+        await instance.start()
+        channel = multi_channel(instance)
+        channel.fail_delivery_with = RuntimeError("socket closed")
+        channel.push(inbound("c0", "在吗", message_id="m0"))
+        await _wait_for(lambda: EventName.TURN_COMPLETED in _names(seen))
+
+        failures = [
+            event
+            for event in seen
+            if event.name is EventName.CHANNEL_DELIVERY_FAILED  # type: ignore[attr-defined]
+        ]
+        assert failures
+        first = failures[0]
+        assert first.correlation is not None  # type: ignore[attr-defined]
+        assert first.correlation.turn_id  # type: ignore[attr-defined]
+        assert first.payload["channel"] == MULTI_CHANNEL_ID  # type: ignore[attr-defined]
+        # 非 `NucleaError` 折成 `EXTERNAL_CHANNEL` 而不是 `KERNEL_UNEXPECTED`：原因在平台
+        # 那一侧，记成内核异常会把排查方向指错。
+        assert first.error is not None  # type: ignore[attr-defined]
+        assert first.error.code is ErrorCode.EXTERNAL_CHANNEL  # type: ignore[attr-defined]
+        # **只放类型名不放异常消息**：平台 SDK 的异常文本可能带 webhook URL 或令牌。
+        assert "socket closed" not in str(dict(first.error.detail))  # type: ignore[attr-defined]
+    finally:
+        channel.fail_delivery_with = None
+        await instance.stop()
+
+
+async def test_a_failing_echo_is_marked_synthetic(tmp_path: Path) -> None:
+    """合成回音（`[未受理：…]`）发不出去，与模型输出发不出去要分得开。
+
+    前者意味着用户连「被拒了」都不知道，而那正是最需要被看见的一种失败。两者共用同一个
+    事件名，靠载荷的 `synthetic` 区分——一次投递失败不值得发明第二个事件名。
+    """
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=manifests_with_multi_channel())
+    seen = _events(instance)
+    try:
+        await instance.start()
+        channel = multi_channel(instance)
+        channel.fail_delivery_with = RuntimeError("gone")
+        # 同一个 `message_id` 推两次：第二条被去重，泵为它合成一条回音。
+        channel.push(inbound("c0", "在吗", message_id="same"))
+        channel.push(inbound("c0", "在吗", message_id="same"))
+        await _wait_for(
+            lambda: any(
+                event.name is EventName.CHANNEL_DELIVERY_FAILED  # type: ignore[attr-defined]
+                and event.payload.get("synthetic") is True  # type: ignore[attr-defined]
+                for event in seen
+            )
+        )
+    finally:
+        channel.fail_delivery_with = None
+        await instance.stop()
+
+
+def test_delivery_error_keeps_what_the_implementation_said() -> None:
+    """照约定抛 `NucleaError` 的实现原样带出——`retryable` 是它的判断，不替它覆写。
+
+    未按约定抛的实现没告诉我们能不能重试，因此折出来的那条标 `retryable=False`：
+    猜一个 `True` 会让编排层去重发一条可能已经发出去的消息。
+    """
+    declared = NucleaError(ErrorCode.EXTERNAL_CHANNEL, "限流。", retryable=True)
+    assert delivery_error(declared) is declared
+
+    folded = delivery_error(ValueError("token=abc123"))
+    assert folded.code is ErrorCode.EXTERNAL_CHANNEL
+    assert folded.retryable is False
+    assert dict(folded.detail) == {"exception": "ValueError"}

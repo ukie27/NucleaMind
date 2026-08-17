@@ -276,12 +276,19 @@ class TestChannelLifecycle:
         assert client.sent and client.sent[0][0] == CHAT_ID
         await channel.stop()
 
-    async def test_deliver_never_raises_even_when_the_platform_fails(self) -> None:
-        """`emit_outbound` 没有 try/except：真抛出去会把一次成功的 turn 变成失败。"""
+    async def test_deliver_raises_external_channel_when_the_platform_fails(self) -> None:
+        """`D43`：投递失败照约定抛，理由同 discord 那条。"""
         channel, _, client = make_channel()
         client.fail = True
         await channel.start()
-        await channel.deliver(outbound("答案"))
+        with pytest.raises(NucleaError) as caught:
+            await channel.deliver(outbound("答案"))
+        assert caught.value.code is ErrorCode.EXTERNAL_CHANNEL
+        assert caught.value.retryable is True
+        # **飞书的失败信号是 `None` 返回值而不是异常**（`client.py` 的四个方法都是），
+        # 因此这条错误在 `stream._send_plain` 里按返回值判出来、由 `_relayed` 原样带出。
+        # discord 那一侧是 SDK 抛异常，折出来的 `detail` 因此长得不一样。
+        assert dict(caught.value.detail) == {"conversation": CHAT_ID, "parts": 1}
         await channel.stop()
 
     async def test_a_reasoning_delta_is_dropped_unless_asked_for(self) -> None:

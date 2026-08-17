@@ -265,12 +265,22 @@ class TestChannelLifecycle:
         channel, _ = make_channel(channel_id="discord-ops")
         assert channel.channel_id == "discord-ops"
 
-    async def test_deliver_never_raises_even_when_the_platform_fails(self) -> None:
-        """`emit_outbound` 没有 try/except：真抛出去会把一次成功的 turn 变成失败。"""
+    async def test_deliver_raises_external_channel_when_the_platform_fails(self) -> None:
+        """`D43`：投递失败照约定抛。
+
+        出站路由点捕获它、发一条 `channel.delivery_failed`，turn 照样走到终态
+        （`EDG-204`），因此抛是安全的。在此之前这里把故障整个吞掉——「答案发不出去」
+        于是在事件流里一个字都没有，而那正是最需要被看见的一种失败。
+        """
         channel, gateway = make_channel()
         gateway.platform.fail = True
         await channel.start()
-        await channel.deliver(outbound("答案"))
+        with pytest.raises(NucleaError) as caught:
+            await channel.deliver(outbound("答案"))
+        assert caught.value.code is ErrorCode.EXTERNAL_CHANNEL
+        assert caught.value.retryable is True
+        # **只放类型名不放异常消息**：平台 SDK 的异常文本可能带 webhook URL 或令牌。
+        assert "cause" in caught.value.detail
         await channel.stop()
 
     async def test_a_reasoning_delta_is_dropped_unless_asked_for(self) -> None:

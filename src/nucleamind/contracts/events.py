@@ -40,6 +40,7 @@ class EventFamily(StrEnum):
     TURN = "turn"
     MODEL = "model"
     TOOL = "tool"
+    CHANNEL = "channel"
 
 
 class EventName(StrEnum):
@@ -54,6 +55,17 @@ class EventName(StrEnum):
     它刻意**不是** `TURN_REJECTED`——那条消息从未进过 orchestrator，而 turn 事件只有
     orchestrator 一个发布点；给它发一条 turn 事件等于在事件流里凭空造一条 orchestrator
     没见过的 turn，`OBS-002` 的按序重放随之作废。背压是**实例级**现象，因此落 INSTANCE 族。
+
+    `CHANNEL_DELIVERY_FAILED` 是 `D43` 补入的，用来消解一条真实存在的契约矛盾：
+    `Channel.deliver` 的 docstring 说投递失败抛 `EXTERNAL_CHANNEL`，而 `EDG-204` 要求
+    投递失败时 turn 仍然走到终态并完整持久化。四个现存实现因此**全都选了不抛**——一条
+    写在契约上却没人遵守的约定比没有约定更坏。有了这个事件，投递失败就有了「既不吞掉、
+    也不毁掉 turn」的第三条出路：实现方照约定抛，路由点捕获并发这条事件，turn 继续。
+
+    它**不是** `TURN_FAILED`：投递是 turn 的最后一步，那一轮的模型输出与历史都已经正确
+    产生了；记成 turn 失败会让「答案没算出来」与「答案没送出去」不可区分，而这两件事的
+    处置完全不同（前者重跑，后者重发）。也**不是** `PLUGIN_FAILED`：内建 `cli_entry` 的
+    投递失败与插件无关，而它此前正是被折进那条事件里的。
     """
 
     INSTANCE_STARTING = "instance.starting"
@@ -95,6 +107,8 @@ class EventName(StrEnum):
     TOOL_CALL_COMPLETED = "tool.call_completed"
     TOOL_CALL_BLOCKED = "tool.call_blocked"
     TOOL_CALL_FAILED = "tool.call_failed"
+
+    CHANNEL_DELIVERY_FAILED = "channel.delivery_failed"
 
     @property
     def family(self) -> EventFamily:

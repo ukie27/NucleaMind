@@ -12,11 +12,12 @@ gateway、归一化、流式与指示器组装到一起。
 
 - **`stop()` 幂等且不抛**（`EDG-104`：Kernel 对每个能力的停止有独立超时，一个抛异常的
   `stop()` 只会让别的收尾也做不完）。
-- **`deliver()` 不抛**。契约 docstring 写的是「投递失败抛 `EXTERNAL_CHANNEL`」，但
-  `emit_outbound` 没有 try/except，真抛出去会把一次**成功**的 turn 变成失败，而 `EDG-204`
-  要的恰恰是「投递失败时 turn 继续到终态并完整持久化」。两个现存实现（`cli_entry`、
-  `openai-api`）都选了不抛，这里跟随它们；那条矛盾记在 `contracts/protocols.py` 里等
-  `channel.delivery_failed` 落地时一并解决。
+- **`deliver()` 照约定抛 `EXTERNAL_CHANNEL`**（`D43` 起）。出站路由点
+  （`runtime/instance.py::outbound_router`）捕获它、发一条 `channel.delivery_failed`，
+  turn 照样走到自己的终态（`EDG-204`）。在此之前这里把投递故障整个吞掉，于是「答案发不
+  出去」这件事在事件流里一个字都没有——用户看到的现象是 bot 不说话，而日志一片正常。
+  **只有正文的投递会抛；指示器的启停仍然静默**（`_quietly`）：一个没清掉的「正在输入」
+  是外观问题，而一条没发出去的答案不是。
 - **`receive()` 里畸形消息丢弃并继续，不终止整个 Channel**（`MSG-004`）：一条看不懂的
   平台事件不该让 bot 下线。
 
@@ -30,7 +31,14 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any, Final
 
-from nucleamind.contracts import InboundMessage, OutboundMessage, SecretStr, StreamState
+from nucleamind.contracts import (
+    ErrorCode,
+    InboundMessage,
+    NucleaError,
+    OutboundMessage,
+    SecretStr,
+    StreamState,
+)
 
 from .gateway import DiscordGateway, to_raw
 from .indicators import Indicators
@@ -45,6 +53,10 @@ __all__ = ["DiscordChannel"]
 _TERMINAL: Final[frozenset[StreamState]] = frozenset(
     {StreamState.FINAL, StreamState.CANCELLED, StreamState.FAILED}
 )
+
+#: 投递失败的用户可见文案。定义成模块级常量：`ruff` 的 `TRY003` 不允许在 `raise`
+#: 处写多词消息。
+_DELIVERY_FAILED: Final = "出站消息投递失败。"
 
 #: 推理增量的元数据标记。`show_reasoning` 关掉时整条丢弃（`openai-api` 的同一条）。
 _REASONING: Final = "reasoning"
@@ -141,10 +153,14 @@ class DiscordChannel:
             yield message
 
     async def deliver(self, message: OutboundMessage) -> None:
-        """投递一条出站消息。**不抛**，见模块 docstring。"""
+        """投递一条出站消息。
+
+        **正文失败抛 `EXTERNAL_CHANNEL`**（`D43`，见模块 docstring 第二条）；指示器的清理
+        仍然静默——它在正文之后，而一次失败的清理不该盖掉「正文已经送到了」。
+        """
         if not self._show_reasoning and message.metadata.get(_REASONING):
             return
-        await self._quietly(self._relay.handle(message))
+        await self._relayed(message)
         if message.stream_state in _TERMINAL:
             # 只在终态清指示器。判断留在这里而不是 `Indicators` 里——那个模块不该猜
             # 什么算「说完了」。
@@ -167,6 +183,25 @@ class DiscordChannel:
         # 真的开始跑（那可能要排队）。
         await self._quietly(self._indicators.start(message.conversation_id, raw.message_id))
         self._inbox.put_nowait(message)
+
+    async def _relayed(self, message: OutboundMessage) -> None:
+        """把正文交给 relay，失败折成 `EXTERNAL_CHANNEL`。
+
+        **只放异常类型名不放消息**：平台 SDK 的异常文本可能带着 webhook URL 或令牌
+        （`web.search` 的同一条理由）。`retryable=True`——投递失败几乎总是网络或限流，
+        而重发一条聊天消息的代价是可能重复，不是不可逆。
+        """
+        try:
+            await self._relay.handle(message)
+        except NucleaError:
+            raise
+        except Exception as exc:
+            raise NucleaError(
+                ErrorCode.EXTERNAL_CHANNEL,
+                _DELIVERY_FAILED,
+                detail={"conversation": message.conversation_id, "cause": type(exc).__name__},
+                retryable=True,
+            ) from exc
 
     @staticmethod
     # boundary: 任意 awaitable；这里只负责跑它并吞异常

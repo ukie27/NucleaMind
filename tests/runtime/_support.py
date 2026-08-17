@@ -129,6 +129,10 @@ class ScriptedChannel:
         self.delivered: list[OutboundMessage] = []
         self.started = 0
         self.stopped = 0
+        #: 投递时抛的东西（`D43`）。契约允许 `Channel.deliver` 抛 `EXTERNAL_CHANNEL`——
+        #: 这个开关就是为了驱动那条路径：路由点必须捕获它、发一条
+        #: `channel.delivery_failed`，而 turn 照样走到自己的终态（`EDG-204`）。
+        self.fail_delivery_with: Exception | None = None
         self._inbox: asyncio.Queue[InboundMessage | None] = asyncio.Queue()
 
     @property
@@ -156,7 +160,10 @@ class ScriptedChannel:
             yield message
 
     async def deliver(self, message: OutboundMessage) -> None:
+        # **先记再抛**：真实实现失败时也可能已经发出去一部分，而用例要能看到「它试过」。
         self.delivered.append(message)
+        if self.fail_delivery_with is not None:
+            raise self.fail_delivery_with
 
 
 #: 装配根按 manifest 索引交配置块，因此这条 Channel 也要有自己的 manifest。

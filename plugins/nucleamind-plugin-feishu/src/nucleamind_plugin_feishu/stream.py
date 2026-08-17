@@ -33,7 +33,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Protocol
 
-from nucleamind.contracts import JsonValue, OutboundMessage, StreamState
+from nucleamind.contracts import (
+    ErrorCode,
+    JsonValue,
+    NucleaError,
+    OutboundMessage,
+    StreamState,
+)
 
 from .cards import build_elements, card_payload, split_by_table_limit
 from .outbound import FORMAT_INTERACTIVE, OutboundBody, compose_body, detect_format, plan_simple
@@ -51,6 +57,10 @@ DEFAULT_EDIT_INTERVAL_MS: Final = 500
 
 #: 流式卡片里那个唯一的 markdown 元素的 id。更新时按它定位。
 STREAM_ELEMENT_ID: Final = "streaming_md"
+
+#: 一条都没发出去时的用户可见文案。模块级常量：`ruff` 的 `TRY003` 不允许在 `raise`
+#: 处写多词消息。
+_SEND_FAILED: Final = "飞书拒收了这条消息。"
 
 
 class Cards(Protocol):
@@ -114,7 +124,12 @@ class StreamRelay:
         return len(self._buffers)
 
     async def handle(self, message: OutboundMessage) -> None:
-        """处理一条出站消息。**约定不抛**由调用方（`channel.py`）负责。"""
+        """处理一条出站消息。
+
+        **`D43` 起它可以抛 `EXTERNAL_CHANNEL`**：`_send_plain` 一条都没发出去时抛，
+        由 `channel.py` 原样带给出站路由点。其余失败（卡片更新、关流）仍然内部降级——
+        那些路径上还有别的出路，而「一条都没发出去」没有。
+        """
         if message.stream_state is StreamState.STARTED:
             # 只登记，不发任何东西——空卡片在会话列表里是噪声。
             self._buffers[message.conversation_id] = _Card(turn_id=str(message.turn_id))
@@ -272,16 +287,34 @@ class StreamRelay:
         await self._send_plain(message, body)
 
     async def _send_plain(self, message: OutboundMessage, body: str) -> None:
-        """不走流式的那条路：按格式级联发 text / post，或拆成一到多张卡片。"""
+        """不走流式的那条路：按格式级联发 text / post，或拆成一到多张卡片。
+
+        **一条都没发出去就抛 `EXTERNAL_CHANNEL`**（`D43`）。这是最后一条出路——走到这里
+        说明流式卡片那条路没成功（或压根没开），因此它失败就等于这条答案一个字都没送到。
+        飞书的失败信号是 `None` 返回值而不是异常（`client.py` 的四个方法都是这样），
+        因此判据是返回值：不看它，一次失败的投递在事件流里连一条记录都留不下。
+
+        **部分成功不算失败**：一段长正文被拆成多条，前两条到了第三条没到，用户看到的是
+        半截答案而不是什么都没有——那不该被记成「答案发不出去」。
+        """
         if not body:
             return
         chat_id, reply_to, in_thread = self.resolve_target(message.conversation_id)
-        for index, item in enumerate(_plan_bodies(body)):
+        sent = 0
+        planned = _plan_bodies(body)
+        for index, item in enumerate(planned):
             target = reply_to if (reply_to and (index == 0 or in_thread)) else None
             if target:
-                await self.messenger.reply(target, item, in_thread=in_thread)
+                sent += bool(await self.messenger.reply(target, item, in_thread=in_thread))
                 continue
-            await self.messenger.send(chat_id, item)
+            sent += bool(await self.messenger.send(chat_id, item))
+        if planned and not sent:
+            raise NucleaError(
+                ErrorCode.EXTERNAL_CHANNEL,
+                _SEND_FAILED,
+                detail={"conversation": message.conversation_id, "parts": len(planned)},
+                retryable=True,
+            )
 
 
 def _card_reference(card_id: str) -> str:

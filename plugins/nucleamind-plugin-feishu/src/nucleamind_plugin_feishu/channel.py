@@ -15,10 +15,12 @@
 `reply_to_message` 时才为真。否则「回复到一个已有话题」会让飞书**新建**一个话题——
 用户会看到自己的对话被切成一串互不相干的小话题。
 
-**`deliver()` 不抛**：契约 docstring 写的是「投递失败抛 `EXTERNAL_CHANNEL`」，但
-`emit_outbound` 没有 try/except，真抛出去会把一次**成功**的 turn 变成失败，而 `EDG-204`
-要的恰恰是「投递失败时 turn 继续到终态并完整持久化」。三个现存实现（`cli_entry`、
-`openai-api`、`discord`）都选了不抛，这里跟随它们。
+**`deliver()` 照约定抛 `EXTERNAL_CHANNEL`**（`D43` 起）：出站路由点
+（`runtime/instance.py::outbound_router`）捕获它、发一条 `channel.delivery_failed`，
+turn 照样走到自己的终态（`EDG-204`）。在此之前这里把投递故障整个吞掉，于是「答案发不出
+去」在事件流里一个字都没有——用户看到的现象是 bot 不说话，而日志一片正常。
+**只有正文的投递会抛；指示器与工具提示仍然静默**（`_quietly`）：一个没清掉的「正在输入」
+是外观问题，而一条没发出去的答案不是。
 
 **工具提示走事件订阅而不是出站流**：`OutboundMessage` 只有 `content` 与 `metadata`，
 不带工具调用信息，因此提示的唯一来源是 `tool.call_started`（`ctx.events`）。订阅者签名是
@@ -36,7 +38,9 @@ from collections.abc import AsyncIterator
 from typing import Any, Final
 
 from nucleamind.contracts import (
+    ErrorCode,
     InboundMessage,
+    NucleaError,
     OutboundMessage,
     RuntimeEvent,
     SecretStr,
@@ -61,6 +65,10 @@ _TERMINAL: Final[frozenset[StreamState]] = frozenset(
 
 #: 推理增量的元数据标记。`show_reasoning` 关掉时整条丢弃。
 _REASONING: Final = "reasoning"
+
+#: 投递失败的用户可见文案。定义成模块级常量：`ruff` 的 `TRY003` 不允许在 `raise` 处
+#: 写多词消息。
+_DELIVERY_FAILED: Final = "出站消息投递失败。"
 
 #: `conversation_id → 最后一条入站 message_id` 表的容量。
 _INBOUND_TABLE_CAPACITY: Final = 500
@@ -183,10 +191,14 @@ class FeishuChannel:
             yield message
 
     async def deliver(self, message: OutboundMessage) -> None:
-        """投递一条出站消息。**不抛**，见模块 docstring。"""
+        """投递一条出站消息。
+
+        **正文失败抛 `EXTERNAL_CHANNEL`**（`D43`，见模块 docstring）；指示器的清理仍然
+        静默——它在正文之后，而一次失败的清理不该盖掉「正文已经送到了」。
+        """
         if not self._show_reasoning and message.metadata.get(_REASONING):
             return
-        await self._quietly(self._relay.handle(message))
+        await self._relayed(message)
         if message.stream_state in _TERMINAL:
             # 只在终态清指示器。判断留在这里而不是 `Indicators` 里——那个模块不该猜
             # 什么算「说完了」。
@@ -280,6 +292,25 @@ class FeishuChannel:
         # 开始跑（那可能要排队）。
         await self._quietly(self._indicators.start(message.conversation_id, raw.message_id))
         self._inbox.put_nowait(message)
+
+    async def _relayed(self, message: OutboundMessage) -> None:
+        """把正文交给 relay，失败折成 `EXTERNAL_CHANNEL`。
+
+        **只放异常类型名不放消息**：lark-oapi 的异常文本可能带着完整请求 URL 与令牌。
+        `retryable=True`——投递失败几乎总是网络或限流，重发一条聊天消息的代价是可能重复，
+        不是不可逆。
+        """
+        try:
+            await self._relay.handle(message)
+        except NucleaError:
+            raise
+        except Exception as exc:
+            raise NucleaError(
+                ErrorCode.EXTERNAL_CHANNEL,
+                _DELIVERY_FAILED,
+                detail={"conversation": message.conversation_id, "cause": type(exc).__name__},
+                retryable=True,
+            ) from exc
 
     @staticmethod
     # boundary: 任意 awaitable；这里只负责跑它并吞异常

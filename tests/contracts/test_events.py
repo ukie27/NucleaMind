@@ -69,6 +69,10 @@ def test_event_names_are_unique() -> None:
 #: `instance.input_dropped` 由 `D33` 补入：Channel 泵按 conversation 扇出之后，一条消息
 #: 可能在**进 orchestrator 之前**就被 lane 队列或并发上界拒掉。它刻意不是 `turn.rejected`
 #: ——那条消息从未进过 orchestrator，而 turn 事件只有那一个发布点。
+#: `channel.delivery_failed` 由 `D43` 补入，用来消解 `Channel.deliver` 的 docstring 与
+#: `EDG-204` 之间那条真实存在的矛盾（前者要求投递失败抛，后者要求 turn 仍走到终态，
+#: 于是四个实现全都选了不抛）。它刻意不是 `turn.failed`：「答案没算出来」与「答案没送
+#: 出去」的处置不同（重跑 vs 重发），也不是 `plugin.failed`：内建 CLI 的投递失败与插件无关。
 EVENT_NAME_SNAPSHOT = (
     "instance.starting",
     "instance.ready",
@@ -103,6 +107,7 @@ EVENT_NAME_SNAPSHOT = (
     "tool.call_completed",
     "tool.call_blocked",
     "tool.call_failed",
+    "channel.delivery_failed",
 )
 
 
