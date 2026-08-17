@@ -37,7 +37,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Final
 
 from nucleamind.contracts import (
@@ -152,6 +152,16 @@ class CronScheduler:
     def degraded(self) -> NucleaError | None:
         """降级态的原因，正常时为 `None`。"""
         return self._degraded
+
+    def now(self, zone: tzinfo | None = None) -> datetime:
+        """当前时刻，**本插件唯一的时钟出口**。
+
+        工具与命令都经它取时间而不是自己调 `datetime.now()`：那样会有两个时钟，
+        用例注入的那个就只管调度循环，而「排一条一分钟后的一次性任务」会去和真实墙钟比。
+        `zone` 非空时换算到那个时区——报错文本里的时间因此与用户敲的对得上。
+        """
+        moment = self._now()
+        return moment if zone is None else moment.astimezone(zone)
 
     # ------------------------------------------------------------------ 调度循环
 

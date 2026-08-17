@@ -256,7 +256,7 @@ class CronScheduleTool(_Tool):
         validate_message(message, name)
 
         schedule = self._build_schedule(arguments)
-        now = _now_in(self._zone_for(schedule))
+        now = self._scheduler.now(self._zone_for(schedule))
         validate_schedule(schedule, now, min_interval_ms=self._settings.min_interval_ms)
 
         key = invocation.correlation.session_key
@@ -280,20 +280,25 @@ class CronScheduleTool(_Tool):
 
     def _build_schedule(self, arguments: Mapping[str, JsonValue]) -> Schedule:
         """三选一。**给了两种是错误而不是「取第一个」**——静默择一会让用户以为另一个
-        也生效了。"""
+        也生效了。
+
+        **`tz` 一律原样带上**，哪怕这一种调度用不着它：判定「tz 只能配 cron」的地方只有
+        `validate_schedule` 一处，在这里顺手把它丢掉就等于让那条规则失效——
+        用户会以为自己设的时区生效了。
+        """
         every = _optional_int(arguments, "every_seconds")
         expr = _optional_str(arguments, "cron_expr")
         at_text = _optional_str(arguments, "at")
-        tz = _optional_str(arguments, "tz")
+        tz = _optional_str(arguments, "tz") or None
         given = [item is not None and item != "" for item in (every, expr, at_text)]
         if sum(given) > 1:
             raise NucleaError(ErrorCode.INPUT_MALFORMED, _MULTIPLE_SCHEDULES)
         if every:
-            return Schedule(kind=ScheduleKind.EVERY, every_ms=every * 1000)
+            return Schedule(kind=ScheduleKind.EVERY, every_ms=every * 1000, tz=tz)
         if expr:
-            return Schedule(kind=ScheduleKind.CRON, expr=expr, tz=tz or None)
+            return Schedule(kind=ScheduleKind.CRON, expr=expr, tz=tz)
         if at_text:
-            return Schedule(kind=ScheduleKind.AT, at=self._parse_at(at_text))
+            return Schedule(kind=ScheduleKind.AT, at=self._parse_at(at_text), tz=tz)
         raise NucleaError(ErrorCode.INPUT_MALFORMED, _NO_SCHEDULE)
 
     def _parse_at(self, text: str) -> datetime:
@@ -372,12 +377,6 @@ def _derive_name(message: str) -> str:
     """没给名字时从正文取一个。截断到上界之内，避免名字校验反过来拒掉正文。"""
     first_line = message.strip().splitlines()[0].strip()
     return first_line[:MAX_NAME_CHARS] or "定时任务"
-
-
-def _now_in(zone: tzinfo) -> datetime:
-    """当前时刻，**带上任务自己的时区**：`Schedule.at` 的比较与 cron 的推进都在那个
-    时区的墙钟上进行，用 UTC 会让报错文本里的时间与用户敲的对不上。"""
-    return datetime.now(zone)
 
 
 # ------------------------------------------------------------------------------ 参数

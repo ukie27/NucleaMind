@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-15（`D39` 收口）
-- 当前阶段：**阶段三 P1 能力插件化进行中**（`D00`–`D38` 均已完成）。
+- 更新时间：2026-08-17（`D40` 收口，**M5 交齐**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D40` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -10,7 +10,10 @@
   `CapabilityDecl.namespace`（`D38-A`）。
   `D39` 已交齐 **M5 的「Memory」**：官方插件 `memory`（一份 manifest 四类能力），
   外加第 6 个契约基类 `sdk.testing.MemoryProviderContract`。
-  下一步是 M5 最后一项：**Cron-Automation**
+  **`D40` 已交齐 M5 的最后一项「Cron / Automation」**：官方插件 `cron`
+  （一份 manifest 五条能力：`CHANNEL:cron` + 三条 `TOOL:cron.*` + `COMMAND:cron`），
+  **Kernel 一行未改、零新依赖**。**M5 至此全部交齐**，
+  `references/nanobot/` 的迁移清单清空。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -1976,6 +1979,65 @@
     `nm capabilities` 六条全在 → 一次真实 turn 里模型调 `memory.remember` 写盘 →
     **换一个进程**再问，那条记忆以 `<untrusted-data source="plugin:memory">` 出现在请求里 →
     `/memory list|search|show|forget` 与别名 `/mem` 逐条验过。
+- **`D40` 官方插件 `cron`：定时任务 / Automation ★**（`plugins/nucleamind-plugin-cron/`
+  九个模块约 1600 行 + 插件自己 230 个用例）：**M5 的最后一项，`kernel/`、`runtime/`
+  与 `sdk/` 一行未改，一个新依赖都没引入。**
+  - **它解决的是一个此前根本不存在的能力**：在此之前**所有** turn 都由外部输入触发
+    （人敲字、平台来消息、HTTP 请求进来），没有任何机制能让实例在没人说话的时候自己开一条
+    turn。提醒、每日汇总、CI 跟进因此做不出来。
+  - **① 调度器就是一条 `CHANNEL`，`receive()` 本身是调度循环。** Channel 的入站是**拉模型**
+    （契约原文），因此 `receive()` 可以直接是「睡到下一个到期时刻 → yield 一条
+    `InboundMessage`」的异步生成器：`AgentInstance.start()` 已经会 `channel.start()` 并为它
+    派生泵，而泵把消息投进 lane 之后**立即回来接着拉**（`_fanout_for`），一条跑十分钟的 turn
+    不会堵住调度。于是本插件**既不需要 `ctx.spawn_task` 也不需要 Hook**——本文档原先那条
+    「依赖后台任务与 Hook」的备注写在 `D33` 的 Channel 泵扇出落地之前，现在有更短的路。
+  - **② 任务绑定创建时的会话，结果由原 Channel 投递回去。** `Origin` 取自
+    `ToolInvocation.correlation.session_key` / `CommandInvocation.correlation`，只存
+    `channel_id + conversation_id`（`scope` 是实例级常量 `deps.scope`，存下来只会与配置
+    分叉）。到期时构造一条**寻址到原会话**的 `InboundMessage`：turn 因此跑在原会话里、
+    历史连续，出站按 `message.channel_id` 路由回那条 Channel 是 Kernel 既有行为。
+    「每天 9 点在这个群里提醒我」因此不需要任何新机制。
+  - **③ cron 表达式自己解析**（`expr.py`，标准 5 字段，`* , - */n` 与三字母星期/月份名，
+    日与星期都被限定时取 POSIX 的**并集**）。不引入 `croniter`：CI 用 `--no-deps` 装插件，
+    依赖它会让所有涉及表达式的用例在 CI 里跑不起来；`L`/`W`/`#`/`@别名`/秒字段**报错而不是
+    静默当字面量吞掉**。**时区名解析只在 `settings.py` 一处且可注入**，`expr.py` 与
+    `schedule.py` 只接受已解析的 `tzinfo`——因此**整棵测试树不依赖 tzdata**，DST 用例用手写的
+    `tzinfo` 子类驱动，验的是真的跳表行为（不存在的墙钟跳过、重复的只取 `fold=0`）。
+  - **④ 错过的运行默认跳过，一个旋钮表达两种行为。** `catch_up_window_ms` 默认 0（不补，
+    按 now 重排）；> 0 时错过的到期时刻落在窗口内则**补跑一次而不是逐次补齐**。一次性任务
+    过期标 `MISSED` 并停用，**不静默消失**。
+  - **⑤ 运行历史记的是「派发」不是「turn 的成败」。** 泵吞掉 `TurnReceipt`，而按
+    `session_key` 关联 turn 事件分不清同会话的并发 turn。README 与 `/cron show` 的输出里
+    都这么写着，**不假装看得到结局**。
+  - **⑥ 任务表损坏时进降级态而不是抛异常。** `AgentInstance.start()` 里的
+    `await channel.start()` 没有 try/except，在那里抛会连 CLI 一起带走，而 `BAS-009` 要求
+    任何配置下都有本地交互入口。因此：零任务、不调度、任何改动都以
+    `PERSISTENCE_READ_FAILED` 拒绝并指向那份 `.corrupt-<时间戳>` 备份，**不用空表覆盖**。
+  - **本轮踩到的三个真问题**（都由用例逼出来）：**(a)** 工具原先自己调 `datetime.now()`，
+    于是注入的时钟只管调度循环，「排一条一分钟后的任务」跑去和真实墙钟比——收口成
+    `CronScheduler.now()` 这**一个**时钟出口；**(b)** `datetime.astimezone(tz)` 在
+    `tz is self.tzinfo` 时直接返回自身（CPython 短路），因此「这个墙钟时刻存在吗」的往返
+    判据**必须绕一次 UTC**，否则恒真、春季跳表那天会排出一个不存在的时刻；
+    **(c)** 全文扫 `L`/`W` 会把 `jul` 与 `wed` 一并拒掉，判定必须落在取值粒度上。
+    另外 `due_decision` 需要一条与补跑窗口**分开**的「醒晚了」容差
+    （`DUE_TOLERANCE_MS`，5s）——没有它，默认配置会把每一次正常触发都判成过期。
+  - **参考实现里刻意没搬的三样**（`references/nanobot/nanobot/cron/` 830 行 service +
+    294 行 tool）：**heartbeat**（`HEARTBEAT.md`，用一条普通任务加一句「没有要紧的就回一个
+    字」即可表达）、**local trigger**（`nanobot trigger <id>`，它要进程外入队通道与至少一次
+    投递语义，是另一件事）、**`CronPayload` 那六个投递字段与整套 legacy 兼容分支**
+    （出站按 `channel_id` 路由是 Kernel 既有行为，插件不需要自己认路）。
+  - 验收：新层十个测试目录 + 九个插件共 **3583 passed / 10 skipped / 0 failed**
+    （`D39` 收口时 3351）；`ruff check`（src + plugins + examples）、`tests/architecture`
+    56 个、`check_startup_cost --check` 全通过。
+    **端到端在开发机上真的跑过**（替身 SSE 模型端点 + 临时实例）：
+    `nm plugins enable cron` → `nm capabilities` 五条全在 → 一次真实 turn 里模型调
+    `cron.schedule` 排下一条 15 秒任务（origin = `cli/local`）→ `nm serve` 常驻 45 秒，
+    **三次到期各注入一条 turn，答复回到 CLI 会话**、`history` 三条 `dispatched` →
+    `/cron list|show|pause|resume|run|rm` 与 `list all` 逐条验过（`show` 里能看到一条
+    进程停机期间产生的 `skipped`，那正是默认不补跑**被看见**的样子）→
+    `catch_up_window_ms=600000` 后重启，错过的运行**只补跑一次** →
+    把 `jobs.json` 写坏：实例照常启动、`/cron list` 明说损坏并点名备份、
+    `jobs.json.corrupt-<时间戳>` 留在原处。
 
 
 ## 正在进行
@@ -2139,39 +2201,48 @@
 
 ## 下一步工作
 
-项目范围本轮收窄（见文首）。**M5 只剩一项**（`D39` 已交 Memory）：
+**M5 已全部交齐**（`D36`–`D38` 扩展 Tool、`D39` Memory、`D40` Cron），项目范围本轮收窄
+（见文首）：Model Provider 止步于内建 `model-openai` + `anthropic`，Channel 只做 `feishu`，
+WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只是历史对照。
 
-| # | 模块 | 迁移参考 | 备注 |
-| --- | --- | --- | --- |
-| `D40?` | **Cron / Automation** | `references/nanobot/nanobot/cron/` | 依赖后台任务（`ctx.spawn_task`）与 Hook |
+因此下一轮的候选不再是「再搬一个模块」，而是下面「四件挂着的独立事项」里那几次**冻结表面
+变更**——它们各自都要走 `NFR-104` 的评审，且**都已经被两个以上的插件真实撞上过**
+（`ToolResult` 的 trust 字段撞了两次、`FileAccess` 的字节读写撞了两次）。
+`CapabilityKind.MEMORY` 至今没有 kernel 消费者也在那份清单里。
 
-**「扩展 Tool」已由 `D36`–`D38` 交齐**（`web` / `image` / `mcp` 三个官方插件 +
-`CapabilityDecl.namespace` 机制）。参考实现的 `agent/tools/search.py` 是**文件搜索**，
-已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖，本轮刻意没做；
-`providers/transcription.py`（语音转写）同样没做——它是另一类能力（音频输入），而契约层
-今天没有多模态输入位置。
+**「扩展 Tool」里刻意没做的两样**：参考实现的 `agent/tools/search.py` 是**文件搜索**，
+已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖；`providers/transcription.py`
+（语音转写）是另一类能力（音频输入），而契约层今天没有多模态输入位置。
+**「Cron」里刻意没做的两样**：heartbeat 与 local trigger（理由见 `D40` 条目）。
 
-**五步法在本仓库已经跑通八遍**（`D32` anthropic、`D33` discord、`D34` feishu、`D35` 收尾、
-`D36` web、`D37` image、`D38` mcp、`D39` memory），照它们的形状写：
+**五步法在本仓库已经跑通九遍**（`D32` anthropic、`D33` discord、`D34` feishu、`D35` 收尾、
+`D36` web、`D37` image、`D38` mcp、`D39` memory、`D40` cron），下次做别的模块时照它们的
+形状写：
 
 - a 步**不新写基线**——`references/nanobot/` 里的实现与它自己的测试就是行为说明书。
 - b 步在 `plugins/` 里**新写**而不是搬运（`AGENTS.md` 原则 5）。那份副本被 Git 忽略、
   不在包里、也 import 不到，因此「搬」在物理上就不成立。
 - c/d/e 步：`legacy/` 已经没有对应目录可删，因此这三步退化成「切换调用方 + 更新文档」。
 
-写新插件时**从第一天就按守卫的形状切**（`D32`–`D38` 逐条踩出来的）：
+写新插件时**从第一天就按守卫的形状切**（`D32`–`D40` 逐条踩出来的）：
 
 - 单文件 ≤800 行、`Any` 须带 `# boundary:`、测试树也不许 import `kernel/`——
   `tests/architecture/` 的三条守卫对 `plugins/` **全目录**生效，包括测试。
-- **测试模块名要带插件前缀**（`test_feishu_stream.py` / `_mcp_fakes.py`）。
+- **测试模块名要带插件前缀**（`test_feishu_stream.py` / `_mcp_fakes.py` / `_cron_fakes.py`）。
   `testpaths` 一次收集整个 `plugins/`，而 pytest 按模块名去重：两个插件各有一个
   `test_stream.py` 时，先导入的会顶掉后一个，另一棵测试树整体 `ImportError`。
   **单独跑各自的目录看不出来，跑全量才炸**（`D34` 就是这么发现的）。
 - 平台 SDK 只准一两个模块碰，其余对自定义 Protocol 编程；CI 用 `--no-deps` 装插件，
   因此**测试树在没有平台 SDK 的环境里必须全绿**。`D38-B` 把这条守成了一条 **AST 断言**
   （扫 import 语句而不是文本包含，另配一条自证用例），下一个插件照抄它。
+  `D40` 把它扩成「整棵源码树只 import 标准库 + `nucleamind`」的一条断言。
 - 会发 HTTP 的插件照抄零网络闸门那条 autouse 夹具（现在有八份，判据逐条相同、
   刻意不共享——`R4` 够不着彼此）。
+- **照抄 `inspect.signature` 那条守卫**（`D39` 起，`D40` 扩到了 `Channel` 的四个方法）：
+  插件不在 basedpyright 的 `include` 里，而 `isinstance` 对 Protocol 只查属性存在性,
+  签名不一致因此**没有别的自动闸门**。
+- **有注入时钟的插件不该再有第二处 `datetime.now()`**（`D40` 踩到）：两个时钟会让用例只
+  覆盖其中一个，而另一个跑去和真实墙钟比。
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
@@ -2208,6 +2279,40 @@
    `scope_key`（冻结表面变更），要么承认 `MemoryProvider` 就是「实例级长期记忆」的接口、
    把会话级记忆归给 `ContextProvider`——**目前是后者，但那是默认而不是决定过的**。
 
+### `D40` 留下的、后续必须用到的事实
+
+- **「让实例自己开一条 turn」的正规做法是注册一条 `CHANNEL`，`receive()` 就是那个循环。**
+  不需要 `ctx.spawn_task`、不需要 Hook、不需要给装配根开投递回调。`D31` 的
+  「HTTP 服务是一条 `CHANNEL` 而不是 `submit()` 的包装」与这条是同一句话的两个应用。
+  **下一个「定时 / 事件驱动」能力照这条走。**
+- **一条 Channel 可以产出寻址到别的 Channel 的入站消息**，出站会按 `message.channel_id`
+  路由到那一条。泵不校验「消息的 `channel_id` 是不是产出它的那条 Channel」，
+  `deliver` 找不到目标时静默丢弃。这是 cron 能把结果送回原会话的全部机制，
+  也是它唯一一处**不可检测的失败**（原 Channel 未加载）。
+- **`datetime.astimezone(tz)` 在 `tz is self.tzinfo` 时直接返回自身**（CPython 短路）。
+  任何「这个墙钟时刻在这个时区里存在吗」的往返判据都**必须绕一次 UTC**，否则恒真。
+- **Windows 没有系统时区数据库**，`ZoneInfo("Asia/Shanghai")` 需要 `tzdata`，而 CI 用
+  `--no-deps` 装插件。做法是把名字 → `tzinfo` 的解析收在一处并可注入，其余代码只接受
+  已解析的 `tzinfo`——**整棵测试树因此不依赖时区数据库**，DST 行为用手写的 `tzinfo` 子类
+  真的测到。**下一个碰时区的能力照这条切。**
+- **`nm serve` 下 CLI 仍然是一条已注册的 `CHANNEL`**（`cli_entry` 在 `setup()` 里注册它，
+  与跑的是哪条子命令无关），因此寻址到 `cli` 的出站消息在 `nm serve` 里会打到 stdout。
+  手验 cron 就是靠这一点看到注入 turn 的答复的。
+- **`OutboundMessage` 强制 `channel_id` / `conversation_id` 与 `session_key` 一致**，
+  构造替身出站消息时三者要一起改，否则 `KERNEL_INVARIANT_VIOLATED`。
+- **`StreamState` 的终态叫 `FINAL` 而不是 `COMPLETED`**（五个取值：`STARTED` / `DELTA` /
+  `FINAL` / `CANCELLED` / `FAILED`）。
+- **`ToolResult.data` 里的列表在构造时会被规范化成 tuple**，用例断言要按 tuple 写。
+- **替身 `sleep` 应当真的挂起**（用一个 `asyncio.Event` 门控），不要立即返回：
+  `while True` + `await sleep` 配一个立即返回的替身会变成占满事件循环的忙等，
+  而「循环有没有真的停下来等」这件事就断言不了了。`D33` 踩的是反面（替身不让出事件循环），
+  两条都要避开。等一条「本该到期」的消息一律经 `asyncio.wait_for` 包一层超时——
+  挂住的用例给不出任何信息。
+- **手写替身模型端点要按内容分派而不是按第几次请求**：一次探活请求就会把「该调工具那一轮」
+  用掉；而且工具结果回来后那条 user 消息**仍在上下文里**，只看 user 文本会让它无限调工具
+  直到撞上 `max_iterations`（本轮真的撞了一次，16 条任务）。判据加一条「消息里有没有
+  `role == "tool"`」即可。
+
 ### `D39` 留下的、后续必须用到的事实
 
 - **`CapabilityKind.MEMORY` 仍然没有 kernel 消费者。** `memory` 插件自产自销：记忆靠它
@@ -2221,7 +2326,11 @@
   `InboundMessage` 只有 `channel_id + conversation_id`，缺 `scope`。
 - **插件发不起模型调用**：`PluginContext` 没有这条通道。因此任何「让 LLM 自己整理数据」
   的设计（Dream 式记忆整理、自动摘要、语义 embedding）在今天的机制下都做不出来。
-  它同时依赖 `D40` 的定时触发。想做就要先评审一次 `PluginContext` 的表面扩展。
+  **定时触发这一半已经由 `D40` 兑现**（`cron` 插件到点注入一条 turn，模型因此可以被定时
+  唤醒去做事）；缺的是「插件自己在 turn 之外发起一次模型调用」。**`D40` 的形状说明这一半
+  也许不必加**：想让 LLM 定期整理记忆，写一条 cron 任务让**模型**去调 `memory.*` 工具，
+  比给 `PluginContext` 开一个模型通道更符合「机制优先于功能」。要真的加那条通道，
+  先评审一次 `PluginContext` 的表面扩展。
 - **basedpyright 的 `include = ["src/nucleamind"]` 把 `plugins/` 全部排除在类型检查之外。**
   加上「`isinstance` 对 `runtime_checkable` Protocol 只查属性存在性」「契约基类只在你自己
   传的实参下跑」，**插件实现与契约 Protocol 的签名不一致没有任何自动闸门**——`D39` 就是这么

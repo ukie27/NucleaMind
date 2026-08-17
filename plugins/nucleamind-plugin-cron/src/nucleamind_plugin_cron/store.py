@@ -29,7 +29,7 @@ import os
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from nucleamind.contracts import ErrorCode, JsonValue, NucleaError
 
@@ -105,11 +105,15 @@ class JobStore:
         except OSError as error:
             raise _failed(_READ_FAILED, ErrorCode.PERSISTENCE_READ_FAILED, error) from error
         try:
-            document = json.loads(raw.decode("utf-8"))
+            # `json.loads` 交回 `Any`。**在这里就收成 `object`**，剩下的全靠 isinstance
+            # 收窄——`Any` 会顺着 `document.get(...)` 一路漏进 `decode_job` 的实参，
+            # 于是「边界上把动态数据类型化」（原则 6）就只是句口号。
+            parsed: object = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise self._preserve(error) from error
-        if not isinstance(document, Mapping):
+        if not isinstance(parsed, Mapping):
             raise self._preserve(None)
+        document = cast(Mapping[str, JsonValue], parsed)
         version = document.get("version")
         if isinstance(version, int) and version > SCHEMA_VERSION:
             raise NucleaError(

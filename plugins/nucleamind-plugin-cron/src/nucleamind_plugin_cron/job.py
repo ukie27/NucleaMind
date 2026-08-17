@@ -243,6 +243,7 @@ def decode_job(raw: JsonValue) -> CronJob:
     """JSON → 任务。**未知字段丢弃，缺必填字段报错。**"""
     data = _require_mapping(raw, "job")
     origin = _require_mapping(data.get("origin"), "job.origin")
+    next_run = data.get("next_run_at")
     return CronJob(
         job_id=_require_text(data.get("id"), "job.id"),
         name=_require_text(data.get("name"), "job.name"),
@@ -257,8 +258,8 @@ def decode_job(raw: JsonValue) -> CronJob:
         created_at=parse_moment(data.get("created_at"), field_name="job.created_at"),
         enabled=_require_bool(data.get("enabled"), "job.enabled"),
         next_run_at=(
-            parse_moment(data["next_run_at"], field_name="job.next_run_at")
-            if data.get("next_run_at") is not None
+            parse_moment(next_run, field_name="job.next_run_at")
+            if next_run is not None
             else None
         ),
         history=_decode_history(data.get("history")),
@@ -274,17 +275,19 @@ def _decode_schedule(raw: JsonValue) -> Schedule:
             _BAD_RECORD,
             detail={"field": "job.schedule.kind", "value": kind_text},
         )
+    # 三个可选字段各绑一个局部变量再判：`isinstance(data.get(k), str)` 之后再写
+    # `data[k]` 是两次查表，类型检查器也narrow不到——而它narrow不到的地方，
+    # 正是「判的和取的可能不是同一个值」的地方。
     every = data.get("every_ms")
+    at = data.get("at")
+    expr = data.get("expr")
+    tz = data.get("tz")
     return Schedule(
         kind=ScheduleKind(kind_text),
-        at=(
-            parse_moment(data["at"], field_name="job.schedule.at")
-            if data.get("at") is not None
-            else None
-        ),
+        at=parse_moment(at, field_name="job.schedule.at") if at is not None else None,
         every_ms=every if isinstance(every, int) and not isinstance(every, bool) else None,
-        expr=data["expr"] if isinstance(data.get("expr"), str) else None,
-        tz=data["tz"] if isinstance(data.get("tz"), str) else None,
+        expr=expr if isinstance(expr, str) else None,
+        tz=tz if isinstance(tz, str) else None,
     )
 
 

@@ -1,7 +1,8 @@
 """`channel.py` 的用例：调度循环、注入消息的形状、对账与降级态。
 
-**注入的 `sleep` 真的让出事件循环**（`_cron_fakes.Sleeper`）：不让出会把
-`while True` + `await sleep` 变成饿死事件循环的死循环（`D33` 的坑）。
+**注入的 `sleep` 真的挂起**（`_cron_fakes.Sleeper`）：立即返回的替身会把
+`while True` + `await sleep` 变成占满事件循环的忙等，而「循环有没有真的停下来等」
+就再也断言不了了。等一条到期消息一律经 `due()`，它带超时——挂住的用例给不出信息。
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from nucleamind_plugin_cron.job import RunStatus
 from nucleamind_plugin_cron.settings import resolve_settings
 from nucleamind_plugin_cron.store import JOBS_FILE, JobStore
 
-from nucleamind.contracts import ErrorCode, InstanceId, NucleaError
+from nucleamind.contracts import ErrorCode, InboundMessage, InstanceId, NucleaError
 
 INSTANCE = InstanceId("inst-1")
 
@@ -50,7 +51,7 @@ def build(
     return scheduler, clock, sleeper
 
 
-async def due(scheduler: CronScheduler, *, timeout: float = 2.0) -> object:
+async def due(scheduler: CronScheduler, *, timeout: float = 2.0) -> InboundMessage | None:
     """等一条到期消息，**带超时**。
 
     直接 `await scheduler.next_due()` 在「本该到期却没到期」时会永远挂住，而一条挂住的
@@ -68,7 +69,7 @@ async def test_a_due_job_produces_a_message(tmp_path: Path) -> None:
     job = await scheduler.add(make_job(every_seconds=60))
     clock.advance(seconds=61)
 
-    message = await scheduler.next_due()
+    message = await due(scheduler)
 
     assert message is not None
     assert message.content == job.message
@@ -81,7 +82,7 @@ async def test_the_message_is_addressed_at_the_origin_session(tmp_path: Path) ->
     await scheduler.add(make_job(every_seconds=60, key=OTHER_KEY))
     clock.advance(seconds=61)
 
-    message = await scheduler.next_due()
+    message = await due(scheduler)
 
     assert message is not None
     assert message.channel_id == OTHER_KEY.channel_id
@@ -95,7 +96,7 @@ async def test_the_sender_is_not_an_operator(tmp_path: Path) -> None:
     await scheduler.add(make_job(every_seconds=60))
     clock.advance(seconds=61)
 
-    message = await scheduler.next_due()
+    message = await due(scheduler)
 
     assert message is not None
     assert message.sender.user_id == SENDER_ID
@@ -110,7 +111,7 @@ async def test_metadata_carries_the_job_under_a_namespace(tmp_path: Path) -> Non
     job = await scheduler.add(make_job(every_seconds=60, name="构建检查"))
     clock.advance(seconds=61)
 
-    message = await scheduler.next_due()
+    message = await due(scheduler)
 
     assert message is not None
     payload = message.metadata[METADATA_KEY]
@@ -128,7 +129,7 @@ async def test_each_firing_gets_a_fresh_message_id(tmp_path: Path) -> None:
     ids: set[str] = set()
     for _ in range(3):
         clock.advance(seconds=61)
-        message = await scheduler.next_due()
+        message = await due(scheduler)
         assert message is not None
         ids.add(message.message_id)
     assert len(ids) == 3
@@ -200,8 +201,8 @@ async def test_the_earliest_due_job_goes_first(tmp_path: Path) -> None:
     sooner = await scheduler.add(make_job(every_seconds=60, name="早", message="早的那条"))
     clock.advance(seconds=200)
 
-    first = await scheduler.next_due()
-    second = await scheduler.next_due()
+    first = await due(scheduler)
+    second = await due(scheduler)
 
     assert first is not None and second is not None
     assert (first.content, second.content) == (sooner.message, later.message)
@@ -215,7 +216,7 @@ async def test_firing_records_the_dispatch_and_advances(tmp_path: Path) -> None:
     await scheduler.load()
     job = await scheduler.add(make_job(every_seconds=60))
     clock.advance(seconds=61)
-    await scheduler.next_due()
+    await due(scheduler)
 
     updated = scheduler.get(job.job_id)
     assert updated is not None
@@ -228,8 +229,8 @@ async def test_a_one_shot_job_is_disabled_after_running(tmp_path: Path) -> None:
     scheduler, clock, _ = build(tmp_path)
     await scheduler.load()
     job = await scheduler.add(make_job(at=EPOCH + timedelta(minutes=1), every_seconds=None))
-    clock.advance(minutes=2)
-    assert await scheduler.next_due() is not None
+    clock.advance(seconds=61)
+    assert await due(scheduler) is not None
 
     updated = scheduler.get(job.job_id)
     assert updated is not None
@@ -242,7 +243,7 @@ async def test_state_survives_a_restart(tmp_path: Path) -> None:
     await scheduler.load()
     job = await scheduler.add(make_job(every_seconds=60))
     clock.advance(seconds=61)
-    await scheduler.next_due()
+    await due(scheduler)
 
     revived, _, _ = build(tmp_path)
     await revived.load()
@@ -277,7 +278,7 @@ async def test_downtime_inside_the_window_catches_up_once(tmp_path: Path) -> Non
     scheduler, _, _ = build(tmp_path, config={"catch_up_window_ms": 10 * 60 * 1000})
     await scheduler.load()
 
-    message = await scheduler.next_due()
+    message = await due(scheduler)
     assert message is not None
 
 
@@ -396,7 +397,7 @@ async def test_run_now_makes_it_due(tmp_path: Path) -> None:
     job = await scheduler.add(make_job(every_seconds=86_400))
     await scheduler.run_now(job.job_id)
 
-    message = await scheduler.next_due()
+    message = await due(scheduler)
     assert message is not None
     assert message.content == job.message
 
@@ -508,17 +509,19 @@ async def test_channel_id_is_stable(tmp_path: Path) -> None:
 
 async def test_deliver_is_a_no_op_and_never_raises(tmp_path: Path) -> None:
     """到期任务的出站回的是**原** Channel，不会回到这里。**不抛**（`EDG-204`）。"""
-    from nucleamind.contracts import OutboundMessage, StreamState, TurnId
+    from nucleamind.contracts import OutboundMessage, SessionKey, StreamState, TurnId
 
     scheduler, _, _ = build(tmp_path)
     channel = CronChannel(scheduler)
+    # `OutboundMessage` 强制寻址信息与 `session_key` 一致，因此这里的 key 也得是 cron 的。
+    key = SessionKey(channel_id="cron", conversation_id=KEY.conversation_id, scope=KEY.scope)
     await channel.deliver(
         OutboundMessage(
-            session_key=KEY,
-            channel_id="cron",
-            conversation_id=KEY.conversation_id,
+            session_key=key,
+            channel_id=key.channel_id,
+            conversation_id=key.conversation_id,
             turn_id=TurnId("turn-1"),
             content="whatever",
-            stream_state=StreamState.COMPLETED,
+            stream_state=StreamState.FINAL,
         )
     )

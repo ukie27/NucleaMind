@@ -72,8 +72,10 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   （`plugins/nucleamind-plugin-memory/`，一份 manifest 四类能力：`MEMORY:jsonl` 存储本体 +
   `CONTEXT:memory` 每轮自动召回 + 三条 `TOOL:memory.*` + `COMMAND:memory`），
   外加一次冻结表面变更 **`sdk.testing.MemoryProviderContract`**（第 6 个契约基类）。
-  下一步是 M5 最后一项：**Cron-Automation**，
-  迁移参考在 `references/nanobot/`（本地只读上游副本，见「参考项目读取规范」）；
+  **`D40` 已落地 M5 的最后一项「Cron / Automation」**：官方插件 `cron`
+  （`plugins/nucleamind-plugin-cron/`，一份 manifest 五条能力：`CHANNEL:cron` 调度器本体 +
+  三条 `TOOL:cron.*` + `COMMAND:cron`），**Kernel 一行未改、零新依赖**。
+  **M5 至此交齐，`references/nanobot/` 的迁移清单清空**；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`access/` 与 `cli/`，
@@ -136,7 +138,8 @@ deploy/                    # Dockerfile / compose / entrypoint
 写内建能力或插件时，先继承 `sdk.testing` 的 6 个契约测试基类
 （`D39` 补上了 `MemoryProviderContract`）。**契约基类挡不住签名不一致**——它只在你自己
 传的实参下跑，`isinstance` 又只查属性存在性，见下方 `plugins/nucleamind-plugin-memory/`
-那条。
+那条。那条 `inspect.signature` 守卫在 `D40` 的 `cron` 里已经照抄了一遍
+（`test_cron_plugin.py`，并扩到 `Channel` 的四个方法），**新插件继续照抄**。
 
 **`D22` 给 `PluginContext` 加了 `instance` 与 `turns`**（类型是 `contracts` 的
 `InstanceView` / `TurnControl`，`sdk.__all__` 因此一个字都没变）。它们是插件读取实例自身
@@ -501,6 +504,47 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   `test_memory_plugin.py` 有一条 `inspect.signature` 逐个比对注册实现与契约 Protocol 的
   守卫，**下一个插件照抄它**。
 
+`plugins/nucleamind-plugin-cron/`（`D40`，M5 的 Cron / Automation）七条：
+
+- **调度器就是一条 `CHANNEL`，`receive()` 本身是调度循环。** Channel 的入站是拉模型，
+  因此 `receive()` 可以直接是「睡到下一个到期时刻 → yield 一条消息」的异步生成器：
+  `AgentInstance.start()` 已经会 `channel.start()` 并派生泵，而泵把消息投进 lane 之后
+  **立即回来接着拉**（`_fanout_for`），一条跑十分钟的 turn 不会堵住调度。于是本插件
+  **既不需要 `ctx.spawn_task` 也不需要 Hook**——开发方案里那条「依赖后台任务与 Hook」的
+  备注写在 `D33` 扇出落地之前。**下一个「要自己发起 turn」的能力照这条走**，
+  别去给装配根开新口子。
+- **到期任务注入的是「原会话」的消息**，即创建它时那个 `channel_id + conversation_id`
+  （`job.Origin`；`scope` 不存——它是实例级常量 `deps.scope`）。出站按 `message.channel_id`
+  路由回对应 Channel 是 Kernel 既有行为，因此「每天 9 点在这个群里提醒我」不需要新机制。
+  **代价如实记着**：原 Channel 没加载时那条出站消息被 `deliver` 静默丢弃（既有行为，
+  那是 `embed.submit()` 的正常情形），turn 仍然跑完并入库。插件**不试图检测**——
+  能力名与 `channel_id` 不是一回事（`cli_entry` 注册名是 `CHANNEL_NAME` 而 `channel_id`
+  来自它自己的配置），检测会给出错误的把握；改为把 origin 印在 `/cron list all` 里。
+- **cron 表达式自己解析**（`expr.py`，5 字段，零依赖）。不引入 `croniter`：CI 用
+  `--no-deps` 装插件，依赖它会让所有涉及表达式的用例在 CI 里跑不起来。
+  **时区名的解析只在 `settings.py` 一处且可注入**，`expr.py` / `schedule.py` 只接受已解析
+  的 `tzinfo`——因此**整棵测试树不依赖 tzdata**（Windows 上没有系统时区库），DST 用例用
+  手写的 `tzinfo` 子类驱动，验的是真的跳表行为。
+  **`datetime.astimezone(tz)` 在 `tz is self.tzinfo` 时直接返回自身**（CPython 短路），
+  因此「这个墙钟时刻存在吗」的往返判据**必须绕一次 UTC**，否则它恒真。
+- **`due_decision` 的容差与补跑窗口是两件事。** `catch_up_window_ms`（默认 0）说的是停机
+  之后补不补，`DUE_TOLERANCE_MS`（5s）说的是本次唤醒晚了多少——**没有后者，默认配置会把
+  每一次正常触发都判成过期，任务永远不跑**。窗口判的是「错过了多久」而不是「错过了几次」：
+  停机一小时的每分钟任务补跑一遍，不是六十遍。
+- **运行历史记的是「派发」不是「turn 的成败」。** 泵吞掉 `TurnReceipt`
+  （`_fanout_for` 只在 `admitted=False` 时回音），而按 `session_key` 关联 turn 事件分不清
+  同会话的并发 turn。`RunStatus.DISPATCHED` 因此只说「消息已交给 Kernel」，
+  README 与 `/cron show` 的输出里都这么写着——**不假装看得到结局**。
+- **任务表损坏时进降级态而不是抛异常。** `AgentInstance.start()` 里的
+  `await channel.start()` 没有 try/except，在那里抛会连 CLI 一起带走，而 `BAS-009` 要求
+  任何配置下都有本地交互入口。因此 `load()` 读不出来时：零任务、不调度、任何改动都以
+  `PERSISTENCE_READ_FAILED` 拒绝并指向那份 `.corrupt-<时间戳>` 备份。
+  **`/cron list` 必须说出降级**——一个空列表在这里是误导。
+- **时钟只有一个出口**（`CronScheduler.now()`）。第一版让工具自己调 `datetime.now()`，
+  于是注入的时钟只管调度循环，而「排一条一分钟后的一次性任务」跑去和真实墙钟比——
+  用例因此在真实日期越过某条线之后才开始失败。**插件里凡是有注入时钟的，
+  就不该再有第二处 `datetime.now()`。**
+
 `plugins/nucleamind-plugin-mcp/`（`D38-B`）是第一个桥接类插件，五条：
 
 - **连接必须由一条后台任务拥有**（`supervisor.py`）。`mcp` 的三种传输都建在 anyio 的任务组
@@ -667,11 +711,11 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m ruff check src/ plugins/ examples/
 
 # 插件（D30 的两个示例 + D31 的 openai-api + D32 的 anthropic + D33 的 discord
-# + D34 的 feishu + D36–D38 的 web / image / mcp + D39 的 memory）：经 entry point 发现，
-# 因此必须真的装进环境才跑得起来。
+# + D34 的 feishu + D36–D38 的 web / image / mcp + D39 的 memory + D40 的 cron）：
+# 经 entry point 发现，因此必须真的装进环境才跑得起来。
 # tests/e2e/ 与各插件自己的 tests/ 都要求它们在位。
 # **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi / mcp）因此不在 CI 环境里，
-# 而那三个插件的测试树仍须全绿。
+# 而那三个插件的测试树仍须全绿。cron 的 tzdata 同理——它整棵测试树都不依赖时区数据库。
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
 .venv\Scripts\python.exe -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
@@ -682,6 +726,7 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-image
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-mcp
 .venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-memory
+.venv\Scripts\python.exe -m pip install --no-deps -e plugins/nucleamind-plugin-cron
 
 # 架构守卫（R1–R5 / 模块头部 / 文件规模 / Any 边界），CI 独立作业
 .venv\Scripts\python.exe -m pytest tests/architecture -q
@@ -715,9 +760,9 @@ nm serve
 - 测试或开发命令确实需要访问工作区之外的基础解释器、缓存目录或网络时，应申请
   对应的沙箱权限，并在获得授权后继续使用 `.venv\Scripts\python.exe`。
 
-## 剩余工作与迁移参考（`D38` 之后）
+## 剩余工作与迁移参考（`D40` 之后）
 
-`legacy/` 已经不存在。项目范围本轮收窄成：
+`legacy/` 已经不存在。**M5 至此全部交齐**，项目范围本轮收窄成：
 
 | M5 项 | 范围 |
 | --- | --- |
@@ -725,20 +770,22 @@ nm serve
 | Memory | **已交**：`memory` 插件（`D39`） |
 | 扩展 Tool | **已交**：`web`（`D36`）、`image`（`D37`）、`mcp`（`D38`） |
 | Channel | **只做 `feishu`**（`D34` 已交），其余 13 个放弃 |
-| Cron / Automation | 仍要做 |
+| Cron / Automation | **已交**：`cron` 插件（`D40`） |
 | WebUI | **不做**，前端源码已删 |
 
 「扩展 Tool」里**刻意没做的两样**：参考实现的 `agent/tools/search.py` 是**文件搜索**，
 已被内建 `tools_fs` 的 `fs.grep` / `fs.list` 覆盖；`providers/transcription.py`
 （语音转写）是另一类能力（音频输入），而契约层今天没有多模态输入位置。
+「Cron」里刻意没做的两样：**heartbeat**（`HEARTBEAT.md`，用一条普通任务加一句「没有要紧的
+就回一个字」就能表达）与 **local trigger**（`nanobot trigger <id>`，它要一个进程外的入队
+通道与至少一次投递语义，是另一件事）。
 
-剩下两项的迁移参考在 **`references/nanobot/`**（本地只读的上游副本，被 Git 忽略）。
-它比原来的 `legacy/` 更全——`D31` 从 `legacy/` 删掉的 `agent/tools/` 与 memory 在那里
-还在。代价是未改名、没有通过的测试，因此**只能读不能搬**：按 `AGENTS.md` 原则 5，
-复用实现时把代码写到新家并补测试。
+**`references/nanobot/`**（本地只读的上游副本，被 Git 忽略）从此只是历史对照，
+不再有待迁移项。它比原来的 `legacy/` 更全，但未改名、没有通过的测试，
+因此**只能读不能搬**：按下方原则 5，复用实现时把代码写到新家并补测试。
 
-`D32`–`D38` 已经把 M5 的五步法跑通六遍，**照它们的形状写**：a 步不新写基线，
-b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
+`D32`–`D40` 已经把 M5 的五步法跑通九遍，**下一轮做别的模块时照它们的形状写**：
+a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 
 ### 入口点
 
@@ -754,6 +801,7 @@ b 步在 `plugins/` 里新写而不是搬运，c/d/e 步同 PR 完成。
 - **图像生成**：官方插件 `plugins/nucleamind-plugin-image/`（`image.generate`）
 - **MCP 工具桥接**：官方插件 `plugins/nucleamind-plugin-mcp/`（一条命名空间声明）
 - **长期记忆**：官方插件 `plugins/nucleamind-plugin-memory/`（`/memory` 命令 + 三条工具 + 每轮自动召回）
+- **定时任务**：官方插件 `plugins/nucleamind-plugin-cron/`（`/cron` 命令 + 三条工具 + `CHANNEL:cron` 调度循环）+ `nm serve`
 
 ## 架构约束与改造方向
 
