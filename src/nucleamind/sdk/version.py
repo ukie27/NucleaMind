@@ -4,8 +4,14 @@
 不负责：决定不兼容时怎么办（拒绝加载还是记入报告，由 `D27` 的两阶段加载按 `critical`
 判定）、也不负责主程序版本——SDK 版本与发行版本独立演进。
 
-**当前是 1.0**（`D42` 发布）。§7.6 的兼容承诺从这里起算：minor 只允许新增、移除或语义
+**当前是 1.1**。§7.6 的兼容承诺从 `1.0.0`（`D42`）起算：minor 只允许新增、移除或语义
 变更必须 major、当前 major 的最后一个 minor 发布后至少维护 6 个月。
+
+**`1.1.0` 是 `D45` 的 minor 新增**，四项全部只增不改：`contracts.OpaqueBlock`、
+`ChunkKind.OPAQUE`、`ModelMessage.provider_blocks` / `ModelResponse.provider_blocks`、
+`ModelChunk.block`。想用它们的插件把 `sdk_range` 写成 `">=1.1,<2.0"`——`contracts` 虽然
+不由本模块导出（`R4` 让插件直接 import 它），`sdk_range` 仍然是「我需要多新的宿主」
+唯一的声明处。**声明 `">=1.0"` 的插件一个字都不用改**，那正是 minor 的含义。
 
 **为什么是这一刻。** 0.x 那段时间的理由是「Kernel 尚未落地，宣布 1.0 等于承诺一个还没有
 被任何实现验证过的表面」，条件写的是「`D30` 插件里程碑达成后」。`D30` 之后又过了十一个
@@ -30,7 +36,7 @@ from nucleamind.contracts import ErrorCode, NucleaError
 __all__ = ["SDK_VERSION", "is_compatible", "parse_sdk_range"]
 
 #: 当前 SDK 版本（语义化版本，PEP 440 可解析）。插件用 `sdk_range` 声明兼容范围。
-SDK_VERSION: Final = "1.0.0"
+SDK_VERSION: Final = "1.1.0"
 
 #: 解析好的当前版本。模块级常量：`is_compatible()` 在阶段 A 的校验循环里逐个插件调用，
 #: 每次重新解析同一个字面量没有意义。

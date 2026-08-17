@@ -18,7 +18,9 @@ from nucleamind.contracts import (
     ErrorCategory,
     ErrorCode,
     ModelChunk,
+    ModelResponse,
     NucleaError,
+    OpaqueBlock,
     Role,
     SideEffect,
     StopReason,
@@ -326,3 +328,48 @@ def test_escaped_result_keeps_nuclea_error_code() -> None:
     result = escaped_result(tool_call("echo"), original)
     assert result.error is original
     assert result.side_effect is SideEffect.UNKNOWN
+
+
+# ------------------------------------------- `provider_blocks`：本轮内的原样回传（`D45`）
+
+
+def _opaque(kind: str = "thinking", **payload: object) -> OpaqueBlock:
+    return OpaqueBlock(provider="anthropic", kind=kind, payload=payload)  # type: ignore[arg-type]
+
+
+def test_opaque_chunks_are_accumulated_in_arrival_order() -> None:
+    """**不去重、不解释**：私有块的语义只有产出它的那一家知道，顺序往往就是它要求的
+    回传顺序。"""
+    folder = StreamFolder("m")
+    first, second = _opaque(signature="a"), _opaque(signature="b")
+    folder.push(ModelChunk(kind=ChunkKind.OPAQUE, block=first))
+    folder.push(ModelChunk(kind=ChunkKind.TEXT, text="答案"))
+    folder.push(ModelChunk(kind=ChunkKind.OPAQUE, block=second))
+    folder.push(ModelChunk(kind=ChunkKind.DONE, stop_reason=StopReason.END_TURN))
+
+    response = folder.finish()
+    assert response.provider_blocks == (first, second)
+    # opaque 块**不进正文**：它们不是模型说给用户听的话。
+    assert response.content == "答案"
+
+
+def test_assistant_message_carries_the_blocks_into_the_next_round() -> None:
+    """这是整条路径的支点。`D45` 之前 Anthropic 的 thinking 块在这一步被丢掉，
+    于是 thinking 与工具调用不能同时用。"""
+    blocks = (_opaque(signature="sig"),)
+    response = ModelResponse(
+        model_id="m",
+        stop_reason=StopReason.TOOL_CALLS,
+        content="我想了想",
+        tool_calls=(ToolCall(call_id="c1", name="fs.read", arguments={}),),
+        provider_blocks=blocks,
+    )
+    assert assistant_message(response).provider_blocks == blocks
+
+
+def test_a_stream_without_opaque_chunks_produces_no_blocks() -> None:
+    """绝大多数 Provider 一个 opaque 块都不产。它们的响应必须与 `D45` 之前逐字相同。"""
+    folder = StreamFolder("m")
+    folder.push(ModelChunk(kind=ChunkKind.TEXT, text="好"))
+    folder.push(ModelChunk(kind=ChunkKind.DONE, stop_reason=StopReason.END_TURN))
+    assert folder.finish().provider_blocks == ()

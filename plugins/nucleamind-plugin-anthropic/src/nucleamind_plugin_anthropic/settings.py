@@ -40,6 +40,7 @@ from nucleamind.sdk import PluginContext
 from .wire import (
     CACHE_TTLS,
     EFFORT_LEVELS,
+    PROVIDER_NAME,
     THINKING_BUDGET,
     THINKING_MODES,
     THINKING_OFF,
@@ -79,8 +80,8 @@ __all__ = [
 #: 本插件的能力名。MODEL 是 MULTI_UNIQUE，因此它在 kind 内唯一——内建占的是 `openai`。
 CAPABILITY_NAME: Final = "anthropic"
 
-#: `ModelInfo.provider`，诊断里「这个回答是谁生成的」的答案。
-PROVIDER_NAME: Final = "anthropic"
+#: `PROVIDER_NAME` 在 `wire.py` 里定义（`D45` 起 `OpaqueBlock.provider` 也用它），
+#: 从这里原样再导出——本模块 import `wire`，反过来会成环。
 
 #: 凭据名，**固定不可配置**。manifest 里声明的是 `secret:api_key`，做成可配置会让那条
 #: 权限声明变成一句谎话——而权限声明的全部价值就是它如实（`D19` 的先例）。

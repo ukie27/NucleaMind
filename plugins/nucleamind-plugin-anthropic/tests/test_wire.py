@@ -31,9 +31,16 @@ from nucleamind_plugin_anthropic.wire import (
     encode_messages,
     normalize_turns,
     sanitize_tool_id,
+    thinking_blocks,
 )
 
-from nucleamind.contracts import ModelMessage, Role, SamplingParams, ToolCall
+from nucleamind.contracts import (
+    ModelMessage,
+    OpaqueBlock,
+    Role,
+    SamplingParams,
+    ToolCall,
+)
 
 # ------------------------------------------------------------------------------ 请求编码
 
@@ -365,3 +372,92 @@ class TestThinkingAndCaching:
         assert "cache_control" in payload["messages"][-2]["content"][-1]
 
 
+
+
+# ------------------------------------------ thinking 块的多轮回放（`D45`）
+
+
+def thinking(text: str = "嗯", signature: str = "sig") -> OpaqueBlock:
+    payload: dict[str, str] = {}
+    if text:
+        payload["thinking"] = text
+    if signature:
+        payload["signature"] = signature
+    return OpaqueBlock(provider="anthropic", kind="thinking", payload=payload)
+
+
+class TestThinkingReplay:
+    """`D45` 补上的能力：thinking 与工具调用现在可以同时用。
+
+    在此之前 `thinking` 块在解码时就被丢掉，续写请求因此缺了 Anthropic 要求原样回传的块，
+    直接被拒——那是相对 legacy 的一处真实能力回退，如实记在包 docstring 里。
+    """
+
+    def test_thinking_blocks_are_replayed_before_text_and_tool_use(self) -> None:
+        """**顺序是行为**：Anthropic 要求 thinking 块排在同一条 assistant 轮的最前面。"""
+        _, turns = encode_messages(
+            [
+                ModelMessage(role=Role.USER, content="算一下"),
+                ModelMessage(
+                    role=Role.ASSISTANT,
+                    content="我查一下",
+                    tool_calls=(ToolCall(call_id="c1", name="fs.read", arguments={}),),
+                    provider_blocks=(thinking(),),
+                ),
+                ModelMessage(role=Role.TOOL, content="42", tool_call_id="c1"),
+            ]
+        )
+        assistant = next(turn for turn in turns if turn["role"] == "assistant")
+        assert [block["type"] for block in assistant["content"]] == [
+            "thinking",
+            "text",
+            "tool_use",
+        ]
+        assert assistant["content"][0] == {
+            "type": "thinking",
+            "thinking": "嗯",
+            "signature": "sig",
+        }
+
+    def test_a_redacted_block_is_replayed_by_its_data(self) -> None:
+        """它没有 `signature`，凭据在 `data` 里；我们连读都读不了，只能原样回传。"""
+        block = OpaqueBlock(
+            provider="anthropic", kind="redacted_thinking", payload={"data": "opaque=="}
+        )
+        assert thinking_blocks((block,)) == [{"type": "redacted_thinking", "data": "opaque=="}]
+
+    def test_a_block_from_another_provider_is_skipped(self) -> None:
+        """`EDG-305`：切换 Provider 之后同一段历史不该带着上一家的块跑。
+
+        `payload` 的形状是私有的，把别家的 `thinking` 块当成自己的塞进请求体换来一个 400。
+        """
+        alien = OpaqueBlock(provider="openai", kind="thinking", payload={"signature": "x"})
+        assert thinking_blocks((alien,)) == []
+
+    def test_a_thinking_block_without_a_signature_is_skipped(self) -> None:
+        """Anthropic 拒绝无签名的思考块。留一半比不留更糟——这正是 `D32` 当初整块丢弃的
+        理由，现在它只作用在残缺的块上。"""
+        assert thinking_blocks((thinking(signature=""),)) == []
+
+    def test_an_omitted_thinking_block_still_replays_its_signature(self) -> None:
+        """`display: "omitted"` 时正文恒为空串。Anthropic 要的是签名，正文空不空与它无关。"""
+        assert thinking_blocks((thinking(text=""),)) == [
+            {"type": "thinking", "thinking": "", "signature": "sig"}
+        ]
+
+    def test_an_unknown_kind_is_skipped(self) -> None:
+        """本插件只产出那两种；第三种只可能来自手改的历史或未来版本。"""
+        odd = OpaqueBlock(provider="anthropic", kind="future_block", payload={"x": "y"})
+        assert thinking_blocks((odd,)) == []
+
+    def test_a_message_without_blocks_encodes_exactly_as_before(self) -> None:
+        """绝大多数消息一个 opaque 块都没有。它们的线格式必须与 `D45` 之前逐字相同。"""
+        _, turns = encode_messages(
+            [
+                ModelMessage(role=Role.USER, content="在吗"),
+                ModelMessage(role=Role.ASSISTANT, content="在"),
+                ModelMessage(role=Role.USER, content="好"),
+            ]
+        )
+        assistant = next(turn for turn in turns if turn["role"] == "assistant")
+        assert assistant["content"] == [{"type": "text", "text": "在"}]

@@ -18,9 +18,20 @@
 - **只解析 `data:` 行、按载荷自带的 `type` 分派。** SSE 帧同时有 `event:` 与 `data:`，两个
   真相来源会在中转改写 `event:` 时静默分叉。也没有 `[DONE]` 哨兵——流结束就是迭代结束。
 
-**`thinking` 块被丢弃**：`ModelResponse` 没有 reasoning 槽，`ModelMessage` 也没有地方放
-`signature` 供多轮回放。丢弃这件事记进 `provider_metadata`（「思考发生过但没带出来」必须
-查得到），完整说明见包 docstring 里那段「已知的能力回退」。
+**`thinking` 块经 `OpaqueBlock` 带出来**（`D45`）。`D32`–`D44` 期间它们被丢掉：契约里没有
+放 `signature` 的地方，而没有签名的思考块回放过去会被 Anthropic 拒绝，留一半比不留更糟——
+代价是 thinking 与工具调用**不能同时用**。`contracts.OpaqueBlock` 补上了那个槽位，因此这里
+改为把 `thinking` / `redacted_thinking` 原样带出（连着 `signature`），由
+`wire.encode_messages` 在续写时原样回传。
+
+**三条不变的判定：**
+
+- **`display: "omitted"` 的空思考块仍然产出 `OpaqueBlock`**（正文为空但 `signature` 有值）：
+  Anthropic 要的是那个签名，正文是不是空与它无关。
+- **文本增量与 opaque 块是两条独立通路**：`thinking_delta` 仍然产出
+  `ChunkKind.REASONING`（给人看，进事件流不进答案），签名走 `ChunkKind.OPAQUE`。同一段思考
+  因此在两个地方各出现一次，那是刻意的——它们的消费者不同。
+- **块里只放 Anthropic 自己要回来的字段**，不塞我们的推断。
 """
 
 from __future__ import annotations
@@ -37,12 +48,13 @@ from nucleamind.contracts import (
     ModelChunk,
     ModelResponse,
     NucleaError,
+    OpaqueBlock,
     StopReason,
     TokenUsage,
     ToolCall,
 )
 
-from .wire import decode_tool_name
+from .wire import PROVIDER_NAME, THINKING_KINDS, decode_tool_name
 
 __all__ = [
     "SSE_DATA_PREFIX",
@@ -71,10 +83,6 @@ _STOP_REASONS: Final[Mapping[str, StopReason]] = {
     "stop_sequence": StopReason.STOP_SEQUENCE,
     "refusal": StopReason.CONTENT_FILTER,
 }
-
-#: 两种被丢弃的思考块。分开计数是因为 `redacted_thinking` 表示内容被供应商加密了，
-#: 与「我们主动丢掉了明文思考」不是一回事。
-_THINKING_KINDS: Final[tuple[str, ...]] = ("thinking", "redacted_thinking")
 
 _BAD_TOOL_USE: Final = "模型返回的工具调用不符合契约。"
 _BAD_ARGUMENTS: Final = "模型返回的工具调用参数不是 JSON 对象。"
@@ -169,15 +177,32 @@ class _Decoded:
 
     text: str = ""
     calls: tuple[ToolCall, ...] = ()
-    thinking: int = 0
-    redacted: int = 0
+    #: 要原样回传的思考块（`D45`）。**按到达顺序**——Anthropic 要求续写时 thinking 块排在
+    #: 同一条 assistant 轮的最前面且保持原序。
+    blocks: tuple[OpaqueBlock, ...] = ()
     unknown: int = 0
+
+
+def _thinking_block(kind: str, block: Mapping[str, JsonValue]) -> OpaqueBlock:
+    """一个 `thinking` / `redacted_thinking` 块 → `OpaqueBlock`。
+
+    **只保留 Anthropic 自己要回来的字段**（`thinking` / `signature` / `data`），不塞我们的
+    推断。原样把整个块搬进 payload 也行得通，但那会让「这里到底依赖了哪几个字段」不可读，
+    而下一个人改 `wire.thinking_blocks()` 时读的正是这一条。
+    """
+    payload: dict[str, JsonValue] = {}
+    for key in ("thinking", "signature", "data"):
+        value = block.get(key)
+        if isinstance(value, str) and value:
+            payload[key] = value
+    return OpaqueBlock(provider=PROVIDER_NAME, kind=kind, payload=payload)
 
 
 def _decode_blocks(blocks: Sequence[JsonValue]) -> _Decoded:
     parts: list[str] = []
     calls: list[ToolCall] = []
-    counts = {"thinking": 0, "redacted_thinking": 0, "unknown": 0}
+    opaque: list[OpaqueBlock] = []
+    unknown = 0
     for raw in blocks:
         block = _mapping(raw)
         kind = block.get("type")
@@ -198,16 +223,15 @@ def _decode_blocks(blocks: Sequence[JsonValue]) -> _Decoded:
                     arguments=_arguments(block.get("input"), name=decoded),
                 )
             )
-        elif isinstance(kind, str) and kind in _THINKING_KINDS:
-            counts[kind] += 1
+        elif isinstance(kind, str) and kind in THINKING_KINDS:
+            opaque.append(_thinking_block(kind, block))
         else:
-            counts["unknown"] += 1
+            unknown += 1
     return _Decoded(
         text="".join(parts),
         calls=tuple(calls),
-        thinking=counts["thinking"],
-        redacted=counts["redacted_thinking"],
-        unknown=counts["unknown"],
+        blocks=tuple(opaque),
+        unknown=unknown,
     )
 
 
@@ -236,10 +260,10 @@ def _metadata(
     if isinstance(raw_stop, str) and raw_stop and raw_stop not in _STOP_REASONS:
         # 不认识的终止原因照实记下来：推断出来的那个终态是我们的结论，不是它说的。
         meta["raw_stop_reason"] = raw_stop
-    if decoded.thinking:
-        meta["dropped_thinking_blocks"] = decoded.thinking
-    if decoded.redacted:
-        meta["dropped_redacted_thinking_blocks"] = decoded.redacted
+    if decoded.blocks:
+        # 「思考发生过、而且带出来了」的观测信号。`D45` 之前这里记的是
+        # `dropped_thinking_blocks`——现在没有东西被丢掉了，留着那个名字会说反话。
+        meta["thinking_blocks"] = len(decoded.blocks)
     if decoded.unknown:
         meta["unknown_content_blocks"] = decoded.unknown
     usage = _mapping(body.get("usage"))
@@ -262,6 +286,7 @@ def decode_response(
         tool_calls=decoded.calls,
         usage=decode_usage(body.get("usage")),
         provider_metadata=_metadata(body, decoded, request_id=request_id),
+        provider_blocks=decoded.blocks,
     )
 
 
@@ -273,6 +298,28 @@ def parse_sse_data(line: str) -> str | None:
     if not line.startswith(SSE_DATA_PREFIX):
         return None
     return line[len(SSE_DATA_PREFIX) :].strip()
+
+
+@dataclass(slots=True)
+class _PendingThinking:
+    """一个尚未定案的思考块（`D45`）。
+
+    流式下它分三处到达：`content_block_start` 给出块类型（`thinking` / `redacted_thinking`
+    与 `redacted_thinking` 的 `data`），`thinking_delta` 给正文，`signature_delta` 给签名。
+    **签名通常最后到**，因此块只能在流结束时才发得出——与 `tool_use` 完全同一个理由。
+    """
+
+    kind: str = "thinking"
+    text: str = ""
+    signature: str = ""
+    data: str = ""
+
+    def to_block(self) -> OpaqueBlock:
+        payload: dict[str, JsonValue] = {}
+        for key, value in (("thinking", self.text), ("signature", self.signature), ("data", self.data)):
+            if value:
+                payload[key] = value
+        return OpaqueBlock(provider=PROVIDER_NAME, kind=self.kind, payload=payload)
 
 
 @dataclass(slots=True)
@@ -295,8 +342,9 @@ class StreamDecoder:
     stop_reason: JsonValue | None = None
     usage: TokenUsage = field(default_factory=TokenUsage)
     _pending: dict[int, _PendingCall] = field(default_factory=dict)
+    #: 按 `index` 索引的待定思考块。`index` 是流式下唯一的身份键（与 `tool_use` 同）。
+    _thinking: dict[int, _PendingThinking] = field(default_factory=dict)
     _meta: dict[str, JsonValue] = field(default_factory=dict)
-    _thinking: int = 0
     _output_tokens: int = 0
 
     def push(self, event: Mapping[str, JsonValue]) -> tuple[ModelChunk, ...]:
@@ -331,9 +379,20 @@ class StreamDecoder:
 
     def _absorb_block_start(self, event: Mapping[str, JsonValue]) -> None:
         block = _mapping(event.get("content_block"))
-        if block.get("type") != "tool_use":
-            return
+        kind = block.get("type")
         index = _read_int(event, "index")
+        if isinstance(kind, str) and kind in THINKING_KINDS:
+            # `redacted_thinking` 的全部内容都在这一帧的 `data` 里（它没有 delta）。
+            data = block.get("data")
+            signature = block.get("signature")
+            self._thinking[index] = _PendingThinking(
+                kind=kind,
+                data=data if isinstance(data, str) else "",
+                signature=signature if isinstance(signature, str) else "",
+            )
+            return
+        if kind != "tool_use":
+            return
         call_id = block.get("id")
         name = block.get("name")
         self._pending[index] = _PendingCall(
@@ -350,11 +409,21 @@ class StreamDecoder:
                 return (ModelChunk(kind=ChunkKind.TEXT, text=text),)
             return ()
         if kind == "thinking_delta":
-            self._thinking += 1
             text = delta.get("thinking")
-            # `display: "omitted"` 时思考块恒为空串，跳过而不是发一堆空分片。
             if isinstance(text, str) and text:
+                self._thinking_at(event).text += text
+                # 文本增量与 opaque 块是**两条独立通路**：这一条给人看（进事件流不进答案），
+                # 签名那一条给 Anthropic。同一段思考在两处各出现一次是刻意的。
                 return (ModelChunk(kind=ChunkKind.REASONING, text=text),)
+            # `display: "omitted"` 时思考块恒为空串，跳过而不是发一堆空分片。**但块本身
+            # 仍然要建**——Anthropic 要的是签名，正文是不是空与它无关。
+            self._thinking_at(event)
+            return ()
+        if kind == "signature_delta":
+            # `D45` 之前它在这里被吞掉，于是 thinking 与工具调用不能同时用。
+            signature = delta.get("signature")
+            if isinstance(signature, str) and signature:
+                self._thinking_at(event).signature += signature
             return ()
         if kind == "input_json_delta":
             fragment = delta.get("partial_json")
@@ -362,9 +431,15 @@ class StreamDecoder:
                 pending = self._pending.setdefault(_read_int(event, "index"), _PendingCall())
                 # 唯一一处 `+=`：分片切在任意字节边界上，拼完才能解析。
                 pending.arguments += fragment
-        # `signature_delta` 落在这里被吞掉：契约里没有放签名的地方，而没有签名的思考块
-        # 回放过去会被 Anthropic 拒绝——留一半比不留更糟。
         return ()
+
+    def _thinking_at(self, event: Mapping[str, JsonValue]) -> _PendingThinking:
+        """取（或补建）这个 `index` 上的待定思考块。
+
+        补建是为了容错：中转如果吞掉了 `content_block_start`，签名仍然该留住。默认
+        `kind="thinking"`（`redacted_thinking` 没有 delta，走不到这里）。
+        """
+        return self._thinking.setdefault(_read_int(event, "index"), _PendingThinking())
 
     def _absorb_message_delta(self, event: Mapping[str, JsonValue]) -> None:
         delta = _mapping(event.get("delta"))
@@ -380,7 +455,13 @@ class StreamDecoder:
             self._output_tokens = _read_int(usage, "output_tokens")
 
     def finish(self) -> tuple[ModelChunk, ...]:
-        """收尾：按 `index` 升序的工具调用分片 → 用量分片 → **恰好一个** DONE 分片。"""
+        """收尾：opaque 分片 → 工具调用分片 → 用量分片 → **恰好一个** DONE 分片。全部按
+        `index` 升序。
+
+        **opaque 排在最前面**：`StreamFolder` 按到达顺序累积它们，而 Anthropic 要求续写时
+        thinking 块排在同一条 assistant 轮的最前面且保持原序。在这里就把序摆对，
+        `wire.encode_messages` 那边因此不需要再排一次。
+        """
         calls = tuple(
             _tool_call(
                 call_id=pending.call_id,
@@ -391,8 +472,10 @@ class StreamDecoder:
         )
         usage = self._final_usage()
         chunks: list[ModelChunk] = [
-            ModelChunk(kind=ChunkKind.TOOL_CALL, tool_call=call) for call in calls
+            ModelChunk(kind=ChunkKind.OPAQUE, block=self._thinking[key].to_block())
+            for key in sorted(self._thinking)
         ]
+        chunks.extend(ModelChunk(kind=ChunkKind.TOOL_CALL, tool_call=call) for call in calls)
         if usage.total_tokens or usage.cached_input_tokens:
             chunks.append(ModelChunk(kind=ChunkKind.USAGE, usage=usage))
         chunks.append(
@@ -415,7 +498,7 @@ class StreamDecoder:
         """流式的供应商元数据。`provider.py` 不消费它，留给诊断与用例。"""
         meta = dict(self._meta)
         if self._thinking:
-            meta["dropped_thinking_blocks"] = self._thinking
+            meta["thinking_blocks"] = len(self._thinking)
         raw = self.stop_reason
         if isinstance(raw, str) and raw and raw not in _STOP_REASONS:
             meta["raw_stop_reason"] = raw

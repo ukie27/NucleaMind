@@ -36,6 +36,7 @@ from nucleamind.contracts import (
     JsonValue,
     ModelMessage,
     ModelRequest,
+    OpaqueBlock,
     Role,
     ToolCall,
     ToolSpec,
@@ -47,8 +48,10 @@ __all__ = [
     "EFFORT_LEVELS",
     "EMPTY_TEXT",
     "MESSAGES_PATH",
+    "PROVIDER_NAME",
     "THINKING_ADAPTIVE",
     "THINKING_BUDGET",
+    "THINKING_KINDS",
     "THINKING_DISABLED",
     "THINKING_MODES",
     "THINKING_OFF",
@@ -66,6 +69,17 @@ __all__ = [
 
 #: 请求路径。拼在 `base_url` 之后，`base_url` 自身原样使用。
 MESSAGES_PATH: Final = "/messages"
+
+#: `ModelInfo.provider` 与 `OpaqueBlock.provider`：诊断里「这个回答是谁生成的」的答案，
+#: 也是 opaque 块的所有权标记（`D45`）。**定义在这里而不是 `settings.py`**：`settings`
+#: 已经 import 本模块，反向 import 会成环；而这个串本来就是线格式一侧的身份。
+#: `settings.py` 原样再导出它，既有引用一个没变。
+PROVIDER_NAME: Final = "anthropic"
+
+#: 两种要原样回传的思考块（`D45`）。`redacted_thinking` 的内容被供应商加密了——它同样
+#: 必须回传，而且**只能**原样回传（我们连读都读不了）。`decode.py` 产出它们，
+#: `thinking_blocks()` 把它们编回线格式。
+THINKING_KINDS: Final[tuple[str, ...]] = ("thinking", "redacted_thinking")
 
 #: 四种 thinking 形态。它们是**线格式的四种形状**，不是四个模型家族——选哪一个由运维
 #: 按自己在用的模型决定，本模块不猜。
@@ -241,7 +255,9 @@ def encode_messages(
             )
             continue
         if message.role is Role.ASSISTANT:
-            blocks: list[JsonValue] = []
+            # **thinking 块必须排在最前面**（`D45`）：Anthropic 要求续写时把上一轮的
+            # thinking 块原样放回同一条 assistant 轮的开头，顺序也要保持。
+            blocks: list[JsonValue] = list(thinking_blocks(message.provider_blocks))
             if message.content:
                 blocks.append(_text_block(message.content))
             blocks.extend(_tool_use_blocks(message.tool_calls, ids))
@@ -249,6 +265,44 @@ def encode_messages(
             continue
         turns.append({"role": "user", "content": [_text_block(message.content)]})
     return system, normalize_turns(turns)
+
+
+def thinking_blocks(blocks: Sequence[OpaqueBlock]) -> list[dict[str, JsonValue]]:
+    """`OpaqueBlock` → Anthropic 的 `thinking` / `redacted_thinking` 块（`D45`）。
+
+    **不是自己产出的一律跳过**（`OpaqueBlock.owned_by`，`EDG-305`）：`payload` 的形状是私有
+    的，别家的 `thinking` 块不是同一种东西，把它当成自己的塞进请求体换来的是一个 400。
+    切换 Provider 之后同一段会话历史因此**不会**带着上一家的块跑。
+
+    **没有 `signature` 的 `thinking` 块也跳过**：Anthropic 拒绝无签名的思考块，留一半比
+    不留更糟（那正是 `D32` 当初选择整块丢弃的理由，现在只作用在残缺的块上）。
+    `redacted_thinking` 例外——它的凭据在 `data` 里，本来就没有 `signature`。
+
+    **不认识的 `kind` 跳过**：本插件只产出那两种，第三种只可能来自手改的历史或未来版本。
+    """
+    encoded: list[dict[str, JsonValue]] = []
+    for block in blocks:
+        if not block.owned_by(PROVIDER_NAME) or block.kind not in THINKING_KINDS:
+            continue
+        payload = dict(block.payload)
+        if block.kind == "redacted_thinking":
+            data = payload.get("data")
+            if isinstance(data, str) and data:
+                encoded.append({"type": "redacted_thinking", "data": data})
+            continue
+        signature = payload.get("signature")
+        if not isinstance(signature, str) or not signature:
+            continue
+        text = payload.get("thinking")
+        encoded.append(
+            {
+                "type": "thinking",
+                # 空正文是合法的（`display: "omitted"`）；Anthropic 要的是签名。
+                "thinking": text if isinstance(text, str) else "",
+                "signature": signature,
+            }
+        )
+    return encoded
 
 
 def _merge_same_role(turns: Sequence[Mapping[str, JsonValue]]) -> list[dict[str, JsonValue]]:

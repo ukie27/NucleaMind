@@ -20,14 +20,20 @@ OpenAI 兼容层能连到 Anthropic 的中转，但 prompt caching 的断点、t
 - 旧实现用 `anthropic` 官方 SDK。这里直接用 httpx，因此可以注入 `httpx.MockTransport`
   让整套用例零真实网络地跑，宿主发行版也不必再依赖那个 SDK。
 
+**thinking 块的多轮回放在 `D45` 补上了。** `D32`–`D44` 期间它是相对旧实现的一处真实能力
+回退：Anthropic 要求同一模型的多轮续写把 `thinking` 块（含 `signature`）原样回传，而契约的
+`ModelMessage` 没有放 provider 私有块的槽位，因此 thinking 与工具调用**不能同时用**。
+`contracts.OpaqueBlock` 补上了那个槽位（`ModelResponse.provider_blocks` →
+`folding.assistant_message()` → `wire.thinking_blocks()`）。
+
+**它只活到本轮 turn 结束**：opaque 块不进 `SessionMessage`，因此跨 turn 拿不回来。这够用——
+需要回放的场景全都是同一条 turn 内的工具循环。要跨 turn 得先决定「一份加密的思考签名该不该
+成为用户资产」（`SES-006` 一旦发布就是契约），那是另一个决定。
+
 **三条如实记着的边界**，写在这里而不是留给用户发现：
 
-- **thinking 块无法多轮回放。** Anthropic 要求同一模型的多轮续写把 `thinking` 块（含
-  `signature`）原样回传，而契约的 `ModelMessage` 只有 `role` / `content` / `tool_calls` /
-  `tool_call_id`，**没有放 provider 私有块的槽位**。因此思考内容在流式里以
-  `ChunkKind.REASONING` 出现一次，之后就不再进入上下文。这是相对旧实现的**真实能力回退**；
-  修它要给契约加一个 opaque 块槽位，那是一次要走评审的冻结表面变更（`NFR-104`），
-  不在本轮范围内。
+- **不回放别家产出的 opaque 块**（`OpaqueBlock.owned_by`，`EDG-305`），也不回放缺
+  `signature` 的 thinking 块——Anthropic 拒绝无签名的思考块，留一半比不留更糟。
 - **不支持图像与文档输入。** `ModelMessage.content` 是纯字符串，契约层没有多模态位置，
   旧实现的 `_convert_image_block` 因此没有搬运源。
 - **不声明任何 server tool**（web_search / code_execution 等）。它们会绕过 `ToolExecutor`，

@@ -154,8 +154,12 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
         frozenset({"temperature", "top_p", "max_output_tokens", "stop_sequences", "seed"}),
     ),
     ModelMessage: (
-        "§10.6 有序消息与 Context",
-        frozenset({"role", "content", "tool_calls", "tool_call_id"}),
+        # `provider_blocks` 是 `D45` 加的，它对应的不是 §10.6 的某一行，而是 `EDG-305`
+        # 的一条**受控例外**：有些供应商要求原样回传自己产出的块（Anthropic 的
+        # `thinking`）才肯继续跑工具循环。它仍然只能是归一化 JSON、仍然带所有权标记、
+        # 仍然不进 `SessionMessage`。
+        "§10.6 有序消息与 Context（+ EDG-305 的 provider_blocks 例外）",
+        frozenset({"role", "content", "tool_calls", "tool_call_id", "provider_blocks"}),
     ),
     ModelRequest: (
         "§10.6 请求（模型标识/消息/工具/参数/关联 ID）",
@@ -178,12 +182,23 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
     ModelResponse: (
         "§10.6 响应（内容/Tool Call/终止原因/用量/归一化元数据）",
         frozenset(
-            {"model_id", "stop_reason", "content", "tool_calls", "usage", "provider_metadata"}
+            {
+                "model_id",
+                "stop_reason",
+                "content",
+                "tool_calls",
+                "usage",
+                "provider_metadata",
+                # `D45`，理由同 `ModelMessage` 那条。
+                "provider_blocks",
+            }
         ),
     ),
     ModelChunk: (
         "§10.6 流式增量",
-        frozenset({"kind", "text", "tool_call", "usage", "stop_reason"}),
+        # `block` 是 `OPAQUE` 分片的载荷（`D45`）：流式下 opaque 块必须与文本、工具调用
+        # 走同一条通路，否则 `StreamFolder` 收不到它。
+        frozenset({"kind", "text", "tool_call", "usage", "stop_reason", "block"}),
     ),
     SessionMessage: (
         "§9.7 SES-002 / SES-004 持久化单元",

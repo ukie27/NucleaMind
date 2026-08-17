@@ -123,8 +123,12 @@ class TestResponseDecoding:
     def test_missing_usage_is_zero_not_an_error(self) -> None:
         assert decode_usage(None).total_tokens == 0
 
-    def test_thinking_blocks_are_dropped_but_counted(self) -> None:
-        """「思考发生过但没带出来」必须查得到。"""
+    def test_thinking_blocks_come_out_as_opaque_blocks(self) -> None:
+        """`D45`：思考块**不再被丢掉**，连着 `signature` 原样带出来。
+
+        在此之前它们只被计数（`dropped_thinking_blocks`），因此 thinking 与工具调用不能
+        同时用——续写请求缺了那些块会被 Anthropic 拒绝。
+        """
         response = decode_response(
             message_body(
                 content=[
@@ -136,8 +140,16 @@ class TestResponseDecoding:
             model_id=MODEL_ID,
         )
         assert response.content == "答案"
-        assert response.provider_metadata["dropped_thinking_blocks"] == 1
-        assert response.provider_metadata["dropped_redacted_thinking_blocks"] == 1
+        assert [block.kind for block in response.provider_blocks] == [
+            "thinking",
+            "redacted_thinking",
+        ]
+        # **只保留 Anthropic 自己要回来的字段**，不塞我们的推断。
+        assert dict(response.provider_blocks[0].payload) == {"thinking": "嗯", "signature": "sig"}
+        assert dict(response.provider_blocks[1].payload) == {"data": "..."}
+        # 所有权标记让别家的编码器跳过它们（`EDG-305`）。
+        assert all(block.owned_by("anthropic") for block in response.provider_blocks)
+        assert response.provider_metadata["thinking_blocks"] == 2
 
     def test_unknown_blocks_are_counted_not_fatal(self) -> None:
         response = decode_response(
@@ -211,8 +223,15 @@ class TestStreaming:
         chunks = await collect(provider, make_request(stream=True))
         kinds = [chunk.kind for chunk in chunks]
         assert kinds[:2] == [ChunkKind.REASONING, ChunkKind.TEXT]
-        # `signature_delta` 被吞掉：契约里没有放签名的地方。
+        # 推理**文本**给人看（进事件流不进答案），签名给 Anthropic——两条独立通路，同一段
+        # 思考在两处各出现一次是刻意的。
         assert all(chunk.text != "sig" for chunk in chunks)
+        # `D45`：`signature_delta` 不再被吞掉，它随收尾的 OPAQUE 分片出来。
+        opaque = [chunk for chunk in chunks if chunk.kind is ChunkKind.OPAQUE]
+        assert len(opaque) == 1
+        assert opaque[0].block is not None
+        assert dict(opaque[0].block.payload) == {"thinking": "推理", "signature": "sig"}
+        assert opaque[0].block.kind == "thinking"
 
     def test_tool_use_arguments_survive_any_split(self) -> None:
         """分片切在任意字节边界上，拼完才能解析。"""
@@ -316,3 +335,104 @@ class TestStreaming:
         assert excinfo.value.retryable is True
 
 
+
+
+class TestStreamingThinkingBlocks:
+    """流式下 thinking 块的三处到达（`D45`）：块类型、正文、签名。"""
+
+    def test_opaque_chunks_come_first_and_in_index_order(self) -> None:
+        """**顺序在这里就摆对**：`StreamFolder` 按到达顺序累积，而 Anthropic 要求续写时
+        thinking 块保持原序排在最前面。`wire.encode_messages` 那边因此不再排一次。"""
+        decoder = StreamDecoder()
+        for index in (1, 0):
+            decoder.push(
+                {
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {"type": "thinking", "thinking": ""},
+                }
+            )
+            decoder.push(
+                {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "signature_delta", "signature": f"sig{index}"},
+                }
+            )
+        decoder.push({"type": "message_delta", "delta": {"stop_reason": "end_turn"}})
+
+        chunks = decoder.finish()
+        opaque = [chunk for chunk in chunks if chunk.kind is ChunkKind.OPAQUE]
+        assert list(chunks[:2]) == opaque, "opaque 分片必须排在最前面"
+        assert [chunk.block.payload["signature"] for chunk in opaque] == ["sig0", "sig1"]
+
+    def test_a_redacted_block_arrives_whole_in_content_block_start(self) -> None:
+        """它没有 delta——全部内容都在起始帧的 `data` 里。"""
+        decoder = StreamDecoder()
+        decoder.push(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "redacted_thinking", "data": "opaque=="},
+            }
+        )
+        decoder.push({"type": "message_delta", "delta": {"stop_reason": "end_turn"}})
+
+        block = decoder.finish()[0].block
+        assert block is not None
+        assert block.kind == "redacted_thinking"
+        assert dict(block.payload) == {"data": "opaque=="}
+
+    def test_an_omitted_thinking_block_still_produces_its_signature(self) -> None:
+        """`display: "omitted"` 时正文恒为空串，但块本身仍然要建——Anthropic 要的是签名。"""
+        decoder = StreamDecoder()
+        decoder.push(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            }
+        )
+        decoder.push(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": ""},
+            }
+        )
+        decoder.push(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "sig"},
+            }
+        )
+        decoder.push({"type": "message_delta", "delta": {"stop_reason": "end_turn"}})
+
+        block = decoder.finish()[0].block
+        assert block is not None
+        assert dict(block.payload) == {"signature": "sig"}
+
+    def test_a_signature_without_a_block_start_is_still_kept(self) -> None:
+        """容错：中转吞掉了 `content_block_start` 时签名仍然该留住。"""
+        decoder = StreamDecoder()
+        decoder.push(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "sig"},
+            }
+        )
+        decoder.push({"type": "message_delta", "delta": {"stop_reason": "end_turn"}})
+        block = decoder.finish()[0].block
+        assert block is not None and block.kind == "thinking"
+
+    def test_a_stream_without_thinking_produces_no_opaque_chunks(self) -> None:
+        """绝大多数流一个 opaque 分片都没有。它们必须与 `D45` 之前逐字相同。"""
+        decoder = StreamDecoder()
+        decoder.push(
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "好"}}
+        )
+        decoder.push({"type": "message_delta", "delta": {"stop_reason": "end_turn"}})
+        assert [chunk.kind for chunk in decoder.finish()] == [ChunkKind.DONE]
+        assert "thinking_blocks" not in decoder.metadata

@@ -107,13 +107,15 @@ cache_read_input_tokens` 三项之和**——线格式里的 `input_tokens` 只�
 
 ## 已知边界
 
-这三条如实记在这里，不留给你去发现：
+这几条如实记在这里，不留给你去发现：
 
-- **thinking 块无法多轮回放。** Anthropic 要求多轮续写时把 `thinking` 块（含 `signature`）
-  原样回传，而契约的 `ModelMessage` 只有 `role` / `content` / `tool_calls` /
-  `tool_call_id`，没有放 provider 私有块的槽位。因此思考内容在流式里以 `reasoning` 增量
-  出现一次，之后不再进入上下文。这是相对被删除的 `legacy/providers/anthropic_provider.py`
-  的**真实能力回退**；修它要给契约加一个 opaque 块槽位。
+- **thinking 块的回放只活到本轮 turn 结束。** `D45` 起 thinking 块（含 `signature`）会被
+  原样回传，因此 thinking 与工具调用可以同时用（在此之前不行——那是相对被删除的
+  `legacy/providers/anthropic_provider.py` 的一处真实能力回退）。但 opaque 块不进
+  `SessionMessage`，跨 turn 拿不回来。需要回放的场景全都是同一条 turn 内的工具循环，
+  因此这够用；真要跨 turn 得先决定一份加密的思考签名该不该成为用户资产。
+- **缺 `signature` 的 thinking 块与别家产出的 opaque 块都会被跳过。** 前者 Anthropic 直接
+  拒绝，后者的载荷形状是私有的（`EDG-305`）。
 - **不支持图像与文档输入。** `ModelMessage.content` 是纯字符串，契约层没有多模态位置。
 - **不做重试与故障转移。** 重试是编排层的策略，本插件只把 `retryable` 与 `retry_after_ms`
   如实标在 `NucleaError` 上。两处都做会叠成一个放大器。

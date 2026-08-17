@@ -14,7 +14,7 @@ def test_sdk_version_is_a_valid_pep440_version() -> None:
 
 
 def test_sdk_version_is_one_point_x() -> None:
-    """§7.6 的兼容承诺已经起算（`D42` 发的 1.0.0）。
+    """§7.6 的兼容承诺已经起算（`D42` 发的 1.0.0，`D45` 起是 1.1.0）。
 
     原来这里断言的是 `major == 0`，并在 docstring 里写着「发 1.0 时本用例会失败——那是
     刻意的提醒」。它**真的按设计失败了一次**，`D42` 顺着它确认了承诺可兑现：十一个官方

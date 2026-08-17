@@ -28,6 +28,7 @@ from nucleamind.contracts import (
     ModelMessage,
     ModelResponse,
     NucleaError,
+    OpaqueBlock,
     Role,
     SideEffect,
     StopReason,
@@ -63,9 +64,22 @@ class StreamFolder:
     **不累积 reasoning**：`ModelResponse` 没有推理字段，推理只作为 `ModelReasoningDelta`
     事件流出，不进入答案也不进入下一轮请求。这是契约层的决定（推理属于过程不属于资产），
     这里只是不去违背它。
+
+    **`OPAQUE` 分片是那条决定的受控例外**（`D45`）：它累积的不是推理**文本**，而是
+    产出它的 Provider 要求原样回传的私有块。两者的差别是「谁需要它」——推理文本是给人
+    看的，opaque 块是那家供应商继续跑下去的前提条件。
     """
 
-    __slots__ = ("_calls", "_done", "_fragments", "_model_id", "_stop", "_text", "_usage")
+    __slots__ = (
+        "_blocks",
+        "_calls",
+        "_done",
+        "_fragments",
+        "_model_id",
+        "_stop",
+        "_text",
+        "_usage",
+    )
 
     def __init__(self, model_id: str) -> None:
         self._model_id = model_id
@@ -74,6 +88,7 @@ class StreamFolder:
         self._fragments = 0
         self._usage: TokenUsage | None = None
         self._stop: StopReason | None = None
+        self._blocks: list[OpaqueBlock] = []
         self._done = False
 
     @property
@@ -92,6 +107,11 @@ class StreamFolder:
             self._text.append(chunk.text)
         elif chunk.kind is ChunkKind.TOOL_CALL and chunk.tool_call is not None:
             self._push_call(chunk.tool_call)
+        elif chunk.kind is ChunkKind.OPAQUE and chunk.block is not None:
+            # **按到达顺序累积，不去重、不解释**（`D45`）：Provider 私有块的语义只有
+            # 产出它的那一家知道，顺序往往就是它要求的回传顺序。上界由
+            # `ModelMessage` 的 `MAX_OPAQUE_BLOCKS` 兜住。
+            self._blocks.append(chunk.block)
         elif chunk.kind is ChunkKind.USAGE:
             # 最后一个胜出。相加会让「每片都发累计用量」的供应商翻倍。
             self._usage = chunk.usage
@@ -160,6 +180,7 @@ class StreamFolder:
             tool_calls=tuple(self._calls.values()),
             usage=self._usage or TokenUsage(),
             provider_metadata=metadata,
+            provider_blocks=tuple(self._blocks),
         )
 
     def _require_open(self) -> None:
@@ -176,11 +197,16 @@ def assistant_message(response: ModelResponse) -> ModelMessage:
 
     只在「有工具调用、要继续下一轮」时被调用，因此 `ModelMessage` 的「content 与 tool_calls
     不得同时为空」必然满足——这条约束不是靠校验绕过的，是靠调用点结构消除的。
+
+    **`provider_blocks` 原样搬过去**（`D45`）：Anthropic 的 thinking 块必须连着
+    `signature` 回传才肯继续跑工具循环，而这里正是「上一轮的话变成下一轮的输入」那一刻。
+    Kernel 不读它们、不筛它们——按 `provider` 过滤是消费方（Provider 的编码器）的事。
     """
     return ModelMessage(
         role=Role.ASSISTANT,
         content=response.content,
         tool_calls=response.tool_calls,
+        provider_blocks=response.provider_blocks,
     )
 
 

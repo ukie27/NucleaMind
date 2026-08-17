@@ -9,6 +9,10 @@
 `normalize_metadata()`，这就是「Provider 私有响应对象不得直接越过 Provider 边界」
 （§10.6 末段）在类型层的强制：SDK 对象连塞进来的机会都没有，切换 Provider 时历史里
 也不会残留只有旧 SDK 才认识的结构（`EDG-305`）。
+
+`OpaqueBlock`（`D45`）是那条规则的**受控例外**：有些供应商要求把自己产出的某些块原样回传
+才肯继续（Anthropic 的 `thinking`）。它仍然只能是归一化 JSON、仍然带着 `provider` 所有权
+标记、仍然不进 `SessionMessage`——变的只是「本轮内可以把它交还给产出它的那一家」。
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ __all__ = [
     "ModelMessage",
     "ModelRequest",
     "ModelResponse",
+    "OpaqueBlock",
     "SamplingParams",
     "StopReason",
     "TokenUsage",
@@ -42,6 +47,10 @@ __all__ = [
 
 #: 模型标识的长度上限。
 _MAX_MODEL_ID_LENGTH: Final = 256
+
+#: 一条消息上最多带几个 opaque 块。上界存在的理由是它防的是**累积**：opaque 块随
+#: assistant 消息一路回放，一个每轮多产几个块的 provider 会让请求体单调增长。
+MAX_OPAQUE_BLOCKS: Final = 64
 
 
 class ModelCapability(StrEnum):
@@ -83,7 +92,49 @@ class ChunkKind(StrEnum):
     REASONING = "reasoning"
     TOOL_CALL = "tool_call"
     USAGE = "usage"
+    OPAQUE = "opaque"
     DONE = "done"
+
+
+@dataclass(frozen=True, slots=True)
+class OpaqueBlock:
+    """一块只有产出它的 Provider 认识的内容（`D45`）。
+
+    存在的理由是一类真实的能力回退：有些供应商要求把它自己产出的某些块**原样回传**才肯
+    继续，而那些块的内容对 Kernel 毫无意义。Anthropic 的 `thinking` 块是第一个例子——
+    开了 extended thinking 又要跑工具循环时，续写请求必须带回上一轮的 `thinking` 块（含
+    `signature`），否则请求被拒。在 `D45` 之前 `ModelMessage` 没有放它的地方，那个块只能
+    被丢掉，于是 `anthropic` 插件的 thinking 与工具调用**不能同时用**。
+
+    **三条规则，全部为了 `EDG-305`（切换 Provider 不残留只有旧 SDK 认识的结构）：**
+
+    1. **`provider` 是所有权标记，消费方必须按它过滤。** 一个 Provider 遇到不是自己产出的
+       块要**跳过**而不是尝试解释——`payload` 的形状是私有的，两家供应商的 `thinking` 块
+       不是同一种东西。取值约定等于 `ModelInfo.provider`。
+    2. **`payload` 走 `normalize_metadata()`**，与 `ModelResponse.provider_metadata` 同一条
+       强制：SDK 对象连塞进来的机会都没有。Kernel 从不读它的内容。
+    3. **它不进 `SessionMessage`，因此活不过本轮 turn。** 这是刻意的、也是够用的：
+       需要回放的场景全都是「同一条 turn 内的工具循环」。跨 turn 回放要先决定这些私有块
+       该不该成为用户资产（一份加密的思考签名存进会话文件里，`SES-006` 一旦发布就是契约），
+       那是另一个决定。**如实写在这里，不假装它是持久的。**
+    """
+
+    provider: str
+    kind: str
+    payload: Mapping[str, JsonValue] = EMPTY_METADATA
+
+    def __post_init__(self) -> None:
+        validate_identifier("model.opaque_block.provider", self.provider)
+        validate_identifier("model.opaque_block.kind", self.kind)
+        object.__setattr__(
+            self,
+            "payload",
+            normalize_metadata(self.payload, field="model.opaque_block.payload"),
+        )
+
+    def owned_by(self, provider: str) -> bool:
+        """是不是这家 Provider 产出的。消费方用它过滤（见类 docstring 第 1 条）。"""
+        return self.provider == provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +217,9 @@ class ModelMessage:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+    #: Provider 私有块，原样回传给**产出它的那家**（`D45`，见 `OpaqueBlock`）。
+    #: 只有 assistant 消息能带——它们是模型这一轮说的话的一部分。
+    provider_blocks: tuple[OpaqueBlock, ...] = ()
 
     def __post_init__(self) -> None:
         if self.tool_calls and self.role is not Role.ASSISTANT:
@@ -174,6 +228,18 @@ class ModelMessage:
                 "只有 assistant 消息可以携带 tool_calls。",
                 detail={"role": self.role.value},
             )
+        if self.provider_blocks and self.role is not Role.ASSISTANT:
+            raise NucleaError(
+                ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                "只有 assistant 消息可以携带 provider_blocks。",
+                detail={"role": self.role.value},
+            )
+        if len(self.provider_blocks) > MAX_OPAQUE_BLOCKS:
+            raise NucleaError(
+                ErrorCode.INPUT_TOO_LARGE,
+                "一条消息携带的 provider_blocks 超过上限。",
+                detail={"blocks": len(self.provider_blocks), "limit": MAX_OPAQUE_BLOCKS},
+            )
         if (self.role is Role.TOOL) != (self.tool_call_id is not None):
             raise NucleaError(
                 ErrorCode.KERNEL_INVARIANT_VIOLATED,
@@ -181,6 +247,8 @@ class ModelMessage:
                 detail={"role": self.role.value},
             )
         if not self.content and not self.tool_calls:
+            # **`provider_blocks` 不算正文**：一条只有 thinking 块的消息对模型不构成发言，
+            # 而放行它会让「消息非空」这条不变量变成「有某种东西就行」。
             raise NucleaError(
                 ErrorCode.INPUT_MALFORMED,
                 "模型消息的内容与 tool_calls 不能同时为空。",
@@ -279,6 +347,9 @@ class ModelResponse:
     tool_calls: tuple[ToolCall, ...] = ()
     usage: TokenUsage = TokenUsage()
     provider_metadata: Mapping[str, JsonValue] = EMPTY_METADATA
+    #: 本轮产出的 Provider 私有块（`D45`）。`folding.assistant_message()` 把它们搬到下一轮
+    #: 请求的 assistant 消息上；Kernel 不读它们的内容。
+    provider_blocks: tuple[OpaqueBlock, ...] = ()
 
     def __post_init__(self) -> None:
         validate_identifier("model.model_id", self.model_id, max_length=_MAX_MODEL_ID_LENGTH)
@@ -320,6 +391,7 @@ class ModelChunk:
     tool_call: ToolCall | None = None
     usage: TokenUsage | None = None
     stop_reason: StopReason | None = None
+    block: OpaqueBlock | None = None
 
     def __post_init__(self) -> None:
         expectations = {
@@ -327,6 +399,7 @@ class ModelChunk:
             ChunkKind.REASONING: bool(self.text),
             ChunkKind.TOOL_CALL: self.tool_call is not None,
             ChunkKind.USAGE: self.usage is not None,
+            ChunkKind.OPAQUE: self.block is not None,
             ChunkKind.DONE: self.stop_reason is not None,
         }
         if not expectations[self.kind]:

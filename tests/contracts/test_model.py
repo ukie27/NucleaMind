@@ -22,6 +22,7 @@ from nucleamind.contracts import (
     ModelRequest,
     ModelResponse,
     NucleaError,
+    OpaqueBlock,
     Role,
     SamplingParams,
     SessionKey,
@@ -246,10 +247,86 @@ def test_chunk_accepts_its_own_payload(label: str, chunk: dict[str, object]) -> 
 
 
 @pytest.mark.parametrize(
-    "kind", [ChunkKind.TEXT, ChunkKind.REASONING, ChunkKind.TOOL_CALL, ChunkKind.USAGE, ChunkKind.DONE]
+    "kind",
+    [
+        ChunkKind.TEXT,
+        ChunkKind.REASONING,
+        ChunkKind.TOOL_CALL,
+        ChunkKind.USAGE,
+        ChunkKind.OPAQUE,
+        ChunkKind.DONE,
+    ],
 )
 def test_chunk_without_its_payload_is_rejected(kind: ChunkKind) -> None:
     """一个 chunk 同时带多种载荷，下游就得靠猜决定先处理哪个。"""
     with pytest.raises(NucleaError) as exc:
         ModelChunk(kind)
     assert exc.value.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+
+
+# ------------------------------------------------ `OpaqueBlock`：`EDG-305` 的受控例外（`D45`）
+
+
+def block(provider: str = "anthropic", kind: str = "thinking", **payload: object) -> OpaqueBlock:
+    return OpaqueBlock(provider=provider, kind=kind, payload=payload)  # type: ignore[arg-type]
+
+
+def test_an_opaque_block_still_refuses_sdk_objects() -> None:
+    """它是 `EDG-305` 的**受控**例外：受控的部分就是「仍然只能是归一化 JSON」。
+
+    放宽这一条，一个 SDK 对象就能顺着 assistant 消息一路回放，而切换 Provider 之后没人
+    认识它——那正是 `provider_metadata` 那条强制要防的事。
+    """
+    with pytest.raises(NucleaError) as exc:
+        OpaqueBlock(provider="anthropic", kind="thinking", payload={"obj": object()})  # type: ignore[dict-item]
+    assert exc.value.code is ErrorCode.INPUT_MALFORMED
+
+
+def test_ownership_is_how_a_provider_decides_to_skip_a_block() -> None:
+    """两家供应商的 `thinking` 块不是同一种东西。消费方按 `provider` 过滤，不猜。"""
+    thinking = block()
+    assert thinking.owned_by("anthropic")
+    assert not thinking.owned_by("openai")
+
+
+def test_only_an_assistant_message_can_carry_provider_blocks() -> None:
+    """它们是模型这一轮说的话的一部分——与 `tool_calls` 同一条规则。"""
+    for role in (Role.USER, Role.SYSTEM):
+        with pytest.raises(NucleaError) as exc:
+            ModelMessage(role=role, content="x", provider_blocks=(block(),))
+        assert exc.value.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+
+
+def test_provider_blocks_are_not_content() -> None:
+    """一条只有 thinking 块的消息对模型不构成发言。
+
+    放行它会让「消息非空」这条不变量退化成「有某种东西就行」。
+    """
+    with pytest.raises(NucleaError) as exc:
+        ModelMessage(role=Role.ASSISTANT, provider_blocks=(block(),))
+    assert exc.value.code is ErrorCode.INPUT_MALFORMED
+
+
+def test_too_many_opaque_blocks_is_rejected() -> None:
+    """上界防的是**累积**：opaque 块随 assistant 消息一路回放，一个每轮多产几个块的
+    Provider 会让请求体单调增长。"""
+    from nucleamind.contracts.model import MAX_OPAQUE_BLOCKS
+
+    blocks = tuple(block(kind=f"thinking{index}") for index in range(MAX_OPAQUE_BLOCKS + 1))
+    with pytest.raises(NucleaError) as exc:
+        ModelMessage(role=Role.ASSISTANT, content="x", provider_blocks=blocks)
+    assert exc.value.code is ErrorCode.INPUT_TOO_LARGE
+
+
+def test_a_response_carries_blocks_and_a_message_can_take_them_verbatim() -> None:
+    """`folding.assistant_message()` 的前提：两边的类型与顺序完全一致。"""
+    blocks = (block(kind="thinking"), block(kind="redacted_thinking"))
+    response = ModelResponse(
+        model_id="m", stop_reason=StopReason.TOOL_CALLS,
+        tool_calls=(ToolCall(call_id="c1", name="fs.read", arguments={}),),
+        provider_blocks=blocks,
+    )
+    message = ModelMessage(
+        role=Role.ASSISTANT, content="x", provider_blocks=response.provider_blocks
+    )
+    assert message.provider_blocks == blocks
