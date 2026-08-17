@@ -41,10 +41,15 @@ jobs:
         run: pip install -e ".[dev]"
 
       # 插件经 entry point 被发现，因此必须真的装进环境（D30 的两个示例、D31 的官方
-      # openai-api、D32 的 anthropic、D33 的 discord、D34 的 feishu）。tests/e2e/ 的第一条
-      # 用例会在没装时明确报出来。
-      # **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi）因此不在 CI 环境里，
-      # 而两个 Channel 插件的测试树仍须全绿——这正是「只有一两个模块接触 SDK」换来的东西。
+      # openai-api、D32 的 anthropic、D33 的 discord、D34 的 feishu、D36-D38 的
+      # web / image / mcp、D39 的 memory、D40 的 cron）。tests/e2e/ 的第一条用例会在
+      # 没装时明确报出来。
+      # **这张清单漏一个就是 CI 红**：`testpaths` 收集整个 `plugins/`，而每棵测试树都
+      # `import nucleamind_plugin_<id>`——没装就是收集期 ModuleNotFoundError，
+      # 不是「少跑几个用例」。加官方插件时必须同时加这里（D40 发现 D36 起漏了五个）。
+      # **--no-deps 是刻意的**：平台 SDK（discord.py / lark-oapi / mcp）因此不在 CI
+      # 环境里，而那三个插件的测试树仍须全绿——这正是「只有一两个模块接触 SDK」换来的
+      # 东西。cron 的 tzdata 同理：它整棵测试树都不依赖时区数据库。
       - name: Install plugins
         run: |
           pip install --no-deps -e examples/plugins/nucleamind-plugin-echo-tool
@@ -53,6 +58,11 @@ jobs:
           pip install --no-deps -e plugins/nucleamind-plugin-anthropic
           pip install --no-deps -e plugins/nucleamind-plugin-discord
           pip install --no-deps -e plugins/nucleamind-plugin-feishu
+          pip install --no-deps -e plugins/nucleamind-plugin-web
+          pip install --no-deps -e plugins/nucleamind-plugin-image
+          pip install --no-deps -e plugins/nucleamind-plugin-mcp
+          pip install --no-deps -e plugins/nucleamind-plugin-memory
+          pip install --no-deps -e plugins/nucleamind-plugin-cron
 
       - name: Lint
         run: ruff check src/ plugins/ examples/ scripts/ tests/
