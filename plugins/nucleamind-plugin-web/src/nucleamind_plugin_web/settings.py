@@ -100,7 +100,7 @@ class CustomBackend:
     method: str = "POST"
     query_field: str = "query"
     count_field: str = ""
-    headers: Mapping[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict[str, str])
     results_path: str = "results"
     title_field: str = "title"
     url_field: str = "url"

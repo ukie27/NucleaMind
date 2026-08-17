@@ -21,6 +21,7 @@ from datetime import datetime, tzinfo
 from typing import Final
 
 from nucleamind.contracts import ErrorCode, JsonValue, NucleaError
+from nucleamind.sdk import ManifestJsonSchema
 
 __all__ = [
     "CONFIG_SCHEMA",
@@ -72,7 +73,9 @@ TzResolver = Callable[[str], tzinfo]
 
 #: manifest 的 `config_schema`。它校验**形状**，`resolve_settings()` 校验它表达不了的
 #: 那些（下界、时区名是否真的解析得出来）。
-CONFIG_SCHEMA: Final[Mapping[str, JsonValue]] = {
+#: 标注成 `ManifestJsonSchema` 而不是 `contracts.JsonSchema`：契约那个类型进不了
+#: pydantic 模型（会 `RecursionError`），细节见 `sdk/manifest.py::ManifestJsonValue`。
+CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
     "type": "object",
     "properties": {
         "dir": {

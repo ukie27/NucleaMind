@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 
 from nucleamind.contracts import JsonValue
 
@@ -64,8 +64,11 @@ def mentions_from(raw: Sequence[JsonValue]) -> tuple[Mention, ...]:
         key = item.get("key")
         if not isinstance(key, str) or not key:
             continue
-        ident = item.get("id")
-        ident = ident if isinstance(ident, Mapping) else {}
+        raw_ident = item.get("id")
+        # boundary: 平台把 id 装在一个嵌套对象里；取不到就当空表，逐个键仍要判类型。
+        ident: Mapping[str, object] = (
+            cast("Mapping[str, object]", raw_ident) if isinstance(raw_ident, Mapping) else {}
+        )
         name = item.get("name")
         open_id = ident.get("open_id")
         user_id = ident.get("user_id")

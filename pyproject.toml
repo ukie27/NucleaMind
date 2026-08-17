@@ -106,8 +106,22 @@ max-complexity = 12
 "examples/plugins/*/tests/**/*.py" = ["C901", "PLR0915", "TRY", "ASYNC"]
 
 [tool.basedpyright]
-include = ["src/nucleamind"]
-exclude = ["**/tests"]
+# `D41` 起插件也在检查范围内。它们是独立发行包，但契约不一致（签名、Protocol 形状）
+# 只有类型检查看得见——`D39` 的 `handle(invocation, cancel)` 与 `D41` 的
+# `EventHandler` 同步/协程都是测试全绿而实际会炸。两条 include 由
+# `tests/architecture/test_type_check_scope.py` 钉住。
+include = ["src/nucleamind", "plugins/**/src", "examples/plugins/**/src"]
+# 四个模块排除在外，因为 CI 用 `--no-deps` 装插件、`discord.py` / `lark-oapi` / `mcp`
+# 在那里根本不存在（见 test_ci_plugin_list.py）。它们在本地报「SDK 类型未知」、在 CI 报
+# 「import 解析不到」，两套诊断对不上。**这张清单同样有守卫**：它必须恰好等于
+# import 了那三个包的模块集合，多一个少一个都失败。
+exclude = [
+    "**/tests",
+    "plugins/nucleamind-plugin-discord/src/nucleamind_plugin_discord/gateway.py",
+    "plugins/nucleamind-plugin-feishu/src/nucleamind_plugin_feishu/client.py",
+    "plugins/nucleamind-plugin-feishu/src/nucleamind_plugin_feishu/gateway.py",
+    "plugins/nucleamind-plugin-mcp/src/nucleamind_plugin_mcp/client.py",
+]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"
 

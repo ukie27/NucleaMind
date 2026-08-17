@@ -33,7 +33,13 @@ from .api import (
     ShellAccess,
     ShellResult,
 )
-from .manifest import CapabilityDecl, PermissionDecl, PluginManifest, parse_manifest
+from .manifest import (
+    CapabilityDecl,
+    ManifestJsonSchema,
+    PermissionDecl,
+    PluginManifest,
+    parse_manifest,
+)
 from .version import SDK_VERSION, is_compatible
 
 __all__ = [
@@ -44,6 +50,7 @@ __all__ = [
     "FileAccess",
     "HttpAccess",
     "HttpResponse",
+    "ManifestJsonSchema",
     "NucleaAPI",
     "PermissionDecl",
     "PluginContext",

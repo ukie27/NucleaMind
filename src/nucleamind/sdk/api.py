@@ -68,8 +68,23 @@ __all__ = [
     "ShellResult",
 ]
 
-#: 事件订阅的回调形状。返回 `None` 的协程：订阅者是观察者，没有可被采纳的返回值。
-EventHandler = Callable[[RuntimeEvent], Awaitable[None]]
+#: 事件订阅的回调形状。**同步与协程都接受**，两者都没有可被采纳的返回值——订阅者是
+#: 观察者。
+#:
+#: **`D41` 把同步那一半补了进来。** 原来这里只写 `Awaitable[None]`，而
+#: `EventBus` 的订阅面本来就是同步的（`Subscriber = Callable[[RuntimeEvent], None]`，
+#: `publish()` 绝不 await 订阅者）；桥接层 `runtime/plugin_context.PluginEventBridge`
+#: 无条件把 `handler(event)` 的返回值喂给 `create_task`。于是一个同步 handler 会：
+#: 先被正常调用（副作用照常发生），随后 `await None` 在一条无人认领的 Task 里抛
+#: `TypeError`，只留下一句 "Task exception was never retrieved"。
+#:
+#: 官方插件 `feishu`（工具提示）与 `openai-api`（用量统计）注册的都是同步 handler，
+#: 因此两处一直在每个事件上多产一条异常 Task——**在插件进入类型检查范围之前，
+#: 没有任何东西会指出这件事**。这与 `D39` 漏掉 `handle(invocation, cancel)` 是同一类。
+#:
+#: 放宽返回类型而不是收紧调用方：既有的协程 handler 一个字都不用改，
+#: 而同步 handler 本来就是 bus 的原生形状。判定「要不要 await」在桥接层做一次。
+EventHandler = Callable[[RuntimeEvent], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, slots=True)

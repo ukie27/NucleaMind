@@ -71,10 +71,10 @@ class ServerSettings:
     enabled: bool = True
     command: str = ""
     args: tuple[str, ...] = ()
-    env: Mapping[str, str] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=dict[str, str])
     cwd: str = ""
     url: str = ""
-    headers: Mapping[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass(frozen=True, slots=True)

@@ -41,6 +41,7 @@ from typing import Final
 from nucleamind.contracts import CapabilityKind, ErrorCode, NucleaError, PermissionKind, SecretStr
 from nucleamind.sdk import (
     CapabilityDecl,
+    ManifestJsonSchema,
     NucleaAPI,
     PermissionDecl,
     PluginContext,
@@ -100,10 +101,11 @@ __all__ = [
 #: 插件配置块的 JSON Schema。阶段 A 在**加载之前**按它校验一次形状，`settings.py` 在
 #: `setup()` 里再按语义校验一次（取值之间的关系，例如代理三元组的完整性）。
 #:
-#: **刻意不加类型标注**：`PluginManifest.config_schema` 的值类型是 pydantic 的递归
-#: `JsonValue`，而 `dict` 的值类型不变，嵌套字面量怎么标注都推不成它的子类型
-#: （`D32` 试过，`openai-api` 也是内联字面量）。
-CONFIG_SCHEMA: Final = {
+#: 标注成 `ManifestJsonSchema` 而不是 `contracts.JsonSchema`：契约那个类型进不了
+#: pydantic 模型（会 `RecursionError`），细节与另外两个被否掉的候选见
+#: `sdk/manifest.py::ManifestJsonValue`。`D41` 之前这里刻意不标注，因为当时的字段
+#: 类型是 pydantic 的 `JsonValue`，`dict` 值不变导致嵌套字面量怎么标都不成子类型。
+CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
     "type": "object",
     "properties": {
         "channel_id": {"type": "string"},

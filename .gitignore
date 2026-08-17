@@ -100,3 +100,7 @@ exp/
 .playwright-mcp/
 bridge/node_modules/
 .pytest-tmp/
+
+# 类型检查的临时输出（D41 排查用）
+bp.json
+bp.err

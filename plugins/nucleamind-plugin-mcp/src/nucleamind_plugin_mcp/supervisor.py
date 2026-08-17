@@ -50,12 +50,12 @@ class Discovery:
     """一次发现的全部产出：能注册的工具、每个 server 的会话、以及各类问题。"""
 
     tools: tuple[DiscoveredTool, ...] = ()
-    sessions: Mapping[str, McpSession] = field(default_factory=dict)
+    sessions: Mapping[str, McpSession] = field(default_factory=dict[str, McpSession])
     #: server 名 → 失败原因的**类型名**。不放异常消息：第三方 server 的异常文本可能
     #: 带着它自己的凭据（`D13` 的先例）。
-    failures: Mapping[str, str] = field(default_factory=dict)
+    failures: Mapping[str, str] = field(default_factory=dict[str, str])
     #: server 名 → 那个 server 的命名结果（撞车与被拒的原名都在里面）。
-    naming: Mapping[str, NameAssignment] = field(default_factory=dict)
+    naming: Mapping[str, NameAssignment] = field(default_factory=dict[str, NameAssignment])
 
 
 class ConnectionSupervisor:

@@ -230,3 +230,70 @@ def test_a_namespace_prefix_still_obeys_the_capability_name_shape() -> None:
     """前缀也是名字：形状仍由 `CapabilityRef` 校验，不因为它是前缀就放宽。"""
     with pytest.raises(NucleaError):
         CapabilityDecl(kind=CapabilityKind.TOOL, name="Bad Name", namespace=True)
+
+
+# ------------------------------------------------------- config_schema（`D41`）
+#
+# 字段的静态类型只精确到最外两层（`ManifestJsonValue`：容器分支的元素是 `object`），
+# 因为契约的 `JsonValue` 进不了 pydantic 模型、pydantic 自己的 `JsonValue` 又用不变的
+# `list`。递归因此挪进了 `_check_config_schema`——**下面这组用例就是那次搬迁的收据**：
+# 少了它们，「深处也必须是 JSON」这条只剩一句注释。
+
+
+def test_config_schema_accepts_a_normal_document() -> None:
+    schema = {
+        "type": "object",
+        # `sorted()` 是函数调用而不是字面量，双向推断够不着它——这正是 pydantic 的
+        # `JsonValue`（不变的 `list`）在八个官方插件上都过不去的那个形状。
+        "required": sorted({"b", "a"}),
+        "properties": {"a": {"type": "string", "enum": ["x", "y"]}},
+        "additionalProperties": False,
+    }
+    manifest = parse(config_schema=schema)
+    assert manifest.config_schema is not None
+    assert manifest.config_schema["required"] == ["a", "b"]
+
+
+def test_config_schema_defaults_to_none() -> None:
+    assert parse().config_schema is None
+    assert parse().json_schema is None
+
+
+def test_json_schema_is_the_narrowed_view() -> None:
+    """`json_schema` 是交给 `contracts.JsonSchema` 调用方的唯一出口（`plugin_plan` 用它）。"""
+    manifest = parse(config_schema={"type": "object"})
+    assert manifest.json_schema == manifest.config_schema
+
+
+@pytest.mark.parametrize(
+    ("document", "pointer"),
+    [
+        ({"a": object()}, "/a"),
+        ({"a": {"b": [1, object()]}}, "/a/b/1"),
+        ({"a": {1: "x"}}, "/a"),
+        ({"a/b": object()}, "/a~1b"),
+        ({"a~b": object()}, "/a~0b"),
+    ],
+)
+def test_config_schema_rejects_non_json_values(document: dict[str, object], pointer: str) -> None:
+    """报错要指到位置。JSON Pointer 的两个转义（`~0` / `~1`）一并钉住。"""
+    with pytest.raises(NucleaError) as caught:
+        parse(config_schema=document)
+    assert caught.value.code is ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED
+    assert caught.value.detail["field"] == "config_schema"
+    assert caught.value.detail["at"] == pointer
+
+
+def test_config_schema_rejects_a_self_referencing_document() -> None:
+    """自引用在类型上完全合法，没有深度上界校验器自己会栈溢出。"""
+    document: dict[str, object] = {}
+    document["self"] = document
+    with pytest.raises(NucleaError) as caught:
+        parse(config_schema=document)
+    assert caught.value.code is ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED
+
+
+def test_config_schema_keeps_bool_and_int_apart() -> None:
+    """`isinstance(True, int)` 为真，所以 `bool` 必须先判——两者都合法，这里验的是不误伤。"""
+    manifest = parse(config_schema={"flag": True, "count": 1, "ratio": 1.5, "none": None})
+    assert manifest.config_schema == {"flag": True, "count": 1, "ratio": 1.5, "none": None}

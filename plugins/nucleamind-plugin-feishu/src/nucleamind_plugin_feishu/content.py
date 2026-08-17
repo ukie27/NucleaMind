@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from typing import Final
+from typing import Final, cast
 
 from nucleamind.contracts import JsonValue
 
@@ -76,10 +76,15 @@ def parse_content(raw: str) -> Mapping[str, JsonValue]:
     平台加了个新字段就报错（`MSG-004`：畸形消息丢弃并记录，不得终止 Channel）。
     """
     try:
-        parsed = json.loads(raw)
+        # `json.loads` 交回 `Any`。**在这里就收成 `object`**，否则它会顺着返回值一路漏
+        # 进调用方（`plugins/…-cron/store.py` 的同一条判定）。
+        parsed: object = json.loads(raw)
     except (TypeError, ValueError):
         return {}
-    return parsed if isinstance(parsed, Mapping) else {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    # boundary: 顶层已收窄到映射；值侧的形状由各取用点逐个判定。
+    return cast("Mapping[str, JsonValue]", parsed)
 
 
 # ------------------------------------------------------------------------------ 卡片元素

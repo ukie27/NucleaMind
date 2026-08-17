@@ -18,7 +18,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import Final
+from typing import Final, cast
 from urllib.parse import parse_qs, urlsplit
 
 from nucleamind.contracts import ErrorCode, JsonValue, NucleaError
@@ -52,8 +52,8 @@ class SearchRequest:
 
     method: str
     url: str
-    headers: Mapping[str, str] = field(default_factory=dict)
-    params: Mapping[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict[str, str])
+    params: Mapping[str, str] = field(default_factory=dict[str, str])
     json_body: Mapping[str, JsonValue] | None = None
     form: Mapping[str, str] | None = None
 
@@ -288,7 +288,8 @@ def _json_object(body: bytes, provider: str) -> Mapping[str, JsonValue]:
         )
     # boundary: `json.loads` 交回的是 `object`，上面两条 isinstance 已经把它收窄到映射；
     # 值侧的形状由 `_hits_from` / `_dig` 逐个判定，不在这里一次性断言。
-    return {str(key): _as_json(value) for key, value in payload.items()}
+    items = cast("Mapping[object, object]", payload).items()
+    return {str(key): _as_json(value) for key, value in items}
 
 
 def _as_json(value: object) -> JsonValue:

@@ -68,7 +68,7 @@ class ImageSettings:
     timeout_ms: int = _DEFAULT_TIMEOUT_MS
     max_result_chars: int = _DEFAULT_MAX_RESULT_CHARS
     directory: str = ""
-    extra_body: Mapping[str, JsonValue] = field(default_factory=dict)
+    extra_body: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
 
 def resolve_settings(config: Mapping[str, JsonValue]) -> ImageSettings:

@@ -178,7 +178,7 @@ def plan_external_plugins(
         manifest = item.manifest
         checks = (
             validate_plugin_config(
-                manifest.config_schema,
+                manifest.json_schema,
                 config_for(manifest),
                 plugin_id=plugin_id,
                 pointer=f"/plugins/{plugin_id}/config",

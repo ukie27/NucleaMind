@@ -29,7 +29,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, field
 from logging import Logger, getLogger
 from pathlib import Path
@@ -48,7 +48,7 @@ from nucleamind.contracts import (
 from nucleamind.kernel.config import resolve_text
 from nucleamind.kernel.observability import EventBus, Subscription
 from nucleamind.kernel.plugins import PluginGrants
-from nucleamind.sdk import FileAccess, HttpAccess, PluginContext, ShellAccess
+from nucleamind.sdk import EventHandler, FileAccess, HttpAccess, PluginContext, ShellAccess
 
 from .access import GuardedFileAccess, GuardedHttpAccess, GuardedShellAccess
 
@@ -78,25 +78,34 @@ class PluginRuntime:
 
 
 class PluginEventBridge:
-    """把插件的**异步** handler 接到 `EventBus` 的**同步**订阅面上。
+    """把插件的 handler 接到 `EventBus` 的同步订阅面上。
 
-    `bus.publish()` 是同步的、绝不 await 订阅者（`D12` 的结论），而 `EventSubscriber` 的
-    handler 是协程。桥接方式是唯一诚实的那个：在回调里 `create_task`，没有运行中的事件
-    循环就记一次丢弃——`publish()` 会在没有 loop 的路径上被调用（`instance.starting`、
-    `nm config show`），在那里凭空起一个 loop 才是错的。
+    `bus.publish()` 是同步的、绝不 await 订阅者（`D12` 的结论），而插件的 handler
+    **可以是同步的也可以是协程**（`sdk.EventHandler`）。两种形状各走一条路：
+
+    - **同步 handler 就地跑完**。它与 bus 的原生订阅者形状完全相同，派生一条 Task
+      只会把它的异常挪进一个无人认领的地方。
+    - **协程 handler 在回调里 `create_task`**，没有运行中的事件循环就记一次丢弃——
+      `publish()` 会在没有 loop 的路径上被调用（`instance.starting`、`nm config show`），
+      在那里凭空起一个 loop 才是错的。**同步 handler 因此在无 loop 的路径上仍然会跑**，
+      这是它相对协程 handler 的实际优势，不是不一致。
+
+    **`D41` 之前只有第二条路**：`handler(event)` 的返回值被无条件喂给 `create_task`，
+    同步 handler 于是先被正常调用、再在一条 Task 里 `await None` 抛 `TypeError`。
+    官方插件 `feishu` 与 `openai-api` 都撞在这上面。见 `sdk/api.py::EventHandler`。
     """
 
     def __init__(self, bus: EventBus, plugin_id: str) -> None:
         self._bus = bus
         self._plugin_id = plugin_id
-        self._handlers: dict[EventName, list[Callable[[RuntimeEvent], Awaitable[None]]]] = {}
+        self._handlers: dict[EventName, list[EventHandler]] = {}
         self._subscription: Subscription | None = None
-        #: 没有事件循环时被丢弃的投递数。查得到才排查得动。
+        #: 没有事件循环时被丢弃的**协程**投递数。查得到才排查得动。
         self.dropped = 0
         #: 已派生的任务，实例停止时由装配根一并取消。
         self.tasks: set[asyncio.Task[None]] = set()
 
-    def subscribe(self, event: EventName, handler: Callable[[RuntimeEvent], Awaitable[None]]) -> None:
+    def subscribe(self, event: EventName, handler: EventHandler) -> None:
         handlers = self._handlers.setdefault(event, [])
         if handler in handlers:
             return
@@ -123,15 +132,24 @@ class PluginEventBridge:
         handlers = self._handlers.get(event.name)
         if not handlers:
             return
+        loop: asyncio.AbstractEventLoop | None
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self.dropped += len(handlers)
-            return
+            loop = None
         for handler in handlers:
-            # `handler(event)` 的静态类型是 `Awaitable[None]`（契约签名），而
-            # `create_task` 只吃协程——`_as_coroutine` 是这条缝的唯一填法。
-            task: asyncio.Task[None] = loop.create_task(_as_coroutine(handler(event)))
+            # 同步 handler 的返回值是 `None`，协程 handler 的是 `Awaitable[None]`。
+            # **判据是返回值而不是 `iscoroutinefunction(handler)`**：后者认不出
+            # `functools.partial`、`__call__` 是 async 的可调用对象，以及返回协程的
+            # 普通函数——而这三种都在 `EventHandler` 的类型里。
+            pending = handler(event)
+            if pending is None:
+                continue
+            if loop is None:
+                self.dropped += 1
+                _close_unawaited(pending)
+                continue
+            task: asyncio.Task[None] = loop.create_task(_as_coroutine(pending))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
 

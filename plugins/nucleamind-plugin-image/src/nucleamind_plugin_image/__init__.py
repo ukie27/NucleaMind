@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Final
 from nucleamind.contracts import CapabilityKind, PermissionKind
 from nucleamind.sdk import (
     CapabilityDecl,
+    ManifestJsonSchema,
     NucleaAPI,
     PermissionDecl,
     PluginContext,
@@ -107,7 +108,9 @@ __all__ = [
 ]
 
 #: `plugins.image.config` 的形状。阶段 A 用它校验，`settings.py` 再做它表达不了的那些。
-CONFIG_SCHEMA: Final = {
+#: 标注成 `ManifestJsonSchema` 而不是 `contracts.JsonSchema`：契约那个类型进不了
+#: pydantic 模型（会 `RecursionError`），细节见 `sdk/manifest.py::ManifestJsonValue`。
+CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
     "type": "object",
     "properties": {
         "provider": {"type": "string", "enum": list(PROVIDERS)},

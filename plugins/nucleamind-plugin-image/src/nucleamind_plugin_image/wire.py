@@ -21,7 +21,7 @@ import binascii
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Final, cast
 
 from nucleamind.contracts import ErrorCode, JsonValue, NucleaError
 
@@ -66,8 +66,8 @@ class ImageRequest:
     """一次生成请求的完整描述。`tool.py` 照着它发，不做任何补充决定。"""
 
     url: str
-    headers: Mapping[str, str] = field(default_factory=dict)
-    json_body: Mapping[str, JsonValue] = field(default_factory=dict)
+    headers: Mapping[str, str] = field(default_factory=dict[str, str])
+    json_body: Mapping[str, JsonValue] = field(default_factory=dict[str, JsonValue])
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +220,7 @@ def _json_object(body: bytes) -> Mapping[str, JsonValue]:
         raise _external(_BAD_JSON)
     # boundary: `json.loads` 的产物按定义就是 `JsonValue`；上面那条 isinstance 已经把
     # 顶层收窄到映射，值侧的形状由 `_objects` 逐个判定。
-    return payload  # pyright: ignore[reportReturnType]
+    return cast("Mapping[str, JsonValue]", payload)
 
 
 def _objects(value: JsonValue | None) -> tuple[Mapping[str, JsonValue], ...]:

@@ -71,8 +71,8 @@ class NameAssignment:
     `rejected` 是连归一化都过不去的远端原名。
     """
 
-    assigned: Mapping[str, RemoteTool] = field(default_factory=dict)
-    collisions: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    assigned: Mapping[str, RemoteTool] = field(default_factory=dict[str, RemoteTool])
+    collisions: Mapping[str, tuple[str, ...]] = field(default_factory=dict[str, tuple[str, ...]])
     rejected: tuple[str, ...] = ()
 
 

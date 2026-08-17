@@ -21,7 +21,7 @@ import json
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from nucleamind.contracts import CancelReason, StreamState
 
@@ -48,17 +48,17 @@ _REFUSED: Final[dict[str, str]] = {
 
 #: `aiohttp` 3.9 起要求用 `AppKey` 而不是裸字符串键。它要 import aiohttp 才建得出来，
 #: 而本模块只在 `channel.start()` 之后才被导入，因此在 `build_app()` 里惰性初始化。
-_HUB: web.AppKey[SessionHub]
-_API_KEY: web.AppKey[str | None]
+_hub_key: web.AppKey[SessionHub]
+_api_key_key: web.AppKey[str | None]
 
 
 def _init_keys() -> None:
-    global _HUB, _API_KEY
+    global _hub_key, _api_key_key
     from aiohttp import web
 
-    if "_HUB" not in globals():
-        _HUB = web.AppKey("hub", SessionHub)
-        _API_KEY = web.AppKey("api_key")
+    if "_hub_key" not in globals():
+        _hub_key = web.AppKey("hub", SessionHub)
+        _api_key_key = web.AppKey("api_key")
 
 
 def build_app(hub: SessionHub, *, api_key: str | None = None) -> web.Application:
@@ -67,8 +67,8 @@ def build_app(hub: SessionHub, *, api_key: str | None = None) -> web.Application
 
     _init_keys()
     app = web.Application()
-    app[_HUB] = hub
-    app[_API_KEY] = api_key
+    app[_hub_key] = hub
+    app[_api_key_key] = api_key
     app.router.add_post("/v1/chat/completions", handle_chat_completions)
     app.router.add_get("/v1/models", handle_models)
     app.router.add_get("/health", handle_health)
@@ -88,7 +88,7 @@ async def handle_models(request: web.Request) -> web.StreamResponse:
     """`GET /v1/models`。只有一个条目：这个实例配的那个模型。"""
     from aiohttp import web
 
-    hub: SessionHub = request.app[_HUB]
+    hub: SessionHub = request.app[_hub_key]
     denied = _unauthorized(request)
     if denied is not None:
         return denied
@@ -110,16 +110,21 @@ async def handle_models(request: web.Request) -> web.StreamResponse:
 
 async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
     """`POST /v1/chat/completions`。"""
-    hub: SessionHub = request.app[_HUB]
+    hub: SessionHub = request.app[_hub_key]
     denied = _unauthorized(request)
     if denied is not None:
         return denied
     try:
-        body = await request.json()
+        # `request.json()` 交回 `Any`。在这里就收成 `object`，否则它会顺着 `body` 一路
+        # 漏进下面每一个解析函数（原则 6：边界上把动态数据类型化）。
+        parsed: object = await request.json()
     except (json.JSONDecodeError, ValueError):
         return _error(400, "请求体不是合法 JSON。")
-    if not isinstance(body, dict):
+    if not isinstance(parsed, Mapping):
         return _error(400, "请求体必须是一个 JSON 对象。")
+    # boundary: 顶层已收窄到映射；每个字段的形状由 `_prompt_from` / `_refusals` 等
+    # 逐个判定，这里不一次性断言。
+    body = cast("Mapping[str, object]", parsed)
 
     problem = _refusals(body)
     if problem is not None:
@@ -345,8 +350,11 @@ def _prompt_from(body: Mapping[str, object]) -> tuple[str | None, str | None]:
     messages = body.get("messages")
     if not isinstance(messages, Sequence) or isinstance(messages, (str, bytes)):
         return None, None
-    for entry in reversed(list(messages)):
-        if not isinstance(entry, Mapping) or entry.get("role") != "user":
+    for raw_entry in reversed(list(cast("Sequence[object]", messages))):
+        if not isinstance(raw_entry, Mapping):
+            continue
+        entry = cast("Mapping[str, object]", raw_entry)
+        if entry.get("role") != "user":
             continue
         content = entry.get("content")
         if isinstance(content, str) and content.strip():
@@ -363,13 +371,16 @@ def _refusals(body: Mapping[str, object]) -> str | None:
             return message
     messages = body.get("messages")
     if isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
-        for entry in messages:
-            if isinstance(entry, Mapping) and entry.get("role") == "system":
+        for raw_entry in cast("Sequence[object]", messages):
+            if not isinstance(raw_entry, Mapping):
+                continue
+            entry = cast("Mapping[str, object]", raw_entry)
+            if entry.get("role") == "system":
                 return (
                     "system 消息不被接受：系统指令归实例配置"
                     "（plugins.context-basic.config.instructions），不由请求指定。"
                 )
-            if isinstance(entry, Mapping) and not isinstance(entry.get("content"), str):
+            if not isinstance(entry.get("content"), str):
                 return "只支持纯文本 content；多模态内容部件尚未支持。"
     n = body.get("n")
     if isinstance(n, int) and not isinstance(n, bool) and n > 1:
@@ -389,7 +400,9 @@ def _conversation_id(request: web.Request, body: Mapping[str, object], hub: Sess
 
 def _include_usage(body: Mapping[str, object]) -> bool:
     options = body.get("stream_options")
-    return isinstance(options, Mapping) and options.get("include_usage") is True
+    if not isinstance(options, Mapping):
+        return False
+    return cast("Mapping[str, object]", options).get("include_usage") is True
 
 
 def _string(value: object) -> str | None:
@@ -401,7 +414,7 @@ def _string(value: object) -> str | None:
 
 def _unauthorized(request: web.Request) -> web.StreamResponse | None:
     """检查 Bearer 凭据。没配 `api_key` 就不鉴权（只允许回环，`settings.py` 保证）。"""
-    expected: str | None = request.app[_API_KEY]
+    expected: str | None = request.app[_api_key_key]
     if expected is None:
         return None
     header = request.headers.get("Authorization", "")

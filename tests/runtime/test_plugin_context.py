@@ -200,6 +200,66 @@ def test_publishing_without_a_loop_is_counted_not_crashed(tmp_path: Path) -> Non
     assert ctx.bridge.dropped == 1
 
 
+# ---------------------------------------------------------- 同步 handler（`D41`）
+#
+# `sdk.EventHandler` 从 `D41` 起同时接受同步与协程两种形状。补这三条之前，同步 handler
+# 会先被正常调用、再在一条无人认领的 Task 里 `await None` 抛 `TypeError`——官方插件
+# `feishu`（工具提示）与 `openai-api`（用量统计）注册的都是同步 handler，两处因此一直在
+# 每个事件上多产一条异常 Task。**测试测不到、类型能看见**，与 `D39` 那次同一类。
+
+
+async def test_events_reach_a_sync_handler(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
+    seen: list[RuntimeEvent] = []
+
+    def handler(event: RuntimeEvent) -> None:
+        seen.append(event)
+
+    ctx.events.subscribe(EventName.INSTANCE_READY, handler)
+    ctx.bridge._bus.publish(EventName.INSTANCE_READY)  # noqa: SLF001
+    await asyncio.sleep(0)
+    assert [event.name for event in seen] == [EventName.INSTANCE_READY]
+
+
+async def test_a_sync_handler_spawns_no_task(tmp_path: Path) -> None:
+    """就地跑完，不派生 Task。
+
+    这条是那个 bug 的直接反面：修之前 `tasks` 里会多出一条 `TypeError` 的 Task，
+    而它的异常从来没有人取——只在解释器 GC 时刷一句
+    "Task exception was never retrieved"。断言「一条都没有」比断言「没抛异常」有用，
+    因为原来的路径**也没有抛**，它只是把失败挪进了别处。
+    """
+    ctx = make_ctx(tmp_path)
+
+    def handler(event: RuntimeEvent) -> None:
+        del event
+
+    ctx.events.subscribe(EventName.INSTANCE_READY, handler)
+    ctx.bridge._bus.publish(EventName.INSTANCE_READY)  # noqa: SLF001
+    assert ctx.bridge.tasks == set()
+    await asyncio.sleep(0)
+    assert ctx.bridge.tasks == set()
+
+
+def test_a_sync_handler_runs_even_without_a_loop(tmp_path: Path) -> None:
+    """没有事件循环时同步 handler 照跑，不计入 `dropped`。
+
+    `dropped` 说的是「有一次投递没能发生」。同步 handler 不需要循环，把它也算进去会让
+    那个计数在排查时指向错误的方向。
+    """
+    ctx = make_ctx(tmp_path)
+    calls = 0
+
+    def handler(event: RuntimeEvent) -> None:
+        nonlocal calls
+        del event
+        calls += 1
+
+    ctx.events.subscribe(EventName.INSTANCE_READY, handler)
+    ctx.bridge._bus.publish(EventName.INSTANCE_READY)  # noqa: SLF001
+    assert (calls, ctx.bridge.dropped) == (1, 0)
+
+
 # ------------------------------------------------------------------ 后台任务与门面
 
 

@@ -41,6 +41,7 @@ from typing import Final
 from nucleamind.contracts import CapabilityKind, PermissionKind
 from nucleamind.sdk import (
     CapabilityDecl,
+    ManifestJsonSchema,
     PermissionDecl,
     PluginManifest,
 )
@@ -99,7 +100,7 @@ __all__ = [
 
 #: `models.<id>` 条目允许的键。与下面 `config_schema` 里那份由测试对照——两处都「自洽」
 #: 而对不上时，一个写对了的配置会在阶段 A 被拒，且错误指向的是 schema 而不是这张表。
-ENTRY_PROPERTIES: Final = {
+ENTRY_PROPERTIES: Final[ManifestJsonSchema] = {
     "context_window_tokens": {"type": "integer", "minimum": 1},
     "max_output_tokens": {"type": "integer", "minimum": 1},
     "capabilities": {"type": "array", "items": {"type": "string"}},
@@ -137,10 +138,11 @@ ENTRY_PROPERTIES: Final = {
 #: `settings.py` 在 `setup()` 里再按语义校验一次——前者挡形状，后者挡取值之间的关系
 #: （例如 `budget_tokens` 与 `max_output_tokens` 的大小）。
 #:
-#: **刻意不加类型标注**：`PluginManifest.config_schema` 的值类型是 pydantic 的递归
-#: `JsonValue`，而 `dict` 的值类型是不变的，嵌套字面量怎么标注都推不成它的子类型。
-#: 官方插件 `openai-api` 直接内联同形状的字面量，是同一个情况。
-CONFIG_SCHEMA: Final = {
+#: 标注成 `ManifestJsonSchema` 而不是 `contracts.JsonSchema`：契约那个类型进不了
+#: pydantic 模型（会 `RecursionError`），细节与另外两个被否掉的候选见
+#: `sdk/manifest.py::ManifestJsonValue`。`D41` 之前这里刻意不标注，因为当时的字段
+#: 类型是 pydantic 的 `JsonValue`，`dict` 值不变导致嵌套字面量怎么标都不成子类型。
+CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
     "type": "object",
     "properties": {
         "base_url": {"type": "string"},

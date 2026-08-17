@@ -30,6 +30,10 @@ SDK_PUBLIC_NAMES: Final[tuple[str, ...]] = (
     "FileAccess",
     "HttpAccess",
     "HttpResponse",
+    # `D41` 新增：manifest 的 `config_schema` 所用的 JSON Schema 类型。它**必须**在这张
+    # 表里——`contracts.JsonSchema` 与它静态上不可互换（前者的容器协变、后者不变），
+    # 而插件写 `CONFIG_SCHEMA` 时需要一个有兼容承诺的名字可标注。
+    "ManifestJsonSchema",
     "NucleaAPI",
     "PermissionDecl",
     "PluginContext",

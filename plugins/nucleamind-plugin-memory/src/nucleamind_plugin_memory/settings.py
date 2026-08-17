@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from nucleamind.contracts import ErrorCode, FragmentScope, JsonValue, NucleaError
+from nucleamind.sdk import ManifestJsonSchema
 
 from .partition import RECALL_ORDER
 
@@ -59,7 +60,9 @@ _EMPTY_SCOPES: Final = "至少要启用一个记忆范围；不想要自动召�
 
 #: manifest 的 `config_schema`。它校验**形状**，`resolve_settings()` 校验它表达不了的那些
 #: （枚举取值要给出「你可以写哪几个」、跨字段一致性）。
-CONFIG_SCHEMA: Final[Mapping[str, JsonValue]] = {
+#: 标注成 `ManifestJsonSchema` 而不是 `contracts.JsonSchema`：契约那个类型进不了
+#: pydantic 模型（会 `RecursionError`），细节见 `sdk/manifest.py::ManifestJsonValue`。
+CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
     "type": "object",
     "properties": {
         "dir": {

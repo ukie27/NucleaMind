@@ -25,13 +25,12 @@ import string
 import sys
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
-from typing import Final
+from typing import Final, cast
 
 from packaging.version import InvalidVersion, Version
 from pydantic import (
     BaseModel,
     ConfigDict,
-    JsonValue,
     ValidationError,
     field_validator,
     model_validator,
@@ -43,6 +42,7 @@ from nucleamind.contracts import (
     CapabilityKind,
     CapabilityRef,
     ErrorCode,
+    JsonSchema,
     NucleaError,
     PermissionKind,
     Plugin,
@@ -56,10 +56,45 @@ from .version import is_compatible, parse_sdk_range
 __all__ = [
     "MANIFEST_MODEL_CONFIG",
     "CapabilityDecl",
+    "ManifestJsonSchema",
     "PermissionDecl",
     "PluginManifest",
     "parse_manifest",
 ]
+
+#: manifest 的 `config_schema` 文档类型：**一个 JSON 对象，值一律 `object`**。
+#: 语义上就是 `contracts.JsonSchema`，但那个类型在这里用不了，而中间的几档也都不行——
+#: `D41` 逐个试过，过程记在这里，免得下一个人再试一遍：
+#:
+#: 1. **`contracts.JsonValue` 不行。** 它是匿名递归 Union（`Union[..., Sequence[
+#:    "JsonValue"], ...]`），pydantic 解析那个前向引用时 `typing._eval_type` 自己就先
+#:    `RecursionError`——发生在生成 core schema **之前**，因此 `SkipValidation` /
+#:    `PlainValidator` / 自定义 `__get_pydantic_core_schema__` 一个都救不回来。
+#: 2. **pydantic 自带的 `JsonValue` 不行。** 它的容器是 `list` / `dict`，而 **`list`
+#:    是不变的**。`{"enum": sorted(MODES)}` 里那个 `list[str]` 因此赋不进去，双向推断
+#:    也够不着函数调用的返回值——八个官方插件的 `config_schema` 全都撞在这上面。
+#: 3. **`TypeAliasType` 的具名递归别名不行。** pydantic 认（这才是它自带 `JsonValue`
+#:    能递归的原因），但 basedpyright 1.39 不认：值写成类型报「类型表达式中不允许使用
+#:    变量」，写成字符串报「此处应为类型而非字符串字面量」。PEP 695 的 `type` 语句要
+#:    3.12，本项目最低 3.11。
+#: 4. **只放宽一层（`Sequence[object]` / `Mapping[str, object]` 的联合）也不行。**
+#:    pydantic 的 union 校验在字段校验器**之前**跑，于是深度 1 的坏值被它先拦下，
+#:    报出来的是七个分支各失败一遍的清单；深度 2 才轮到我们的校验器。
+#:    同一种错误有两套说法，比统一说得差一点更糟。
+#:
+#: 所以判定整个交给 `PluginManifest._check_config_schema`：类型只说「是个 JSON 对象」，
+#: 「里面每个值都是 JSON 可表达的」由它真的走一遍，并给出 JSON Pointer。
+#: **这不是放松校验，是把它挪到一个说得清楚的地方。**
+#:
+#: 与 `contracts.JsonSchema` **单向可赋值**：契约那个类型赋得进来（`JsonValue` 是
+#: `object` 的子类型），反过来不行。要把这个字段交给接受 `contracts.JsonSchema` 的
+#: 调用方，走 `PluginManifest.json_schema`——那里有一次由校验器兑现的收窄。
+ManifestJsonSchema = Mapping[str, object]
+
+#: `config_schema` 允许的嵌套深度。JSON Schema 文档嵌四五层已经很深，给到 32 是为了
+#: 「正常文档一定过得去」；它的真正职责是**给递归校验一个上界**——一个自引用的 dict
+#: （`d["self"] = d`）在类型上完全合法，没有这个上界校验器自己会栈溢出。
+_MAX_SCHEMA_DEPTH: Final = 32
 
 #: 插件 id 的字符集。比 `contracts` 的能力名更严（不含 `.` 与 `_`），与 §12.2
 #: 「插件 id 小写短横线」一致：id 会出现在包名 `nucleamind-plugin-<id>`、状态目录名和
@@ -103,6 +138,43 @@ def _at_field(field: str) -> Generator[None, None, None]:
             field=field,
             cause=dict(exc.detail),
         ) from exc
+
+
+def _non_json_values(
+    value: object, *, depth: int, at: str
+) -> Generator[tuple[str, object], None, None]:
+    """走一遍文档，交出每一个不是 JSON 值的位置（JSON Pointer, 那个值）。
+
+    生成器而不是返回 bool：调用方只取第一条就抛，因此正常路径上根本不会遍历完；
+    而需要全部列出来时（测试）不必换一套实现。
+
+    **`bool` 必须在 `int` 之前判**——`isinstance(True, int)` 为真，反过来写会让
+    「布尔算数字」这个 Python 特有的巧合渗进一份声称是 JSON 的文档里。
+    **`str` 必须在 `Sequence` 之前判**，理由同类（字符串是字符的序列）。
+    """
+    if depth > _MAX_SCHEMA_DEPTH:
+        yield (at or "/", value)
+        return
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return
+    if isinstance(value, Mapping):
+        # `isinstance` 只能问「是不是 Mapping」，问不到类型参数，narrow 的结果是
+        # `Mapping[Unknown, Unknown]`。`cast` 到 `object` 键值是**收窄而不是放宽**：
+        # 下面每个键都还要过 `isinstance(key, str)`（原则 6 要求 cast 有运行时检查支撑）。
+        mapping = cast("Mapping[object, object]", value)
+        for key, item in mapping.items():
+            if not isinstance(key, str):
+                yield (at, key)
+                continue
+            # JSON Pointer 的转义：`~` -> `~0`、`/` -> `~1`，顺序不可颠倒。
+            token = key.replace("~", "~0").replace("/", "~1")
+            yield from _non_json_values(item, depth=depth + 1, at=f"{at}/{token}")
+        return
+    if isinstance(value, Sequence):
+        for index, item in enumerate(cast("Sequence[object]", value)):
+            yield from _non_json_values(item, depth=depth + 1, at=f"{at}/{index}")
+        return
+    yield (at or "/", value)
 
 
 def _validate_plugin_id(value: str, *, field: str) -> str:
@@ -283,13 +355,10 @@ class PluginManifest(BaseModel):
     capabilities: tuple[CapabilityDecl, ...]
     dependencies: tuple[str, ...] = ()
     permissions: tuple[PermissionDecl, ...] = ()
-    # 语义上就是 `contracts.JsonSchema`，但值类型用 **pydantic 的** `JsonValue`：
-    # `contracts.JsonValue` 是带前向引用的普通递归 Union，pydantic 为它生成 schema 时会
-    # 无限递归。两者互相兼容（pydantic 的 list/dict 是我们的 Sequence/Mapping 的子类型），
-    # 因此 `config_schema` 可以原样喂给任何接受 `JsonSchema` 的调用方。
+    # 类型的来龙去脉全在 `ManifestJsonValue` 的 docstring 里（协变容器 + 具名递归）。
     # 不再包一层 MappingProxyType：pydantic 在校验时已经深拷贝，调用方事后改自己那份
     # dict 影响不到这里，快照语义已经成立，浅冻结只是装样子。
-    config_schema: Mapping[str, JsonValue] | None = None
+    config_schema: ManifestJsonSchema | None = None
     state_version: int = 1
     critical: bool = False
     platforms: tuple[str, ...] = ()
@@ -365,6 +434,48 @@ class PluginManifest(BaseModel):
         if len(set(value)) != len(value):
             raise _fail(ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED, "列表项不得重复。", value=list(value))
         return value
+
+    @field_validator("config_schema")
+    @classmethod
+    def _check_config_schema(
+        cls, value: ManifestJsonSchema | None
+    ) -> ManifestJsonSchema | None:
+        """深处也必须是 JSON。**这里是 `ManifestJsonValue` 放弃的那段递归的落点。**
+
+        字段的静态类型只精确到最外两层（理由见 `ManifestJsonValue`），所以「整份文档
+        都是 JSON 可表达的值」这条必须在运行期真的走一遍。走完之后，`config_schema`
+        才当得起「可以原样喂给 `jsonschema`」这句话（`kernel/plugins/loader._compile()`
+        与 `kernel/config/json_schema.py` 都这么用它）。
+
+        报错带**JSON Pointer 路径**，比 pydantic 的 union 分支穷举好读得多——
+        一份深五层的 schema 里，pydantic 会把七个分支各报一遍失败，而真正有用的信息
+        只有「哪个键上是什么东西」。
+        """
+        if value is None:
+            return None
+        for pointer, offender in _non_json_values(value, depth=0, at=""):
+            raise _fail(
+                ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED,
+                "config_schema 必须是 JSON 可表达的文档。",
+                field="config_schema",
+                at=pointer,
+                found=type(offender).__name__,
+            )
+        return value
+
+    @property
+    def json_schema(self) -> JsonSchema | None:
+        """`config_schema` 收窄成 `contracts.JsonSchema`。**唯一的对外出口。**
+
+        字段本身的值类型宽到 `object`（理由见 `ManifestJsonValue`），而下游要的是契约那个
+        类型（`kernel/config/validate_plugin_config` 与 `jsonschema` 都按它签名）。这个
+        `cast` 之所以站得住，正是因为 `_check_config_schema` 在构造时**已经走过整份文档**
+        ——原则 6 要求的「运行时检查支撑」就是它。收窄放在这里而不是各调用点，
+        是为了让那次校验与依赖它的 cast 待在同一个文件里。
+        """
+        if self.config_schema is None:
+            return None
+        return cast("JsonSchema", self.config_schema)
 
     @field_validator("state_version")
     @classmethod

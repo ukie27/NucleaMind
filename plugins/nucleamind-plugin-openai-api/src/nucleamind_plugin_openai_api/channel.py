@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Final
+from collections.abc import AsyncIterator, Sequence
+from typing import TYPE_CHECKING, Final, cast
 
 from nucleamind.contracts import ErrorCode, InboundMessage, NucleaError, OutboundMessage
 
@@ -99,12 +99,19 @@ class ApiChannel:
 
 def _actual_port(site: web.TCPSite, *, default: int) -> int:
     """取真实绑到的端口。`port=0` 时配置值是 0，真实值只能问 socket。"""
-    server = getattr(site, "_server", None)
-    sockets = getattr(server, "sockets", None) or ()
-    for sock in sockets:
-        address = sock.getsockname()
-        if isinstance(address, tuple) and len(address) >= 2:
-            return int(address[1])
+    server: object = getattr(site, "_server", None)
+    sockets: object = getattr(server, "sockets", None) or ()
+    if not isinstance(sockets, Sequence):
+        return default
+    for sock in cast("Sequence[object]", sockets):
+        # boundary: `getattr` 交回 `Any`，这里逐层收窄——`getsockname()` 的返回形状
+        # 按协议族不同（AF_INET 是二元组、AF_INET6 是四元组），只取第二项。
+        address: object = getattr(sock, "getsockname", lambda: None)()
+        if not isinstance(address, tuple):
+            continue
+        parts = cast("tuple[object, ...]", address)
+        if len(parts) >= 2 and isinstance(parts[1], int):
+            return parts[1]
     return default
 
 
