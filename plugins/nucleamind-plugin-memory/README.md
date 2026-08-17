@@ -7,7 +7,7 @@ NucleaMind 官方插件：**跨 Session 的长期记忆**（需求 §9.8 `MEM-00
 
 | 能力 | 名字 | 作用 |
 | --- | --- | --- |
-| `MEMORY` | `jsonl` | 存储本体，契约形状（见下方「已知边界」第 1 条） |
+| `MEMORY` | `jsonl` | 存储本体。也是 kernel 侧召回的目标，但那条路默认不开（见「已知边界」第 1 条） |
 | `CONTEXT_PROVIDER` | `memory` | 每轮 turn 自动召回相关记忆并放进上下文 |
 | `TOOL` | `memory.remember` / `memory.recall` / `memory.forget` | 模型显式地记、查、删 |
 | `COMMAND` | `/memory`（别名 `/mem`） | 给人用的查询、检索与删除入口（`MEM-005`） |
@@ -90,13 +90,24 @@ nm plugins enable memory
 
 这几条如实写在这里，而不是留给你去发现。
 
-1. **kernel 今天不消费 `CapabilityKind.MEMORY`。**
-   `kernel/plugins/capabilities.py::memory_providers_from()` 除测试外没有调用方，
-   `kernel/turn/context_builder.py` 只认 `ContextProvider`。因此记忆真正进到上下文靠的是
-   本插件自己的 `CONTEXT_PROVIDER:memory`；那条 `MEMORY:jsonl` 是这份实现的**契约形状**
-   ——第三方要换后端（SQLite、向量库）时有一个可对照、可被
-   `sdk.testing.MemoryProviderContract` 驱动的目标（`MEM-001`）。**它不是装饰品，
-   但它今天也不是记忆生效的路径。**
+1. **kernel 侧召回默认不开，两边同时开会重复召回。**
+   `D44` 起 kernel 会消费 `CapabilityKind.MEMORY`：装配根按 `memory.provider` 挑一条
+   `MEMORY` 能力交给上下文组装器。但那个键**默认不写**，因此默认配置下记忆进到上下文靠的
+   仍然是本插件自己的 `CONTEXT_PROVIDER:memory`。
+
+   两条路径**都是对的**，只是不该同时开：kernel 侧只召回 `agent` 范围，而本插件的
+   `enabled_scopes` 默认已经包含 `agent`，两边都开着会让同一条记忆在一轮里出现两次。
+   要用 kernel 侧召回（例如为了让 `memory.recall_timeout_ms` / `memory.on_failure` 这几个
+   旋钮生效），就把本插件的 `enabled_scopes` 去掉 `agent`：
+
+   ```json
+   {
+     "memory": { "provider": "jsonl", "recall_limit": 5, "on_failure": "degrade" },
+     "plugins": { "memory": { "config": { "enabled_scopes": ["session", "workspace"] } } }
+   }
+   ```
+
+   反过来，只用本插件的 Context Provider 就别写 `memory` 那一节——那是默认。
 
 2. **契约的 `MemoryProvider` 三个方法都不带 `SessionKey`**，因此经那条接口只能读写
    `agent` 范围；`session` / `workspace` 会被明确拒绝并说明原因，而不是静默落到某个

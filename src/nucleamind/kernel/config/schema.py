@@ -27,7 +27,6 @@ JSON，并把每处问题连同 JSON Pointer 位置一起报出来；`TurnSectio
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Mapping
 
 from ...contracts import ErrorCode, NucleaError
@@ -42,6 +41,10 @@ from .defaults import (
     DEFAULT_INTERCEPTOR_TIMEOUT_MS,
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MAX_TOOL_CALLS_PER_TURN,
+    DEFAULT_MEMORY_FRAGMENT_PRIORITY,
+    DEFAULT_MEMORY_ON_FAILURE,
+    DEFAULT_MEMORY_RECALL_LIMIT,
+    DEFAULT_MEMORY_RECALL_TIMEOUT_MS,
     DEFAULT_OBSERVER_TIMEOUT_MS,
     DEFAULT_PLUGIN_STOP_TIMEOUT_MS,
     DEFAULT_QUEUE_MAX_SIZE,
@@ -49,6 +52,7 @@ from .defaults import (
     DEFAULT_TOOL_RESULT_MAX_BYTES,
     DEFAULT_TOOL_TIMEOUT_MS,
     DEFAULT_TURN_TIMEOUT_MS,
+    MEMORY_ON_FAILURE_CHOICES,
     SESSION_CONCURRENCY_CHOICES,
 )
 from .fields import (
@@ -69,16 +73,17 @@ from .plugin_blocks import OnDisable, PluginEntry
 
 if TYPE_CHECKING:
     from ...contracts import JsonValue
-    from ..turn.limits import TurnLimits
 
 __all__ = [
     "IGNORED_TOP_LEVEL_KEYS",
     "SCHEMA_KEY",
     "SECTION_SPECS",
+    "MEMORY_ON_FAILURE_CHOICES",
     "SESSION_CONCURRENCY_CHOICES",
     "ContextSection",
     "HooksSection",
     "LoggingSection",
+    "MemorySection",
     "ModelSection",
     "NucleaConfig",
     "OnDisable",
@@ -148,6 +153,19 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
             FieldKind.POSITIVE_INT, DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
         ),
     },
+    "memory": {
+        "provider": FieldSpec(FieldKind.OPTIONAL_STR, None),
+        "recall_limit": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_MEMORY_RECALL_LIMIT),
+        "recall_timeout_ms": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_MEMORY_RECALL_TIMEOUT_MS
+        ),
+        "fragment_priority": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_MEMORY_FRAGMENT_PRIORITY
+        ),
+        "on_failure": FieldSpec(
+            FieldKind.STR, DEFAULT_MEMORY_ON_FAILURE, MEMORY_ON_FAILURE_CHOICES
+        ),
+    },
     "model": {
         "provider": FieldSpec(FieldKind.OPTIONAL_STR, None),
         "name": FieldSpec(FieldKind.OPTIONAL_STR, None),
@@ -159,156 +177,21 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class TurnSection:
-    """一次 turn 的预算。字段名与 `LimitKind` 的取值逐一对应（`limits.py` 的约定）。"""
-
-    max_iterations: int = DEFAULT_MAX_ITERATIONS
-    max_tool_calls_per_turn: int = DEFAULT_MAX_TOOL_CALLS_PER_TURN
-    tool_timeout_ms: int = DEFAULT_TOOL_TIMEOUT_MS
-    tool_result_max_bytes: int = DEFAULT_TOOL_RESULT_MAX_BYTES
-    turn_timeout_ms: int = DEFAULT_TURN_TIMEOUT_MS
-    #: `None` = 由模型能力推导，不是「无限制」。见 `TurnLimits.resolve_context_max_tokens`。
-    context_max_tokens: int | None = None
-
-    def to_limits(self) -> TurnLimits:
-        """转成 `TurnLimits`。
-
-        **函数内 import 是刻意的**：见 `DEFAULT_MAX_ITERATIONS` 的注释——只有真的要构造
-        `TurnLimits` 的调用方（编排层）才付得起把 turn 包导入进来的代价。
-        """
-        from ..turn.limits import TurnLimits as _TurnLimits
-
-        return _TurnLimits(
-            max_iterations=self.max_iterations,
-            max_tool_calls_per_turn=self.max_tool_calls_per_turn,
-            tool_timeout_ms=self.tool_timeout_ms,
-            tool_result_max_bytes=self.tool_result_max_bytes,
-            turn_timeout_ms=self.turn_timeout_ms,
-            context_max_tokens=self.context_max_tokens,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RoutingSection:
-    """输入分流与 Session 并发（`D13`）。字段与 `kernel/routing/` 的构造参数一一对应。
-
-    `command_prefix` 是路由的配置项而不是命令身份的一部分（见 `contracts/command.py`）：
-    改前缀不该等于改全部命令声明。
-    """
-
-    command_prefix: str = DEFAULT_COMMAND_PREFIX
-    #: `queue` / `merge` / `reject`，取值由 `SESSION_CONCURRENCY_CHOICES` 限定。
-    session_concurrency: str = DEFAULT_SESSION_CONCURRENCY
-    #: 单个 session 的等待上限；超出即降级为拒绝，不静默丢弃（`EDG-202`）。
-    queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE
-    dedup_capacity: int = DEFAULT_DEDUP_CAPACITY
-    dedup_ttl_ms: int = DEFAULT_DEDUP_TTL_MS
-    #: 一条 Channel 上同时活跃的 conversation 上限（`D33`）。它是**饱和护栏**而不是
-    #: 调优旋钮，因此没有「不限」哨兵。
-    channel_concurrency: int = DEFAULT_CHANNEL_CONCURRENCY
-    #: 单个 conversation 在 Channel 泵里的排队上限；超出即拒绝并回音（`EDG-202`）。
-    channel_queue_max_size: int = DEFAULT_CHANNEL_QUEUE_MAX_SIZE
-
-
-@dataclass(frozen=True, slots=True)
-class HooksSection:
-    """Hook 分发的两项超时（技术方案 §6.6）。
-
-    观察者是**整批**超时、拦截器是**每个 handler** 超时：前者并发执行、返回值被忽略，
-    整体拖不动 turn 就行；后者串行且能改流水线，一个慢 handler 会连累后面全部。
-    """
-
-    observer_timeout_ms: int = DEFAULT_OBSERVER_TIMEOUT_MS
-    interceptor_timeout_ms: int = DEFAULT_INTERCEPTOR_TIMEOUT_MS
-
-
-@dataclass(frozen=True, slots=True)
-class ContextSection:
-    """Context 组装（技术方案 §10.2 第 7 步 b）。
-
-    `context_max_tokens` **不在这里**：它是 turn 的六项预算之一，字段名与 `LimitKind`
-    的取值一一对应，搬过来会破坏那条已被测试钉死的对应关系。
-    """
-
-    #: 单个 Context Provider 的独立超时。超时按其关键性中止或跳过（`CTX-005`、`EDG-302`）。
-    provider_timeout_ms: int = DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
-
-
-@dataclass(frozen=True, slots=True)
-class WorkspaceSection:
-    """workspace 位置。`None` = 用实例目录下的 `workspace/`（`InstanceLayout.workspace_dir`）。"""
-
-    root: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PluginsSection:
-    """插件发现与加载的开关，以及逐插件的配置块。
-
-    `enabled` / `disable` / `search_paths` / `stop_timeout_ms` 是**保留键**，`plugins` 小节里
-    其余的键都是插件 id（技术方案 §6.7 的 `plugins.<plugin_id>.config`），形状校验与那条
-    「保留键为什么撞不上插件 id」的理由都在 `plugin_blocks.py`。
-    """
-
-    #: 显式启用的插件 id（`D25`，技术方案 §7.1「发现与启用分离」）。**不在这张表里的
-    #: 候选连 manifest 都不会被读**，「安装 ≠ 启用」（`DST-002`）因此没有绕行路径。
-    enabled: tuple[str, ...] = ()
-    #: 显式禁用的提供方 id。它压过 `enabled`，也对内建生效（`resolve(disabled=...)`）。
-    disable: tuple[str, ...] = ()
-    #: 插件搜索路径（技术方案 §7.1 的 `plugins.paths`；键名沿用 `D23` 已发布的这一个）。
-    #: 每条路径下的直接子项：含 `plugin.toml` 的目录，或单个 `.py`。**不含
-    #: `InstanceLayout.plugins_dir`**——那是插件的状态目录，不是代码来源。
-    search_paths: tuple[str, ...] = ()
-    #: 单个插件的停止预算（`D28`、`EDG-104`）：超时即放弃等待、记事件、继续停其余插件。
-    stop_timeout_ms: int = DEFAULT_PLUGIN_STOP_TIMEOUT_MS
-    #: 插件 id -> 它的 `{config, secrets}`。装配根按 id 取，取不到就给空块。
-    entries: Mapping[str, PluginEntry] = blocks.NO_PLUGIN_ENTRIES
-
-    def entry(self, plugin_id: str) -> PluginEntry:
-        """取一个插件的条目。**没配过不是错误**——每个字段都有默认值的插件应当免配置可用。"""
-        return self.entries.get(plugin_id, PluginEntry())
-
-
-@dataclass(frozen=True, slots=True)
-class ModelSection:
-    """默认模型选择。provider 凭据不在配置文件里（只走环境变量，§6.7）。"""
-
-    provider: str | None = None
-    name: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class LoggingSection:
-    """事件 sink 的开关。sink 实现在 `D12`。"""
-
-    level: str = "info"
-    #: 写 `logs/events-<date>.jsonl`。
-    file_enabled: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class NucleaConfig:
-    """整份配置。所有小节都有默认值——缺失的 `config.json` 因此是完全合法的状态。"""
-
-    turn: TurnSection = field(default_factory=TurnSection)
-    routing: RoutingSection = field(default_factory=RoutingSection)
-    hooks: HooksSection = field(default_factory=HooksSection)
-    context: ContextSection = field(default_factory=ContextSection)
-    workspace: WorkspaceSection = field(default_factory=WorkspaceSection)
-    plugins: PluginsSection = field(default_factory=PluginsSection)
-    model: ModelSection = field(default_factory=ModelSection)
-    logging: LoggingSection = field(default_factory=LoggingSection)
-
-    def to_json(self) -> dict[str, JsonValue]:
-        """诊断视图。实现在 `document.py`——它是这张字段表的**派生物**而不是第二份真相。
-
-        **函数内 import** 是为了绕开 `document` → `schema` 的模块级环（`to_limits()` 的
-        同一个做法）：渲染器需要小节的类型，而小节住在这里。
-        """
-        from .document import config_to_json
-
-        return config_to_json(self)
+#: 九个小节 dataclass 与 `NucleaConfig` 住在 `sections.py`（`D44` 拆出，理由同 `D28` 的
+#: `defaults.py`：本文件撞上了 500 行上限）。**从这里原样再导出**，既有 import 一个没变——
+#: 「字段只加在 `SECTION_SPECS`」那条规则因此仍然指向本文件。
+from .sections import (  # noqa: E402 - 见上面那段注释，位置刻意在字段表之后
+    ContextSection,
+    HooksSection,
+    LoggingSection,
+    MemorySection,
+    ModelSection,
+    NucleaConfig,
+    PluginsSection,
+    RoutingSection,
+    TurnSection,
+    WorkspaceSection,
+)
 
 
 def defaults() -> dict[str, JsonValue]:
@@ -421,6 +304,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     routing = sections["routing"]
     hooks = sections["hooks"]
     plugins = sections["plugins"]
+    memory = sections["memory"]
     model = sections["model"]
     logging_values = sections["logging"]
     return NucleaConfig(
@@ -464,6 +348,17 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
             provider_timeout_ms=int_at(
                 sections["context"], "provider_timeout_ms", DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
             ),
+        ),
+        memory=MemorySection(
+            provider=opt_str_at(memory, "provider"),
+            recall_limit=int_at(memory, "recall_limit", DEFAULT_MEMORY_RECALL_LIMIT),
+            recall_timeout_ms=int_at(
+                memory, "recall_timeout_ms", DEFAULT_MEMORY_RECALL_TIMEOUT_MS
+            ),
+            fragment_priority=int_at(
+                memory, "fragment_priority", DEFAULT_MEMORY_FRAGMENT_PRIORITY
+            ),
+            on_failure=str_at(memory, "on_failure", DEFAULT_MEMORY_ON_FAILURE),
         ),
         plugins=PluginsSection(
             enabled=str_tuple_at(plugins, "enabled"),

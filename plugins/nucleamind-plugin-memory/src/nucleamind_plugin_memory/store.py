@@ -398,10 +398,10 @@ class ContractMemoryProvider:
     （`AGENTS.md` 原则 7）。
 
     **本插件自己不经它工作**：Context Provider、三条工具与 `/memory` 命令直接用
-    `MemoryStore`，因为它们都拿得到 `SessionKey`。注册这条能力仍然有意义——它是这份实现的
-    契约形状，第三方要换后端时有一个可对照、可被 `sdk.testing.MemoryProviderContract`
-    驱动的目标（`MEM-001`）。**但 kernel 今天不消费 `CapabilityKind.MEMORY`**
-    （`memory_providers_from()` 没有调用方），这一点写在 README 里，不假装它接上了。
+    `MemoryStore`，因为它们都拿得到 `SessionKey`。它仍然有两个消费者——第三方换后端时的
+    契约形状（可被 `sdk.testing.MemoryProviderContract` 驱动，`MEM-001`），以及 `D44` 起
+    kernel 的召回路径（`memory.provider = "jsonl"` 时装配根就取这个对象）。**后者默认不开**，
+    而两边同时开会重复召回，处置写在 README 的「已知边界」第 1 条。
     """
 
     __slots__ = ("_key", "_store")

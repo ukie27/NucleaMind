@@ -4,10 +4,10 @@
 不负责：读写文件（`store.py`）、打分（`scoring.py`）、决定片段怎么进模型消息
 （`kernel/turn/context_builder.py`）。
 
-**这是记忆真正进到模型上下文的唯一路径。** `CapabilityKind.MEMORY` 今天在 kernel 里
-没有消费者（`kernel/plugins/capabilities.py::memory_providers_from()` 除测试外无调用方，
-`kernel/turn/context_builder.py` 只认 `ContextProvider`），因此只注册一条 `MEMORY` 能力，
-记忆永远进不了模型。这条 Context Provider 就是那个缺口的填充物。
+**这是记忆进到模型上下文的默认路径。** `D44` 给了 kernel 第二条：装配根按 `memory.provider`
+挑一条 `MEMORY` 能力交给组装器（`kernel/turn/memory.py`），但那个键**默认不写**，因此默认
+配置下这条 Context Provider 仍是唯一的入口。**两边同时开会让 `agent` 范围的记忆在一轮里
+出现两次**——处置写在本包 `__init__.py` 的边界一节里。
 
 **三条判定写在这里，因为它们都是「拿什么当查询」的问题：**
 

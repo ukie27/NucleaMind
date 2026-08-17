@@ -21,13 +21,18 @@
 
 **三条如实记着的边界**，写在这里而不是留给用户发现：
 
-- **kernel 今天不消费 `CapabilityKind.MEMORY`**（`memory_providers_from()` 除测试外没有
-  调用方，`kernel/turn/context_builder.py` 只认 `ContextProvider`）。因此记忆真正进到
-  上下文靠的是本插件自己的 `CONTEXT` Provider，那条 `MEMORY` 能力是这份实现的**契约形状**
-  ——第三方换后端时有一个可对照、可被 `sdk.testing.MemoryProviderContract` 驱动的目标。
-  **不假装它已经被 kernel 接上了。**
+- **`D44` 起 kernel 会消费 `CapabilityKind.MEMORY`，但默认不开。** 装配根按
+  `memory.provider` 挑一条 `MEMORY` 能力交给组装器（`kernel/turn/memory.py`）；不写那个键
+  就没有 kernel 侧召回，而那是默认。因此**默认配置下**记忆进到上下文仍然只靠本插件自己的
+  `CONTEXT` Provider。
+  **两边同时开会让同一条记忆在一轮里出现两次**：kernel 侧只召回 `agent` 范围，而本插件的
+  `enabled_scopes` 默认已经包含 `agent`。要用 kernel 侧召回（例如为了让 `nm config` 里
+  那几个旋钮生效）就把 `enabled_scopes` 去掉 `agent`，或者干脆不写 `memory.provider`。
+  两条路径**都是对的**，只是不该同时开——这条如实写在这里与 README 里，不留给用户发现。
 - **契约的 `MemoryProvider` 三个方法都不带 `SessionKey`**，因此经那条接口只能读写 `agent`
-  范围（`store.ContractMemoryProvider`）。插件自己的四条通路都拿得到 key，不受此限。
+  范围（`store.ContractMemoryProvider`）。`D44` 把这一点从「目前这么理解」升成了契约上的
+  **决定**（见 `contracts/protocols.py::MemoryProvider`）：会话级与工作区级归
+  `ContextProvider`。插件自己的四条通路都拿得到 key，不受此限。
 - **`FragmentScope.USER` 不支持**：召回路径拿不到发送者身份，按会话存会让群聊里其他人
   读到它。详见 `partition.py`。
 

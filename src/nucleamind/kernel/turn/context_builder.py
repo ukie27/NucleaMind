@@ -4,8 +4,9 @@
 `context_assemble` 拦截器，按 `trust` 决定片段的放置位置，并在 `context_max_tokens`
 之内裁剪出一份 `ModelMessage` 序列。
 不负责：调用模型、决定谁是 Provider（registry 说了算）、压缩历史（`SessionStore.compact`
-是 `SES-005`，见下面「仍超限怎么办」）、持久化——本模块不做任何 IO，只 await 注入进来的
-Provider 与 Hook。
+是 `SES-005`，见下面「仍超限怎么办」）、持久化、**长期记忆的召回策略与降级**
+（`memory.py`，`D44`——这里只调它一次，把结果与其余片段同批处理）——本模块不做任何 IO，
+只 await 注入进来的 Provider 与 Hook。
 
 **四条会影响正确性的规则**：
 
@@ -61,6 +62,7 @@ from nucleamind.contracts import (
 from ..registry import CapabilityRegistry
 from .deps import HookDispatcher
 from .limits import TurnLimits
+from .memory import MemoryRecall
 
 __all__ = [
     "DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS",
@@ -198,6 +200,7 @@ async def assemble(
     extra_fragments: Iterable[ContextFragment] = (),
     hooks: HookDispatcher | None = None,
     model_info: ModelInfo | None = None,
+    memory: MemoryRecall | None = None,
     now: datetime,
     provider_timeout_ms: int = DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     on_failure: Callable[[NucleaError], None] | None = None,
@@ -207,13 +210,23 @@ async def assemble(
     `extra_fragments` 是命令注入的片段（`CommandResult.fragments`，`CMD-004`）：它们与
     Provider 产出的片段同批参与拦截、放置与裁剪，没有旁路。
 
+    `memory` 是长期记忆的召回（`D44`，`None` = 不启用）。它产出的片段**与上面两批完全同
+    等**：同批拦截、同批放置、同批裁剪。做成 `assemble` 的一个参数而不是让 orchestrator
+    自己召回再拼进 `extra_fragments`，是因为「召回」就是上下文组装的 a 步——放在外面会让
+    「片段从哪来」有两个答案，而 `orchestrator.py` 也贴着 500 行上限。**查询词是本次输入**
+    （`MemoryRecall` 自己挡掉空串）；策略与降级全在 `memory.py`，这里只调它。
+
     **异常约定**：关键 Provider 失败、关键插件的 `context_assemble` 失败原样上抛；
     裁剪到底仍超预算抛 `INPUT_TOO_LARGE`。非关键失败交给 `on_failure` 后跳过。
-    **取消语义**：`cancel` 透传给每个 Provider；本函数自身不设检查点（检查点 1 在
-    orchestrator，就在调用本函数之前）。
+    记忆后端的失败按 `MemoryRecall.critical` 分叉（`MEM-003`），判定在那一侧。
+    **取消语义**：`cancel` 透传给每个 Provider 与记忆后端；本函数自身不设检查点
+    （检查点 1 在 orchestrator，就在调用本函数之前）。
     """
     collected = await _collect(bindings, snapshot, correlation, cancel, provider_timeout_ms, on_failure)
-    fragments = (*collected, *extra_fragments)
+    recalled: tuple[ContextFragment, ...] = ()
+    if memory is not None:
+        recalled = await memory.recall(user_input, correlation, cancel, on_failure=on_failure)
+    fragments = (*collected, *recalled, *extra_fragments)
     fragments = await _run_interceptor(fragments, correlation, hooks)
 
     kept: list[ContextFragment] = []

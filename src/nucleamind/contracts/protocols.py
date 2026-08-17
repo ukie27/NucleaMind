@@ -348,6 +348,18 @@ class MemoryProvider(Protocol):
     都是 `ContextFragment`：它自带 `source`、`trust`、`scope`、`sensitivity` 与
     `expires_at`，恰好覆盖 `MEM-002`（范围）与 `MEM-004`（来源与可信度标记），
     而且召回结果可以直接进上下文，不需要中间形态。
+
+    **它是实例级（`FragmentScope.AGENT`）长期记忆的接口。这是决定，不是默认**（`D44`）。
+    下面三个方法**一个 `SessionKey` 都不带**，因此经这条接口根本表达不出「哪个会话的
+    记忆」——`scope=SESSION` 传下去，实现方只能猜。会话级与工作区级的记忆归
+    `ContextProvider`：它的 `provide()` 拿得到 `SessionSnapshot.session_key`
+    （`plugins/nucleamind-plugin-memory/` 的四条通路就是这么分的）。
+    Kernel 侧的召回因此**只用 `AGENT`**（`kernel/turn/memory.py::MEMORY_RECALL_SCOPE`），
+    实现方可以对其余三个范围直接抛 `INPUT_UNSUPPORTED` 而不算违约。
+
+    要改这个决定得给三个方法各加一个 key 参数，而 SDK 已发 `1.0.0`——那是 §7.6 意义上的
+    破坏性变更，得走 major。在此之前**不要**用「约定在 `query` 里编码会话 id」这类办法
+    绕过它：那会让两个后端对同一个字符串有两种理解。
     """
 
     async def remember(self, fragment: ContextFragment, cancel: CancelSignal) -> str:
@@ -375,8 +387,10 @@ class MemoryProvider(Protocol):
 
         **异常约定**：后端不可用抛 `EXTERNAL_SERVICE` 类错误；Kernel 按配置降级为
         无长期记忆模式继续对话（`MEM-003`），因此本方法不得为了「保证可用」而返回空结果
-        掩盖故障。
+        掩盖故障。**降级的判定在 `memory.on_failure`**（默认 `degrade`），实现方不需要、
+        也不应该自己做那个选择。
         **取消语义**：检索前与每次外部往返后检查 `cancel`，被取消时抛 `CANCELLED` 类错误。
+        Kernel 侧的召回**不把取消当成后端故障**（因此它不走降级，见类 docstring）。
         """
         ...
 

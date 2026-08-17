@@ -70,10 +70,8 @@ from nucleamind.kernel.plugins import (
     PluginPhase,
     channels_from,
     cli_entry_from,
-    model_providers_from,
-    session_store_from,
 )
-from nucleamind.kernel.registry import CapabilityRegistry, SuppressedCapabilities
+from nucleamind.kernel.registry import SuppressedCapabilities
 from nucleamind.kernel.routing import (
     ConcurrencyPolicy,
     DedupCache,
@@ -105,6 +103,7 @@ from .plugin_plan import (
     plan_external_plugins,
     plan_plugins,
 )
+from .selection import missing_capability, require_sessions, select_model, select_recall
 from .wiring import Wiring, wire_capabilities
 
 #: `PluginManifest` 从这里再导出一次：`embed/` 只能 import `contracts/` 与 `runtime/`
@@ -121,6 +120,7 @@ __all__ = [
     "plan_external",
     "require_sessions",
     "select_manifests",
+    "select_recall",
     "suppressed_capabilities",
     "wire_all",
 ]
@@ -332,53 +332,6 @@ def load_config_or_report(
     except NucleaError as error:
         write_config_error(layout.config_error_log_path(date.today()), error)
         raise
-
-
-def _pick_model(
-    registry: CapabilityRegistry, config: NucleaConfig
-) -> tuple[ModelProvider, str, ModelInfo | None]:
-    """§10.1 步骤 8 的 MODEL 一项：选出生效的 provider 与模型标识。"""
-    bindings = model_providers_from(registry)
-    if not bindings:
-        raise _missing("MODEL", "没有任何模型供应商，实例无法回答任何输入。")
-    wanted = config.model.provider
-    chosen = next((b for b in bindings if b.name == wanted), None) if wanted else bindings[0]
-    if chosen is None:
-        raise NucleaError(
-            ErrorCode.CAPABILITY_MISSING,
-            "配置里指定的模型供应商没有注册。",
-            detail={
-                "pointer": "/model/provider",
-                "wanted": wanted,
-                "available": [b.name for b in bindings],
-            },
-        )
-    model_id = config.model.name
-    if not model_id:
-        raise NucleaError(
-            ErrorCode.CONFIG_INVALID,
-            "没有指定要用哪个模型。",
-            detail={
-                "pointer": "/model/name",
-                "suggestion": '在 config.json 里写 {"model": {"name": "gpt-4o-mini"}}。',
-            },
-        )
-    return chosen.value, model_id, chosen.value.describe(model_id)
-
-
-def require_sessions(registry: CapabilityRegistry) -> SessionStore:
-    binding = session_store_from(registry)
-    if binding is None:
-        raise _missing("SESSION_STORE", "没有会话存储，历史无处可写（SES-003）。")
-    return binding.value
-
-
-def _missing(kind: str, why: str) -> NucleaError:
-    return NucleaError(
-        ErrorCode.CAPABILITY_MISSING,
-        f"必需能力缺失：{kind}。{why}",
-        detail={"kind": kind, "suggestion": "检查 plugins.disable 与插件加载结果（nm 会打印）。"},
-    )
 
 
 async def wire_all(
@@ -607,10 +560,10 @@ async def _bootstrap_locked(
     # 8 必需能力
     registry = wiring.registry
     sessions = require_sessions(registry)
-    model, model_id, model_info = _pick_model(registry, config)
+    model, model_id, model_info = select_model(registry, config)
     cli = cli_entry_from(registry)
     if cli is None:
-        raise _missing("CLI_ENTRY", "没有本地交互入口（BAS-009）。")
+        raise missing_capability("CLI_ENTRY", "没有本地交互入口（BAS-009）。")
 
     instance = _assemble(
         layout=layout,
@@ -739,6 +692,7 @@ def _assemble(
         model_info=model_info,
         context_provider_timeout_ms=config.context.provider_timeout_ms,
         deliver=deliver,
+        memory=select_recall(registry, config),
     )
     orchestrator = TurnOrchestrator(deps)
     diagnostics = Diagnostics(

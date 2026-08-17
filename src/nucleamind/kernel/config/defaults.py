@@ -32,6 +32,10 @@ __all__ = [
     "DEFAULT_INTERCEPTOR_TIMEOUT_MS",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_MAX_TOOL_CALLS_PER_TURN",
+    "DEFAULT_MEMORY_FRAGMENT_PRIORITY",
+    "DEFAULT_MEMORY_ON_FAILURE",
+    "DEFAULT_MEMORY_RECALL_LIMIT",
+    "DEFAULT_MEMORY_RECALL_TIMEOUT_MS",
     "DEFAULT_OBSERVER_TIMEOUT_MS",
     "DEFAULT_PLUGIN_STOP_TIMEOUT_MS",
     "DEFAULT_QUEUE_MAX_SIZE",
@@ -39,6 +43,7 @@ __all__ = [
     "DEFAULT_TOOL_RESULT_MAX_BYTES",
     "DEFAULT_TOOL_TIMEOUT_MS",
     "DEFAULT_TURN_TIMEOUT_MS",
+    "MEMORY_ON_FAILURE_CHOICES",
     "SESSION_CONCURRENCY_CHOICES",
 ]
 
@@ -78,3 +83,16 @@ DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS: Final = 3_000
 #: `DEFAULT_STOP_TIMEOUT_MS` 必须相等**，由
 #: `test_the_stop_budget_default_matches_the_config_schema` 盯着。
 DEFAULT_PLUGIN_STOP_TIMEOUT_MS: Final = 5_000
+
+#: 长期记忆的召回四项（`D44`、`MEM-003`）。**与 `kernel/turn/memory.py` 的同名 `DEFAULT_*`
+#: 必须逐一相等**，由 `test_memory_defaults_match_the_turn_package` 盯着。理由与上面那三个
+#: 超时完全相同：`kernel/config/` 不得 module-level import `kernel.turn`（那会把 engine 与
+#: asyncio 拖上配置路径，`NFR-405` 的冷启动预算 300 ms）。
+DEFAULT_MEMORY_RECALL_LIMIT: Final = 5
+DEFAULT_MEMORY_RECALL_TIMEOUT_MS: Final = 3_000
+DEFAULT_MEMORY_FRAGMENT_PRIORITY: Final = 100
+DEFAULT_MEMORY_ON_FAILURE: Final = "degrade"
+
+#: `memory.on_failure` 的合法取值，与 `kernel/turn/memory.py::MEMORY_ON_FAILURE_CHOICES`
+#: 同源同序。
+MEMORY_ON_FAILURE_CHOICES: Final = ("degrade", "fail")

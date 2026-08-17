@@ -54,6 +54,13 @@ def config_to_json(config: NucleaConfig) -> dict[str, JsonValue]:
             "interceptor_timeout_ms": config.hooks.interceptor_timeout_ms,
         },
         "context": {"provider_timeout_ms": config.context.provider_timeout_ms},
+        "memory": {
+            "provider": config.memory.provider,
+            "recall_limit": config.memory.recall_limit,
+            "recall_timeout_ms": config.memory.recall_timeout_ms,
+            "fragment_priority": config.memory.fragment_priority,
+            "on_failure": config.memory.on_failure,
+        },
         "plugins": {
             "enabled": list(config.plugins.enabled),
             "disable": list(config.plugins.disable),

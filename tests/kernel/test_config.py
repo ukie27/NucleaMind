@@ -22,6 +22,7 @@ from nucleamind.kernel.config import (
     DEFAULT_ORIGIN,
     ENV_ORIGIN,
     FILE_ORIGIN,
+    MEMORY_ON_FAILURE_CHOICES,
     SECTION_SPECS,
     SESSION_CONCURRENCY_CHOICES,
     ConfigLayer,
@@ -407,6 +408,42 @@ class TestSchema:
             config.context.provider_timeout_ms
             == context_builder.DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
         )
+
+    def test_memory_defaults_match_the_turn_package(self) -> None:
+        """长期记忆的四项默认值 + 一张取值表，同样在两处各写了一份（`D44`）。
+
+        与上面三条同理。**`on_failure` 的取值表也要对**：`MemorySection.critical` 把
+        `"fail"` 翻成布尔，而那个字面量在 `kernel/turn/memory.py` 里也有一份。
+        """
+        from nucleamind.kernel.turn import memory
+
+        config = validate_config({})
+        assert config.memory.recall_limit == memory.DEFAULT_MEMORY_RECALL_LIMIT
+        assert config.memory.recall_timeout_ms == memory.DEFAULT_MEMORY_RECALL_TIMEOUT_MS
+        assert config.memory.fragment_priority == memory.DEFAULT_MEMORY_FRAGMENT_PRIORITY
+        assert config.memory.on_failure == memory.DEFAULT_MEMORY_ON_FAILURE
+        assert MEMORY_ON_FAILURE_CHOICES == memory.MEMORY_ON_FAILURE_CHOICES
+
+    def test_memory_recall_is_off_unless_a_provider_is_named(self) -> None:
+        """默认不启用 kernel 侧召回。
+
+        自动挑一个会让「装上一个记忆插件」悄悄改变每一轮请求的内容——那是运维必须显式说出
+        的决定，不是一个可以推断的默认。
+        """
+        assert validate_config({}).memory.provider is None
+        assert validate_config({}).memory.critical is False
+
+    def test_on_failure_fail_is_the_only_thing_that_makes_memory_critical(self) -> None:
+        """`MEM-003`：默认降级。`critical` 是那个字面量的唯一消费点。"""
+        assert validate_config({"memory": {"on_failure": "fail"}}).memory.critical is True
+        assert validate_config({"memory": {"on_failure": "degrade"}}).memory.critical is False
+
+    def test_unknown_memory_on_failure_is_rejected_with_the_allowed_values(self) -> None:
+        with pytest.raises(NucleaError) as caught:
+            validate_config({"memory": {"on_failure": "retry"}})
+        issue = caught.value.detail["errors"][0]
+        assert issue["pointer"] == "/memory/on_failure"
+        assert "degrade" in issue["reason"] and "fail" in issue["reason"]
 
     def test_unknown_session_concurrency_is_rejected_with_the_allowed_values(self) -> None:
         """取值受限的字段必须在校验时就带着指针报错，而不是等到构造调度器那一刻。"""

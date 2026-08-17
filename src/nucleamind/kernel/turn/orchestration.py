@@ -38,6 +38,7 @@ from nucleamind.kernel.routing import DedupCache, Dispatcher, SessionScheduler
 from .context_builder import DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS, ContextProviderBinding
 from .deps import HookDispatcher, ToolInvoker
 from .limits import TurnLimits
+from .memory import MemoryRecall
 from .transcript import TurnState
 
 __all__ = ["EventTap", "OrchestratorDeps", "TurnReceipt", "emit_outbound", "utc_now"]
@@ -130,6 +131,9 @@ class OrchestratorDeps:
     scope: str = "default"
     context_provider_timeout_ms: int = DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
     deliver: Callable[[OutboundMessage], Awaitable[None]] | None = None
+    #: 长期记忆的召回（`D44`）。`None` = 没有 kernel 侧召回，这也是默认——配置里没写
+    #: `memory.provider` 时装配根不装它。见 `memory.py` 的模块 docstring。
+    memory: MemoryRecall | None = None
     clock: Callable[[], datetime] = utc_now
 
 

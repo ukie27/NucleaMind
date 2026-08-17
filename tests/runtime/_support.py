@@ -17,19 +17,24 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS
 from nucleamind.contracts import (
+    CancelSignal,
     CapabilityKind,
+    ContextFragment,
+    FragmentKind,
+    FragmentScope,
     InboundMessage,
     InstanceId,
     JsonValue,
     ModelResponse,
     OutboundMessage,
     Sender,
+    TrustLevel,
 )
 from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginManifest
 from nucleamind.sdk.testing import (
@@ -40,14 +45,21 @@ from nucleamind.sdk.testing import (
 )
 
 __all__ = [
+    "FAKE_MEMORY",
     "FAKE_MODEL_ID",
+    "MEMORIES",
+    "MEMORY_NAME",
     "MULTI_CHANNEL_ID",
     "SCRIPT",
     "TEST_MANIFESTS",
+    "FakeMemoryProvider",
     "ScriptedChannel",
     "inbound",
+    "manifests_with_memory",
     "manifests_with_multi_channel",
     "manifests_without",
+    "memory_fragment",
+    "setup_fake_memory",
     "setup_fake_model",
     "setup_multi_channel",
     "text_response",
@@ -183,3 +195,69 @@ def setup_multi_channel(api: NucleaAPI) -> None:
 
 def manifests_with_multi_channel() -> tuple[PluginManifest, ...]:
     return (*TEST_MANIFESTS, MULTI_CHANNEL)
+
+
+# ----------------------------------------------------------- 假记忆后端（`D44`）
+
+#: 这条假 `MEMORY` 能力的名字。用例把它写进 `memory.provider`。
+MEMORY_NAME: str = "fake-memory"
+
+#: 这个后端每次 `recall()` 交出的记录。用例在 `bootstrap()` **之前**改它，
+#: 理由与 `SCRIPT` 完全相同（`setup(api)` 的签名只有 `api`）。
+MEMORIES: dict[str, ContextFragment] = {}
+
+
+def memory_fragment(content: str, *, priority: int = 100) -> ContextFragment:
+    """造一条 `agent` 范围的记忆片段。"""
+    return ContextFragment(
+        source="plugin:fake-memory",
+        kind=FragmentKind.MEMORY,
+        content=content,
+        priority=priority,
+        estimated_tokens=8,
+        scope=FragmentScope.AGENT,
+        trust=TrustLevel.UNTRUSTED,
+    )
+
+
+class FakeMemoryProvider:
+    """`contracts.MemoryProvider`。只实现 `recall()`——这条路径不写记忆。"""
+
+    def __init__(self, records: dict[str, ContextFragment]) -> None:
+        self.records = records
+        self.queries: list[str] = []
+
+    async def remember(self, fragment: ContextFragment, cancel: CancelSignal) -> str:
+        raise NotImplementedError
+
+    async def recall(
+        self,
+        query: str,
+        *,
+        scope: FragmentScope,
+        limit: int,
+        cancel: CancelSignal,
+    ) -> Mapping[str, ContextFragment]:
+        self.queries.append(query)
+        assert scope is FragmentScope.AGENT, "kernel 只该按 agent 范围召回"
+        return dict(list(self.records.items())[:limit])
+
+    async def forget(self, record_id: str) -> bool:
+        raise NotImplementedError
+
+
+FAKE_MEMORY: PluginManifest = PluginManifest(
+    id="fake-memory",
+    version="0.1.0",
+    sdk_range=">=1.0.0,<2.0.0",
+    setup="tests.runtime._support:setup_fake_memory",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.MEMORY, name=MEMORY_NAME),),
+)
+
+
+def setup_fake_memory(api: NucleaAPI) -> None:
+    api.register_memory_provider(MEMORY_NAME, FakeMemoryProvider(dict(MEMORIES)))
+
+
+def manifests_with_memory() -> tuple[PluginManifest, ...]:
+    return (*TEST_MANIFESTS, FAKE_MEMORY)

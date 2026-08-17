@@ -38,9 +38,15 @@ from nucleamind.sdk import CapabilityDecl, PluginManifest
 
 from ._support import (
     FAKE_MODEL_ID,
+    MEMORIES,
+    MEMORY_NAME,
     SCRIPT,
     TEST_MANIFESTS,
+    FakeMemoryProvider,
+    inbound,
+    manifests_with_memory,
     manifests_without,
+    memory_fragment,
     text_response,
     write_config,
 )
@@ -406,3 +412,73 @@ def test_the_fake_model_manifest_keeps_the_real_shape() -> None:
     fake = next(m for m in TEST_MANIFESTS if m.id == "model-openai")
     assert fake.setup.startswith("tests.")
     assert FAKE_MODEL_ID == "fake-model"
+
+
+# ------------------------------------------- 步骤 8 的第三项：长期记忆的召回（`D44`）
+
+
+async def test_no_memory_section_means_no_recall_at_all(tmp_path: Path) -> None:
+    """默认不启用。**装上一个记忆插件不该悄悄改变每一轮请求的内容**——那是运维必须
+    显式说出的决定，而 `memory_providers_from()` 有返回值不等于用户想用它。"""
+    MEMORIES.clear()
+    MEMORIES["r1"] = memory_fragment("用户偏好简短回答")
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=manifests_with_memory())
+    try:
+        assert instance.deps.memory is None
+    finally:
+        await instance.stop()
+
+
+async def test_a_named_memory_backend_is_wired_into_the_orchestrator(tmp_path: Path) -> None:
+    """`D39` 留下的缺口在这里合上：注册一条 `MEMORY`、在配置里点名，它就真的接上了。
+
+    这条断言的是**装配**；「记忆真的进了模型消息」在
+    `tests/kernel/test_memory_recall.py` 里验（那一层看得见组装结果）。
+    """
+    MEMORIES.clear()
+    MEMORIES["r1"] = memory_fragment("用户偏好简短回答")
+    write_config(
+        tmp_path,
+        plugins={"enabled": []},
+        memory={"provider": MEMORY_NAME, "recall_limit": 2, "on_failure": "fail"},
+    )
+    instance = await _boot(tmp_path, manifests=manifests_with_memory())
+    try:
+        recall = instance.deps.memory
+        assert recall is not None
+        assert recall.name == MEMORY_NAME
+        assert recall.limit == 2
+        # `on_failure: fail` → `critical=True`。那个字面量的唯一消费点是
+        # `MemorySection.critical`。
+        assert recall.critical is True
+        assert isinstance(recall.provider, FakeMemoryProvider)
+    finally:
+        await instance.stop()
+
+
+async def test_naming_a_backend_that_is_not_registered_refuses_to_start(tmp_path: Path) -> None:
+    """静默退回「没有记忆」会让用户以为记忆在工作。指针指向那一个要改的键。"""
+    write_config(tmp_path, memory={"provider": "sqlite"})
+    with pytest.raises(NucleaError) as caught:
+        await _boot(tmp_path, manifests=manifests_with_memory())
+    assert caught.value.code is ErrorCode.CAPABILITY_MISSING
+    assert caught.value.detail["field"] == "/memory/provider"
+    assert caught.value.detail["available"] == [MEMORY_NAME]
+
+
+async def test_recall_really_runs_during_a_turn(tmp_path: Path) -> None:
+    """功能形态：跑一次真 turn，后端收到的查询词就是这一轮的输入。"""
+    MEMORIES.clear()
+    MEMORIES["r1"] = memory_fragment("用户偏好简短回答")
+    write_config(tmp_path, memory={"provider": MEMORY_NAME})
+    instance = await _boot(tmp_path, manifests=manifests_with_memory())
+    try:
+        recall = instance.deps.memory
+        assert recall is not None
+        provider = recall.provider
+        assert isinstance(provider, FakeMemoryProvider)
+        await instance.submit(inbound("c0", "记得我的偏好吗", message_id="m0"))
+        assert provider.queries == ["记得我的偏好吗"]
+    finally:
+        await instance.stop()

@@ -220,6 +220,7 @@ class TurnOrchestrator:
             limits=deps.limits,
             bindings=deps.context_providers,
             extra_fragments=state.fragments,
+            memory=deps.memory,
             hooks=deps.hooks,
             model_info=deps.model_info,
             now=deps.clock(),
@@ -476,13 +477,9 @@ class TurnOrchestrator:
         reasoning: bool = False,
         final: bool = False,
     ) -> OutboundMessage | None:
+        """`emit_outbound` 的唯一调用点。存在的理由只有一个：注入 `deps.deliver`。"""
         return await emit_outbound(
-            state,
-            content,
-            stream_state,
-            self._deps.deliver,
-            reasoning=reasoning,
-            final=final,
+            state, content, stream_state, self._deps.deliver, reasoning=reasoning, final=final
         )
 
     def _report(self, state: TurnState, error: NucleaError) -> None:
