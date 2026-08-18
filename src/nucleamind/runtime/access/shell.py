@@ -20,8 +20,8 @@
 由 `tests/runtime/test_access.py::test_shell_baseline_matches_the_builtin_tool` 逐条对照。
 
 **守住 cwd 不等于守住命令能碰到的文件**：一条 `cat /etc/shadow` 用绝对路径，与 cwd 无关。
-cwd 边界限制的是「命令默认在哪里落地」，真正的隔离是不授予 `shell` 权限或 P2 的子进程宿主
-（§13.7）。这句如实写在这里，不假装挡得住。
+cwd 边界限制的是「命令默认在哪里落地」；更严格的控制是不启用该能力，或使用独立宿主 /
+部署沙箱（§13.7）。这句如实写在这里，不假装挡得住。
 """
 
 from __future__ import annotations

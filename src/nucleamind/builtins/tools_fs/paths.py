@@ -18,8 +18,8 @@ symlink 都能出去。两次比较都先过 `os.path.normcase`，因此 Windows
 
 **这是应用级守卫，不是 OS 沙箱**：校验与随后的 `open()` 之间存在 TOCTOU 窗口——目标可以
 在这期间被换成一个指向根外的符号链接。挡住它需要 `openat` + `O_NOFOLLOW` 一类的原语，
-而那在 Windows 上没有对等物。这里如实写明，不假装挡得住；真正的隔离是 P2 的子进程插件
-宿主。
+而那在 Windows 上没有对等物。这里如实写明，不假装挡得住；更严格的隔离由可选独立宿主
+或部署环境承担。
 """
 
 from __future__ import annotations

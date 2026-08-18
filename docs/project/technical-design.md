@@ -1179,7 +1179,8 @@ DISCOVERED -> VALIDATED -> LOADED -> STARTED -> STOPPING -> STOPPED
 
 ### 7.5 Host API 与权限
 
-回答 §17.2 第 2 项。**首版只做「声明式权限 + 应用级强制」，明确不承诺进程隔离。**
+回答 §17.2 第 2 项。**权限定位是「受信任插件 + 声明审计 + 可选应用级门面约束」，
+明确不承诺进程隔离或完整行为监控。**
 
 强制点在 Host API 门面：`PluginContext` 上的资源访问器只有在 manifest 声明且配置授权后
 才会被构造，否则属性访问抛 `PERMISSION_DENIED`。
@@ -1231,14 +1232,20 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 的凭据也擦得掉。它不在 `sdk.__all__` 里——契约类型不从 `sdk` 转发，插件按 `R4` 直接
 `from nucleamind.contracts import SecretStr`。
 
-**必须写进文档的诚实声明**：同进程 Python 插件可以绕过这些门面直接 `import os`。应用级
-权限的目标是「防误用、使意图可审计、让越界在评审和测试中可见」，不是「防恶意插件」
-（`13.7`）。真正的隔离依赖 P2 的子进程插件宿主，届时 `PluginContext` 的方法签名保持不变，
-底层替换为 RPC，因此现在的接口形态是隔离方案的前置条件而非障碍。
+**必须写进文档的诚实声明**：安装并启用插件等同于信任它在当前进程执行 Python 代码。
+插件可以绕过门面直接 `import os` / `socket` / `subprocess`；manifest 声明的是作者提交的
+资源意图，不是 Kernel 观测到的完整行为清单。应用级权限的目标是「防误用、使意图可审计、
+让声明变化在评审和测试中可见」，不是「防恶意插件」（`13.7`）。需要更严格控制时，使用
+可选独立插件宿主、容器或 OS 部署隔离，不把隔离设施变成极简 Kernel 的必备职责。
 
 权限授予可审计（`NFR-301`）：授予结果写入 `<instance_dir>/permissions.json`，每次变更
-发布 `capability.permission_granted` 事件。默认最小权限，扩大权限必须是用户显式配置操作
-（`NFR-307`）。
+发布 `capability.permission_granted` 事件。首次使用按声明整份授予并记录；此后声明扩大时，
+新增项必须由用户显式批准（`NFR-307`）。
+
+`D52` 对权限范围作出终局定位：**不新增 `listen` / `net.listen`，也不新增 Agent 专属权限
+系统。** 监听端口、聊天平台连接与直接子进程等行为可以绕过现有门面，继续扩权限枚举无法
+把同进程 Python 变成可强制的沙箱。监听型插件由 `plugins.enabled` / `plugins.disable`
+及插件自身配置控制；安全策略可以作为插件或外部宿主独立演进。
 
 `D26` 落地时对本节的四处细化（实现在 `kernel/plugins/permissions.py`、
 `kernel/plugins/permission_codec.py` 与 `runtime/access/`）：
@@ -1962,7 +1969,7 @@ a 步同样不再是「补基线测试」：`D32` 起就改成直接读旧实现
 | Session/Context/Memory 职责混淆 | `13.4` | Session 拥有历史；Context 只读不写；Memory 独立存储。契约测试断言 Context provider 无写权限 |
 | 配置迁移覆盖用户数据 | `13.5` | 迁移失败保留旧状态；配置损坏拒绝启动不改写原文件 |
 | `Any` 向核心扩散 | `13.6` | `Any` 需 `# boundary:` 注释 + CI 检查；basedpyright 严格模式 |
-| 虚假安全承诺 | `13.7` | 文档明确「应用级权限 ≠ 隔离」；接口形态为 P2 子进程宿主预留 |
+| 虚假安全承诺 | `13.7` | 文档明确「启用插件即信任代码、应用级权限 ≠ 隔离」；强隔离由可选宿主或部署环境承担 |
 | 兼容层反向污染 | `13.8`、`13.9` | 兼容层为独立包插件，不进 Kernel 依赖 |
 | 声明式扩展越权 | `13.11` | `ContextFragment.trust` 由 Kernel 强制，插件无法自升级信任级别 |
 
@@ -1971,7 +1978,7 @@ a 步同样不再是「补基线测试」：`D32` 起就改成直接读旧实现
 | # | 问题 | 结论 | 主要依据 | 验证方式 |
 | --- | --- | --- | --- | --- |
 | 1 | 插件发现方式 | entry point 组 `nucleamind.plugins` + 配置显式路径；发现与启用分离 | 启动开销可控（`NFR-401`）；安装≠启用（`DST-002`） | 启动开销回归指标；`tests/plugins/test_discovery.py` |
-| 2 | 权限首版范围 | 只做声明 + 应用级门面强制，明确不承诺进程隔离；接口为 P2 隔离预留 | `13.7` 不给虚假承诺 | 权限拒绝路径测试；文档声明评审 |
+| 2 | 权限首版范围 | 受信任同进程插件；声明与账本负责审计，门面提供自愿约束；不新增监听或 Agent 专属权限 | `13.7` 不给虚假承诺；极简 Kernel、一切皆插件 | 权限拒绝路径测试；D52 文档防漂移断言 |
 | 3 | Capability arity | 按 kind 固定 arity（见 §6.1 表）；内建 priority 基准 0；覆盖必须显式声明 | `SDK-003`、`EDG-102` 禁止顺序决定 | registry 冲突分支全覆盖单测 |
 | 4 | 内建能力发布方式 | 同仓库同 wheel 的独立子包 `builtins/`，受 `R4` 约束 | `DST-001`、`DST-003` | `test_builtin_no_privilege.py` |
 | 5 | 内建 Model 协议 | OpenAI 兼容 Chat Completions | 覆盖面最广，使 `BAS-001` 对最多用户成立 | `ModelProviderContract` + e2e |

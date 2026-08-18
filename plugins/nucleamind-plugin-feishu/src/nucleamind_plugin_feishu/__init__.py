@@ -25,8 +25,8 @@
 - **五种权限里没有「连接一个聊天平台」这一种**（`fs:read` / `fs:write` / `net` / `shell` /
   `secret`，其中 `net` 判的是经 `ctx.net` 门面的出站请求）。`lark-oapi` 自己开 WebSocket
   与 HTTPS，一个字节都不过门面，因此本插件除两条 `secret` 外声明不出任何权限，
-  而它确实会连出去。这是权限模型当前的一个空档，与 `openai-api` 的「没有『监听端口』」
-  和 `discord` 的同一条并列。
+  而它确实会连出去。`D52` 已明确这是受信任插件模型的刻意边界：启用插件就是信任其代码，
+  权限账本不是完整行为监控。
 - **出站 workspace 附件传不出去**：`sdk.api.FileAccess` 只有 `read_text` / `write_text` /
   `list_dir`，没有 `read_bytes`；绕过 `ctx.fs` 直接 `open()` 会让权限声明变成谎话。
   今天新层也没有任何地方产出带附件的 `OutboundMessage`，因此这是一条没有生产者的死路径。

@@ -113,6 +113,10 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `CompactionRequest` / `CompactionResult`、`kernel/turn/compaction.py` 与
   `context.compactor` 显式选择；默认关闭，只在确定性裁剪确实丢掉历史时尝试一次，
   Kernel 负责校验、持久化、重载、事件与失败回退，**SDK `1.3.0`**）。
+  **`D52` 已收口开放式插件权限模型定位**：安装并启用插件等同于信任其同进程 Python 代码；
+  D26 的声明、账本与资源门面继续负责意图审计、扩权记录和自愿约束，但不是完整行为监控或
+  安全沙箱。Kernel 不新增 `listen` / Agent 专属权限；监听型插件由启用状态与配置控制，
+  更严格隔离由可选安全插件、独立宿主或部署环境承担。生产行为与 SDK 表面未变。
   `nm init` / `nm run` / `nm serve` / `nm config show` / `nm session` / `nm permissions` /
   `nm plugins` / `nm capabilities` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
@@ -808,8 +812,12 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **`bootstrap.py` 贴着 800 行上限**：只读查询归 `inspect.py`、改配置归 `config_edit.py`，
   往装配根加东西之前先确认它真的属于「装配」。
 
-`kernel/plugins/permissions.py` + `runtime/access/`（`D26`）是权限的唯一来源。六条：
+`kernel/plugins/permissions.py` + `runtime/access/`（`D26`，定位由 `D52` 收口）是权限的
+唯一来源。八条：
 
+- **安装并启用插件即信任其同进程 Python 代码。** manifest 权限是作者主动提交的能力意图，
+  `permissions.json` 是审计账本，不是 Kernel 观察到的完整行为清单。不要把 D26 扩成插件
+  行为监控或安全沙箱。
 - **授权 = manifest 声明 ∩ 账本批准**，判定只在 `runtime/bootstrap.py::approve()` 一处
   被调用（`D27` 的外部插件走同一条路，不要在 loader 里另判一次）。manifest → `Grant`
   的翻译同样只在 `declared_grants()` 一处——`R2` 禁止 kernel 认识 `PermissionDecl`，
@@ -833,6 +841,10 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **应用级权限 ≠ 进程隔离**（技术方案 §13.7）：同进程插件可以绕过全部门面直接
   `import os`。这句写在 `sdk/api.py`、`runtime/access/__init__.py` 与 `docs/permissions.md`
   里，是必须保留的诚实声明而不是免责套话。
+- **不新增 `listen` / `net.listen`，也不新增 Agent 专属权限系统。** 监听端口、聊天平台
+  连接与直接子进程都可以绕过门面，继续扩枚举无法把同进程 Python 变成可强制的沙箱。
+  `plugins.enabled` / `plugins.disable` 与插件配置才是监听型插件的启用闸门；强隔离作为
+  可选插件、独立宿主或部署策略演进，不进入极简 Kernel。
 
 `builtins/`（`D17` 起）的落地形态只有一种：一份 `PluginManifest` 追加进
 `builtins/registry.py::BUILTIN_MANIFESTS`，加一个 `setup(api)`。五条通用约束：
@@ -1013,13 +1025,12 @@ a 步不新写基线，b 步在 `plugins/` 里新写而不是搬运，c/d/e 步�
   （M5 里刻意没做的 `providers/transcription.py`）与图生图都卡在同一处。`D45` 的
   `OpaqueBlock` 是 provider **私有**块的槽位，**不是**多模态内容的槽位——那需要
   `content` 从 `str` 变成块序列，是一次 major 级的破坏性变更（§7.6）。
-- **权限模型没有「监听端口」这一种**（`net` 判的是出站）。`openai-api` / `discord` /
-  `feishu` / `cron` 都声明不出与自己实际行为对应的权限。要不要补取决于权限模型的**定位**：
-  当它是「给用户看的知情声明」就必须补，当它只是运行期闸门就可以不补。这是个定位问题，
-  不是工作量问题——先定位再动手。
 - **opaque 块跨 turn 拿不回来**（`D45` 如实记着）。它不进 `SessionMessage`，因此
   `anthropic` 的 thinking 回放只在同一条 turn 的工具循环内成立。要跨 turn 得先决定
   「一份加密的思考签名该不该成为用户资产」——`SES-006` 一旦发布就是契约。
+
+`D52` 已决定：**监听权限不是剩余工作。** 权限声明与账本负责意图审计，不宣称覆盖插件全部
+行为；不新增 `listen` / `net.listen`，监听型插件继续由启用状态和插件配置控制。
 
 ### 入口点
 
