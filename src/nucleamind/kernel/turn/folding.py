@@ -4,8 +4,8 @@
 `ToolResult` 折叠成下一轮请求要用的 `ModelMessage`（空结果占位、按 `tool_result_max_bytes`
 截断）；为三条**未执行**路径（未知工具 / Hook 阻断 / 取消跳过）合成合法的 `ToolResult`。
 不负责：发起请求、产出事件、判断 turn 是否结束、决定重试与续写——重发一个没拿到响应的
-请求在 `retry.py`（它包在 `EngineDeps.model` 外面，因此本模块看不见），长度截断后的续写
-**至今没做**（见 `engine.py` 模块 docstring 那一段）；本模块是纯函数与纯状态机，
+请求在 `retry.py`（它包在 `EngineDeps.model` 外面，因此本模块看不见）；长度截断后的续写
+由 `engine.py` 把本函数产出的 assistant 消息回放进同一请求序列；本模块是纯函数与纯状态机，
 不含 IO、不认识取消。
 
 **本模块抛出的两处 `retryable=True` 有一个真正的消费者了**（`D48`）：它们发生在
@@ -202,8 +202,9 @@ class StreamFolder:
 def assistant_message(response: ModelResponse) -> ModelMessage:
     """把本轮响应折成下一轮请求里的 assistant 消息。
 
-    只在「有工具调用、要继续下一轮」时被调用，因此 `ModelMessage` 的「content 与 tool_calls
-    不得同时为空」必然满足——这条约束不是靠校验绕过的，是靠调用点结构消除的。
+    在「有工具调用、要继续下一轮」或 `MAX_TOKENS` 续写时被调用，因此
+    `ModelMessage` 的「content 与 tool_calls 不得同时为空」必然满足——这条约束不是靠校验
+    绕过的，是靠调用点结构消除的。
 
     **`provider_blocks` 原样搬过去**（`D45`）：Anthropic 的 thinking 块必须连着
     `signature` 回传才肯继续跑工具循环，而这里正是「上一轮的话变成下一轮的输入」那一刻。

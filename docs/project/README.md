@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-17（`D47` 收口，**出站附件通路打通 + SDK 1.2**）
-- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D47` 均已完成）。
+- 更新时间：2026-08-18（`D50` 收口，**MAX_TOKENS 有界自动续写**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D50` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -36,6 +36,10 @@
   `<state_dir>/images` 改到 `<workspace>/artifacts/images`——**那是它能被当成附件发出去的
   前提**（`AttachmentRef` 按契约拒绝绝对路径）。`ToolResult.artifacts` 至此不再是
   「有机制没消费者」。
+  **`D49` 修正了 `MAX_TOKENS` 截断语义**：保留模型已返回的正文，同时将终态和出站消息
+  标记为不完整，满足 `EDG-304`。
+  **`D50` 在 Kernel engine 内完成有界自动续写**：同一份消息序列和 `BudgetLedger` 最多
+  追加三次请求，工具结果不会重复执行；多段正文由 orchestrator 聚合为一条会话记录。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -58,7 +62,8 @@
 - **M5 已全部交齐**，没有待迁移的模块。`D43`–`D45` 清掉的是「机制缺口」而不是新能力：
   一条矛盾的契约约定、一条交了没通电的能力、一个缺失的契约槽位。**`D48` 补的是第四种
   缺口——一个交了信号却零消费者的机制**：`retryable` 与 `EventName.MODEL_REQUEST_FAILED`
-  至此才真的通电，一次瞬时 429 / 503 不再打掉整条 turn。Kernel 本身不再扩张。
+  至此才真的通电，一次瞬时 429 / 503 不再打掉整条 turn。`D49` / `D50` 又补齐截断标记与
+  有界续写；这些都是 Provider 无关的 turn 正确性，不是向 Kernel 塞入具体能力。
 - `references/` 保存本地参考源码并被 Git 忽略；其受版本控制的导航文档位于
   [`../references/`](../references/README.md)。
 
@@ -2475,6 +2480,13 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   而 `EventName.MODEL_REQUEST_FAILED` 在冻结事件清单里躺着、零发布者。三处都是
   `D14` 把这件事指派给自己之后没交。落点是 `kernel/turn/retry.py` 的 `RetryingModel`——
   **包住 `ModelProvider`，engine 一个字不改**（详见下方事实清单）。
+- **`D49`**：`MAX_TOKENS` 截断输出遵守 `EDG-304`。`TurnCompleted.truncated` 标记模型
+  已返回但仍不完整的答案，orchestrator 保留正文并将最终出站消息映射到
+  `StreamState.CANCELLED`；本轮先修正了“截断答案被当成完整答案”的语义缺口。
+- **`D50`**：`MAX_TOKENS` 有界自动续写。engine 在同一份模型消息序列中回放半截 assistant
+  消息，最多追加 3 次请求，并复用同一个 `BudgetLedger`；工具调用不会因续写被重复执行。
+  多段响应在 orchestrator 聚合为一条会话 assistant 记录，续写次数用尽后仍按 D49 标记
+  为不完整。自动续写不属于 Provider 插件能力，而是 Kernel 的 turn 语义。
 
 因此下一轮的候选是下面清单里**剩下的那几件**，加上两条刻意推迟的机制（插件热更新、
 `state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，它计划落在独立包
@@ -2528,7 +2540,7 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 挂着的独立事项（`D48` 之后剩四件）
+### 独立事项审计（`D50` 之后剩三件）
 
 `D42` 之后清单上的**前五条已经交掉**，逐条留下判据：
 
@@ -2581,15 +2593,10 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 
 **`D48` 从这份清单外面又找出一条，并顺手留下第二条：**
 
-4. **长度截断后的续写仍然没做**（`_MAX_LENGTH_RECOVERIES` 那半条悬空引用）。
-   `StopReason.MAX_TOKENS` 且无工具调用时，`engine.py` 直接 `yield TurnCompleted(...)`
-   ——**一个被截断的答案以 `COMPLETED` 报出去，不带任何标记**，而
-   `TERMINAL_STREAM_STATES[COMPLETED]` 是 `FINAL`，Channel 侧的 `TERMINAL_MARKERS`
-   因此一个字都不加。这与 `EDG-304`（非完整回答必须带标记）直接冲突。
-   **它不是重试而是续写**：要把半截 assistant 消息放回 `messages` 再用同一个 `ledger`
-   调一次 `run_turn`，预算记账与终态语义都是另一套，因此 `D48` 刻意没做。
-   **但「不带标记」这半条是纯 bug，可以先单独修**——那只要让终态或 metadata 说出
-   「这个答案被截断了」。
+4. **长度截断后的续写已由 D50 落地**。`StopReason.MAX_TOKENS` 且无工具调用时，
+   `engine.py` 将半截 assistant 消息放回同一份 `messages`，最多续写 3 次并复用同一个
+   `BudgetLedger`；已有工具结果仍留在消息序列中，不会被重新执行。续写次数用尽后仍按
+   D49 的 `truncated=True` 与 `EDG-304` 不完整出站状态收尾。
 
 这份清单的教训值得单独记一句：**「剩余工作」清单只记得住被讨论过的东西。**
 `D48` 那三处（设置了没人消费的字段、引用了不存在的常量、声明了没人发布的事件名）

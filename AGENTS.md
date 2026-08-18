@@ -106,6 +106,9 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`，
   `embed/` 已落地薄门面，`kernel/` 有 `registry/`、`turn/`、`config/`、`observability/`、
   `routing/` 与 `plugins/`。
+  **`D49` 修正 `MAX_TOKENS` 截断终态**（正文保留但按 `EDG-304` 标为不完整），
+  **`D50` 已落地有界自动续写**（engine 在同一消息序列中最多追加 3 次请求，复用
+  `BudgetLedger`，不重复执行工具）。
   `nm init` / `nm run` / `nm serve` / `nm config show` / `nm session` / `nm permissions` /
   `nm plugins` / `nm capabilities` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
@@ -198,8 +201,9 @@ engine 对此一无所知。四条：**在 orchestrator 重跑 `run_turn` 是错
 （放行过的分片已经是用户看得见的输出，重发会让答案出现两次，因此 `folding.finish()`
 那两处 `retryable=True` 仍然会打掉整个 turn）；**判据是 `ErrorCategory` 不是 `retryable`**
 （`cancel.py` 的取消错误自称可重试）。「重试」与「续写」的分界线是**有没有拿到响应**：
-`_MAX_LENGTH_RECOVERIES`（`MAX_TOKENS` 续写）**仍然没做**，而它现在的表现是一个被截断的
-答案以 `COMPLETED` 报出去、不带 `EDG-304` 要求的标记。
+`_MAX_LENGTH_RECOVERIES`（`MAX_TOKENS` 续写）已由 D50 落地：engine 在同一份 `messages`
+与 `BudgetLedger` 上最多续写 3 次；次数用尽仍未结束时才标记 `truncated=True`，并由
+orchestrator 以 `EDG-304` 的不完整出站状态呈现。
 
 `kernel/turn/` 是 turn 执行的全部机制。取消一律用 `CancelToken` 而不是
 `asyncio.CancelledError`（后者无法保证「保存已产生内容再退出」），检查点一律用

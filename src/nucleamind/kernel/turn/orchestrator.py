@@ -359,7 +359,8 @@ class TurnOrchestrator:
                 if event.response.tool_calls:
                     state.transcript.add_assistant(event.response.content)
                 else:
-                    state.final = event.response.content
+                    # 多次续写属于同一份回答；终帧与会话历史保留拼接后的正文。
+                    state.final += event.response.content
             case ToolCallStarted():
                 deps.bus.publish(
                     EventName.TOOL_CALL_STARTED,

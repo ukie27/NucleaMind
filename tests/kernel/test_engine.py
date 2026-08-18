@@ -839,19 +839,77 @@ async def test_provider_error_chunk_fails_the_turn_but_keeps_deltas() -> None:
 
 
 async def test_max_tokens_turn_is_marked_truncated() -> None:
-    """engine 在 `MAX_TOKENS` 时把 `TurnCompleted.truncated` 置为 `True`（`EDG-304`）。"""
+    """续写上限耗尽后，engine 才把 `TurnCompleted.truncated` 置为 `True`（`EDG-304`）。"""
     from nucleamind.contracts import ModelResponse
 
     response = ModelResponse(
         model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="被截断的答案"
     )
-    model = ScriptedProvider([response])
+    model = ScriptedProvider([], default=response)
     events = await collect(run_turn(make_request(), build_deps(model), CancelToken()))
 
     terminal = events[-1]
     assert isinstance(terminal, TurnCompleted)
     assert terminal.truncated is True
     assert terminal.response.content == "被截断的答案"
+    assert model.call_count == 4
+
+
+async def test_max_tokens_response_is_continued_with_previous_assistant_message() -> None:
+    """`MAX_TOKENS` 续写共享 ledger，并把每一段 assistant 消息带回下一次请求。"""
+    from nucleamind.contracts import ModelResponse
+
+    model = ScriptedProvider(
+        [
+            ModelResponse(
+                model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="第一段"
+            ),
+            text_response("第二段"),
+        ]
+    )
+    events = await collect(run_turn(make_request(), build_deps(model), CancelToken()))
+
+    assert [type(event) for event in events] == [
+        ModelResponseCompleted,
+        ModelResponseCompleted,
+        TurnCompleted,
+    ]
+    first, second = model.requests
+    assert [message.role for message in second.messages] == [Role.USER, Role.ASSISTANT]
+    assert second.messages[-1].content == "第一段"
+    terminal = events[-1]
+    assert isinstance(terminal, TurnCompleted)
+    assert terminal.truncated is False
+    assert terminal.iterations == 2
+
+
+async def test_max_tokens_continuation_does_not_repeat_tool_calls() -> None:
+    """续写发生在工具循环之后时，不会从头执行已经完成的工具。"""
+    from nucleamind.contracts import ModelResponse
+
+    model = ScriptedProvider(
+        [
+            tool_response(tool_call("echo")),
+            ModelResponse(
+                model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="半截"
+            ),
+            text_response("收尾"),
+        ]
+    )
+    invoker = RecordingToolInvoker()
+    events = await collect(
+        run_turn(make_request(tools=[tool_spec("echo")]), build_deps(model, tools=invoker), CancelToken())
+    )
+
+    assert len(invoker.invocations) == 1
+    assert len(model.requests) == 3
+    assert [message.role for message in model.requests[2].messages] == [
+        Role.USER,
+        Role.ASSISTANT,
+        Role.TOOL,
+        Role.ASSISTANT,
+    ]
+    assert isinstance(events[-1], TurnCompleted)
 
 
 async def test_end_turn_is_not_marked_truncated() -> None:

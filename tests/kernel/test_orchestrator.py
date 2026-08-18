@@ -833,7 +833,7 @@ async def test_a_silent_model_becomes_a_failure_with_a_sentence() -> None:
 
 
 async def test_max_tokens_turn_has_cancelled_stream_state() -> None:
-    """被截断的答案出站时 `stream_state=CANCELLED`，Channel 因此会附加标记（`EDG-304`）。
+    """续写上限耗尽的答案出站时 `stream_state=CANCELLED`，Channel 因此会附加标记（`EDG-304`）。
 
     `TurnStatus` 仍然是 `COMPLETED`——模型没报错、turn 也没被取消——只是出站消息的
     呈现状态要说清楚这不是一个完整答案。
@@ -843,14 +843,38 @@ async def test_max_tokens_turn_has_cancelled_stream_state() -> None:
     truncated_response = ModelResponse(
         model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="被截断的答案"
     )
-    harness = build(ScriptedProvider([truncated_response]))
+    harness = build(ScriptedProvider([], default=truncated_response))
 
     receipt = await harness.send()
 
     assert receipt.outcome is not None
     assert receipt.outcome.status is TurnStatus.COMPLETED
     assert receipt.messages[-1].stream_state is StreamState.CANCELLED
-    assert receipt.content == "被截断的答案"
+    assert receipt.content == "被截断的答案" * 4
+
+
+async def test_max_tokens_continuation_aggregates_answer_and_persists_once() -> None:
+    """多段 `MAX_TOKENS` 响应聚合成一条会话 assistant 记录。"""
+    from nucleamind.contracts import ModelResponse, StopReason
+
+    harness = build(
+        ScriptedProvider(
+            [
+                ModelResponse(
+                    model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="第一段"
+                ),
+                text_response("第二段"),
+            ]
+        )
+    )
+
+    receipt = await harness.send()
+
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.COMPLETED
+    assert receipt.content == "第一段第二段"
+    assert receipt.messages[-1].stream_state is StreamState.FINAL
+    assert [record.content for record in harness.store.appends[-1][1]][-1:] == ["第一段第二段"]
 
 
 async def test_end_turn_response_keeps_final_stream_state() -> None:

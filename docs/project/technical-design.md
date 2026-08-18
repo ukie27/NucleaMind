@@ -708,9 +708,9 @@ engine 的不变量（写进 docstring 并由测试守护）：
 - **`before_model_request` 由 engine 每轮分发**。§10.2 第 9 步把它画在进 engine 之前，
   第一轮两者重合，第 2..N 轮的请求只有 engine 造得出来。**`D14` 不得再分发一次**，
   验收断言分发次数 == 迭代数。
-- **续写 = 用同一个 `ledger` 再调一次 `run_turn`**。`HookOutcome` 没有 `response` 槽
-  （`after_model_response` 是观察者），响应改写这条路在契约层封死；长度截断续写只能靠
-  编排层把上一轮 assistant 消息塞回 `messages`。
+- **长度续写由 engine 在同一轮循环内完成**。`HookOutcome` 没有 `response` 槽
+  （`after_model_response` 是观察者），响应改写这条路在契约层封死；`MAX_TOKENS` 且无工具
+  调用时，engine 将 assistant 消息放回同一份 `messages`，最多追加三次请求并复用 `ledger`。
 - **「用完预算后发一次不带 tools 的收尾请求」是编排策略**。engine 撞上限即
   `TurnStoppedByLimit`，不替模型收尾。
 - **参数非法由 `ToolInvoker` 判定**。§10.2 第 10 步把 schema 校验划给 invoker，
@@ -740,10 +740,10 @@ engine 的不变量（写进 docstring 并由测试守护）：
   `STOPPED_BY_LIMIT`；收尾请求失败只记一条 `plugin.failed`，并回落到
   `LimitBreach.describe()` 作为用户可见文本——让用户面对一张空卡片同样不可接受
   （基线 `test_budget_exhaustion_is_pushed_through_the_stream`）。
-- **长度截断续写仍未实现，空回复重试已经实现**。`RetryingModel` 负责在没有拿到有效
-  响应时按停止原因重发请求；它不改写已经收到的 `MAX_TOKENS` 响应。自动续写应使用同一
-  `BudgetLedger` 再调用 `run_turn`，且不能重复执行已经完成的工具调用，仍留作后续功能。
-  当前 `MAX_TOKENS` 输出会保留已生成内容并标记为不完整，符合 `EDG-304`。
+- **长度截断续写已由 D50 实现，空回复重试仍由 `RetryingModel` 负责**。前者在 engine
+  同一轮循环内回放半截 assistant 消息，后者只处理没有拿到有效响应的请求；已有工具结果
+  留在同一份消息序列中，不会因续写被重新执行。续写上限耗尽时保留正文并标记为不完整，
+  符合 `EDG-304`。
 - **assistant 的 `tool_calls` 不进会话历史**。`SessionMessage` 没有这个字段，因此工具往返
   仍完整写进会话文件（`/session` 与诊断要看得到），但 `context_builder.replay_messages()`
   重放时**跳过 `role=TOOL` 的记录**：一条没有对应调用声明的 tool 消息会让下一次请求在
