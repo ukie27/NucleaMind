@@ -66,6 +66,7 @@ from .command import (  # noqa: E402
     CommandSpec,
     Disposition,
 )
+from .compaction import CompactionRequest, CompactionResult  # noqa: E402
 from .context import (  # noqa: E402
     UNTRUSTED_DATA_PREFIX,
     ContextFragment,
@@ -119,6 +120,7 @@ from .protocols import (  # noqa: E402
     Channel,
     CliEntry,
     CommandHandler,
+    ContextCompactor,
     ContextProvider,
     HookHandler,
     InstanceView,
@@ -174,7 +176,10 @@ __all__ = [
     "CommandParam",
     "CommandResult",
     "CommandSpec",
+    "CompactionRequest",
+    "CompactionResult",
     "Concurrency",
+    "ContextCompactor",
     "ContextFragment",
     "ContextProvider",
     "Correlation",

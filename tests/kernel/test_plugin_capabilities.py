@@ -34,6 +34,7 @@ from nucleamind.kernel.plugins import (
     CapabilityHost,
     channels_from,
     cli_entry_from,
+    context_compactors_from,
     memory_providers_from,
     model_providers_from,
     session_store_from,
@@ -46,6 +47,7 @@ from nucleamind.sdk.testing import (
     FakePluginContext,
     InMemorySessionStore,
     NullChannel,
+    StaticContextCompactor,
 )
 
 # ------------------------------------------------------------------------------------ 夹具
@@ -54,6 +56,7 @@ _SINGLE_KINDS = (
     CapabilityKind.MODEL,
     CapabilityKind.CHANNEL,
     CapabilityKind.MEMORY,
+    CapabilityKind.COMPACTOR,
     CapabilityKind.SESSION_STORE,
     CapabilityKind.CLI_ENTRY,
 )
@@ -88,6 +91,9 @@ def wired(*, provider: ProviderId | None = None) -> CapabilityRegistry:
     host.register_model_provider(CapabilityKind.MODEL.value, FakeModelProvider())
     host.register_channel(CapabilityKind.CHANNEL.value, NullChannel())
     host.register_memory_provider(CapabilityKind.MEMORY.value, FakeMemoryProvider())
+    host.register_context_compactor(
+        CapabilityKind.COMPACTOR.value, StaticContextCompactor()
+    )
     host.register_session_store(CapabilityKind.SESSION_STORE.value, InMemorySessionStore())
     host.register_cli_entry(CapabilityKind.CLI_ENTRY.value, FakeCliEntry())
     host.finish()
@@ -105,6 +111,7 @@ def test_every_single_valued_kind_round_trips_through_the_host() -> None:
     assert len(model_providers_from(registry)) == 1
     assert len(channels_from(registry)) == 1
     assert len(memory_providers_from(registry)) == 1
+    assert len(context_compactors_from(registry)) == 1
 
     store = session_store_from(registry)
     entry = cli_entry_from(registry)
@@ -142,6 +149,7 @@ def test_an_empty_registry_yields_empty_tuples_and_none() -> None:
     assert model_providers_from(registry) == ()
     assert channels_from(registry) == ()
     assert memory_providers_from(registry) == ()
+    assert context_compactors_from(registry) == ()
     assert session_store_from(registry) is None
     assert cli_entry_from(registry) is None
 
@@ -155,6 +163,7 @@ def test_an_empty_registry_yields_empty_tuples_and_none() -> None:
         (CapabilityKind.MODEL, model_providers_from),
         (CapabilityKind.CHANNEL, channels_from),
         (CapabilityKind.MEMORY, memory_providers_from),
+        (CapabilityKind.COMPACTOR, context_compactors_from),
         (CapabilityKind.SESSION_STORE, session_store_from),
         (CapabilityKind.CLI_ENTRY, cli_entry_from),
     ],

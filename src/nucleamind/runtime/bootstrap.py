@@ -103,7 +103,13 @@ from .plugin_plan import (
     plan_external_plugins,
     plan_plugins,
 )
-from .selection import missing_capability, require_sessions, select_model, select_recall
+from .selection import (
+    missing_capability,
+    require_sessions,
+    select_compactor,
+    select_model,
+    select_recall,
+)
 from .wiring import Wiring, wire_capabilities
 
 #: `PluginManifest` 从这里再导出一次：`embed/` 只能 import `contracts/` 与 `runtime/`
@@ -691,6 +697,7 @@ def _assemble(
         context_providers=context_providers_from(registry),
         model_info=model_info,
         context_provider_timeout_ms=config.context.provider_timeout_ms,
+        compactor=select_compactor(registry, config),
         deliver=deliver,
         memory=select_recall(registry, config),
         retry=config.retry.to_policy(),

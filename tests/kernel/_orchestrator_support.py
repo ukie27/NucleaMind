@@ -48,6 +48,7 @@ from nucleamind.kernel.routing import (
     SessionScheduler,
 )
 from nucleamind.kernel.turn import (
+    CompactionPolicy,
     ContextProviderBinding,
     OrchestratorDeps,
     RetryPolicy,
@@ -125,10 +126,16 @@ class FakeSessionStore:
         self.data: dict[str, list[SessionMessage]] = {}
         self.initial = list(initial)
         self.appends: list[tuple[SessionKey, tuple[SessionMessage, ...]]] = []
+        self.compactions: list[tuple[SessionKey, int, SessionMessage]] = []
+        self.compacted_through: dict[str, int] = {}
 
     async def load(self, key: SessionKey) -> SessionSnapshot:
         records = self.data.get(key.storage_id(), list(self.initial))
-        return SessionSnapshot(session_key=key, messages=tuple(records))
+        return SessionSnapshot(
+            session_key=key,
+            messages=tuple(records),
+            compacted_through=self.compacted_through.get(key.storage_id(), 0),
+        )
 
     async def append(self, key: SessionKey, messages: Sequence[SessionMessage]) -> None:
         self.appends.append((key, tuple(messages)))
@@ -136,7 +143,10 @@ class FakeSessionStore:
         bucket.extend(messages)
 
     async def compact(self, key: SessionKey, through: int, summary: SessionMessage) -> None:
-        raise NotImplementedError
+        self.compactions.append((key, through, summary))
+        bucket = self.data.setdefault(key.storage_id(), list(self.initial))
+        bucket.insert(through, summary)
+        self.compacted_through[key.storage_id()] = through
 
     async def delete(self, key: SessionKey) -> bool:
         return self.data.pop(key.storage_id(), None) is not None
@@ -320,6 +330,7 @@ def build(
     store: FakeSessionStore | None = None,
     commands: dict[str, RegisteredCommand] | None = None,
     context_providers: Sequence[ContextProviderBinding] = (),
+    compactor: CompactionPolicy | None = None,
     limits: TurnLimits | None = None,
     retry: RetryPolicy | None = None,
     stream: bool = False,
@@ -353,6 +364,7 @@ def build(
         model_id="fake-model",
         tool_specs=tuple(tool_specs),  # type: ignore[arg-type]
         context_providers=tuple(context_providers),
+        compactor=compactor,
         stream=stream,
         deliver=deliver,
         clock=clock or (lambda: datetime(2026, 8, 12, tzinfo=UTC)),

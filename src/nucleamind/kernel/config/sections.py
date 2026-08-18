@@ -30,6 +30,7 @@ from .defaults import (
     DEFAULT_CHANNEL_QUEUE_MAX_SIZE,
     DEFAULT_COMMAND_PREFIX,
     DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
+    DEFAULT_COMPACTOR_TIMEOUT_MS,
     DEFAULT_DEDUP_CAPACITY,
     DEFAULT_DEDUP_TTL_MS,
     DEFAULT_INTERCEPTOR_TIMEOUT_MS,
@@ -147,6 +148,10 @@ class ContextSection:
 
     #: 单个 Context Provider 的独立超时。超时按其关键性中止或跳过（`CTX-005`、`EDG-302`）。
     provider_timeout_ms: int = DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+    #: `COMPACTOR` 能力名。`None` = 不启用持久化压缩，只做逐请求确定性裁剪。
+    compactor: str | None = None
+    #: 单次 compactor 调用预算；超时回退到首次裁剪结果。
+    compactor_timeout_ms: int = DEFAULT_COMPACTOR_TIMEOUT_MS
 
 
 @dataclass(frozen=True, slots=True)

@@ -203,6 +203,7 @@ async def test_history_sits_between_system_and_the_current_input() -> None:
         (Role.ASSISTANT, "上一答"),
         (Role.USER, "请统计文件数"),
     ]
+    assert context.history_dropped == 0
 
 
 # ------------------------------------------------------------------ C 过滤
@@ -310,6 +311,21 @@ async def test_history_is_dropped_oldest_first_and_only_after_fragments() -> Non
     assert context.fragments == ()  # 片段先走
     assert "最旧" * 20 not in kept  # 历史从最旧开始丢
     assert "最新" * 20 in kept
+    assert context.history_dropped == 1
+
+
+async def test_non_replayable_records_do_not_count_as_dropped_history() -> None:
+    context = await build(
+        snapshot=snapshot(
+            record(Role.TOOL, "工具输出", tool_call_id="c1"),
+            record(Role.ASSISTANT, ""),
+            record(Role.USER, "旧问题" * 20),
+            record(Role.ASSISTANT, "旧回答" * 20),
+        ),
+        limits=TurnLimits(context_max_tokens=10),
+    )
+
+    assert context.history_dropped == 2
 
 
 async def test_trimming_to_the_bone_still_over_budget_raises() -> None:

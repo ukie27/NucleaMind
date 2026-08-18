@@ -38,6 +38,7 @@ from nucleamind.kernel.observability import EventBus
 from nucleamind.kernel.routing import DedupCache, Dispatcher, SessionScheduler
 
 from .context_builder import DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS, ContextProviderBinding
+from .compaction import CompactionPolicy
 from .deps import EngineDeps, HookDispatcher, ToolInvoker
 from .limits import BudgetLedger, TurnLimits
 from .memory import MemoryRecall
@@ -160,6 +161,8 @@ class OrchestratorDeps:
     stream: bool = True
     scope: str = "default"
     context_provider_timeout_ms: int = DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+    #: 显式选中的持久化上下文压缩策略。`None` 是默认，只做逐请求裁剪、不改写 Session。
+    compactor: CompactionPolicy | None = None
     deliver: Callable[[OutboundMessage], Awaitable[None]] | None = None
     #: 长期记忆的召回（`D44`）。`None` = 没有 kernel 侧召回，这也是默认——配置里没写
     #: `memory.provider` 时装配根不装它。见 `memory.py` 的模块 docstring。

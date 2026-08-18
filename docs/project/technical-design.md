@@ -255,7 +255,7 @@ src/nucleamind/
 │       ├── fakes.py           # FakeModelProvider / InMemorySessionStore / RecordingHook
 │       ├── capabilities.py    # 参考实现：EchoTool / NullChannel / StaticContextProvider
 │       │                      # / FakeMemoryProvider / FakeCliEntry / FakePluginContext（D16）
-│       └── contracts.py       # 5 个契约测试基类
+│       └── contracts.py       # 7 个契约测试基类
 │
 ├── builtins/                  # 第 4 层：内建默认能力，与插件同等身份
 │   ├── registry.py            # BUILTIN_MANIFESTS 静态清单
@@ -751,9 +751,11 @@ engine 的不变量（写进 docstring 并由测试守护）：
   受限重放」换取了持久化格式的稳定（`SES-006`）。
 - **命令类 turn 不写会话历史**。命令输出不是模型对话的一部分，写进去只会在下一轮占预算；
   命令影响 turn 的正规路径是 `CommandResult.fragments`（`CMD-004`）。
-- **上下文压缩未实现**。§10.2 第 7 步 e 的「仍超限则触发压缩策略」在 `D14` 是
-  `INPUT_TOO_LARGE` 报错：裁到只剩系统段与当前输入仍超预算时抛错，而不是悄悄少发一半
-  历史。`SessionStore.compact` 的调用点留给后续模块。
+- **上下文压缩已由 D51 以插件能力实现**。确定性请求级裁剪仍先执行；只有历史确实被裁掉、
+  且 `context.compactor` 显式选中一条 `COMPACTOR` 能力时，orchestrator 才尝试一次压缩。
+  插件决定摘要正文与水位，Kernel 负责超时、结果校验、`SessionStore.compact()`、重载、
+  `session.compacted` 事件与失败回退。同一 turn 重组后不再触发第二次压缩。裁到只剩系统段
+  与当前输入仍超预算时仍抛 `INPUT_TOO_LARGE`，压缩不用于掩盖当前请求本身过大。
 - **`MERGE` 下整批归一个 turn**。被合并的消息不产生自己的事件流，只在执行 turn 的
   `turn.started` 载荷里留 `merged_from`；提交方拿到的 `TurnReceipt` 就是执行 turn 的那一份。
 
@@ -902,8 +904,9 @@ Pi 在 `AgentLoopConfig` 中反复强调的约定，本方案照搬。
   采纳。关键性只在拦截器上有意义。
 - **用错处置或载荷 = 插件故障**，不是静默忽略。一个在 `before_model_request` 上返回
   `REJECT` 的 handler，作者认为自己拒掉了这个 turn；忽略它会让用户看到「什么都没发生」。
-- **三项超时进配置**：`hooks.observer_timeout_ms`（2000）、`hooks.interceptor_timeout_ms`
-  （5000）、`context.provider_timeout_ms`（3000）。字段表在 `kernel/config/schema.py`，
+- **四项超时进配置**：`hooks.observer_timeout_ms`（2000）、`hooks.interceptor_timeout_ms`
+  （5000）、`context.provider_timeout_ms`（3000）、`context.compactor_timeout_ms`（3000）。
+  字段表在 `kernel/config/schema.py`，
   与 turn / routing 一样在两处各写一份默认值，由对照测试钉住。
 
 ### 6.7 配置与 Secret
@@ -1198,7 +1201,7 @@ class PluginContext(Protocol):
     def secret(self, name: str) -> SecretStr: ...   # 需要 "secret:<name>"
 ```
 
-`NucleaAPI` 是注册面，形态直接对应 Pi 的 `ExtensionAPI`，首版只保留 9 个方法：
+`NucleaAPI` 是注册面，形态直接对应 Pi 的 `ExtensionAPI`；D51 后共有 10 个方法：
 
 ```python
 class NucleaAPI(Protocol):
@@ -1206,6 +1209,7 @@ class NucleaAPI(Protocol):
     def register_tool(self, spec: ToolSpec, handler: ToolHandler) -> None: ...
     def register_command(self, spec: CommandSpec, handler: CommandHandler) -> None: ...
     def register_context_provider(self, name: str, p: ContextProvider) -> None: ...
+    def register_context_compactor(self, name: str, c: ContextCompactor) -> None: ...
     def register_model_provider(self, name: str, p: ModelProvider) -> None: ...
     def register_channel(self, name: str, c: Channel) -> None: ...
     def register_memory_provider(self, name: str, m: MemoryProvider) -> None: ...
@@ -1307,7 +1311,8 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
   `BAS-005` 在这一项上破例，`/help` 还列不出自己。
 - **两个 Protocol 而不是一个七成员门面**：`InstanceView` 是只读可观测性，`TurnControl` 是
   控制动作，`D26` 落地权限模型后应当可以分别授予。两者都进 `SUPPORT_PROTOCOLS`
-  （与 `CancelSignal` 同档），**`CapabilityKind` 与 `CAPABILITY_PROTOCOLS` 仍恒为 9**。
+  （与 `CancelSignal` 同档）。D51 新增 `ContextCompactor` 后，
+  **`CapabilityKind` 与 `CAPABILITY_PROTOCOLS` 当前均为 10**。
 - **`capabilities()` / `plugins()` 返回 JSON**：`ResolutionReport` 与 `PluginStatus` 在
   `kernel/` 里、契约层够不着，而两者本来就以 JSON 为发布形态（`NFR-502`，各有
   `to_json()`）。在契约层复刻它们的字段只会多出一份必然漂移的定义。
@@ -1534,7 +1539,9 @@ Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中
       c. 收集 ContextFragment；按 trust 决定放置位置，UNTRUSTED 包裹为数据块
       d. context_assemble Interceptor 顺序执行
       e. 按 context_max_tokens 裁剪：SYSTEM 不裁剪，其余按 priority 逆序丢弃，
-         HISTORY 从最旧开始丢；仍超限则触发压缩策略（CTX-003、EDG-301）
+         HISTORY 从最旧开始丢（CTX-003、EDG-301）
+      f. 若历史确实被裁且 context.compactor 已显式配置，调用一次 COMPACTOR；
+         校验并持久化摘要后重载、重组一次；插件失败则沿用 e 的确定性结果
  8  从 registry 取生效工具集 -> tool_specs（与模型可见列表同源）
  9  before_model_request Interceptor
     （`D09` 起由 engine **每轮**分发；此处是 orchestrator 对第一轮的视角，D14 不得重复分发——
@@ -1711,14 +1718,15 @@ nm capabilities                                 # 报告中可见 provider 与 s
 
 **契约测试是可替换性的证明**（`NFR-702`）：`sdk/testing/` 导出
 `ModelProviderContract`、`SessionStoreContract`、`ContextProviderContract`、
-`ToolContract`、`ChannelContract`。每个实现（内建或插件）继承对应契约类并提供
+`ContextCompactorContract`、`MemoryProviderContract`、`ToolContract`、`ChannelContract`。
+每个实现（内建或插件）继承对应契约类并提供
 构造夹具即获得全部用例。契约测试同时是插件开发者的验收工具，因此必须在公开 SDK 内。
 
 **每个契约基类必须有一个「故意不合规」的反向样例**（`D16` 落地，
 `tests/sdk/test_contract_reverse_samples.py`）：一个不会失败的契约基类比没有契约基类更
 危险——继承它的实现会全绿地通过一组什么都没断言的用例，给出的是虚假的可替换性保证。
 往基类里加用例时要同时想清楚「什么样的实现会被这条拦下」；加不出反向样例的用例，多半是在
-描述某个具体实现的行为而不是契约。`sdk/testing/capabilities.py` 另为 5 类能力各提供一个
+描述某个具体实现的行为而不是契约。`sdk/testing/capabilities.py` 另为 7 类能力各提供一个
 **通过**全部基类的参考实现——`ToolContract` 与 `ChannelContract` 自 `D05` 发布到 `D16` 之前
 都没有这样的样例，`D15` 与 `tests/sdk/` 因此各自私下写了一份。
 

@@ -15,6 +15,8 @@ import pytest
 from nucleamind.contracts import (
     CancelSignal,
     Channel,
+    CompactionResult,
+    ContextCompactor,
     ContextFragment,
     ContextProvider,
     Correlation,
@@ -56,6 +58,7 @@ from nucleamind.contracts import (
 from nucleamind.sdk.testing import (
     FAKE_MODEL_ID,
     ChannelContract,
+    ContextCompactorContract,
     ContextProviderContract,
     FakeModelProvider,
     InMemorySessionStore,
@@ -63,6 +66,7 @@ from nucleamind.sdk.testing import (
     ModelProviderContract,
     RecordingHook,
     SessionStoreContract,
+    StaticContextCompactor,
     ToolContract,
     make_correlation,
     text_response,
@@ -219,6 +223,11 @@ class _StaticContextProvider:
 class TestStaticContextProviderContract(ContextProviderContract):
     def make_provider(self) -> ContextProvider:
         return _StaticContextProvider()
+
+
+class TestStaticContextCompactorContract(ContextCompactorContract):
+    def make_compactor(self) -> ContextCompactor:
+        return StaticContextCompactor(CompactionResult(through=0, content="摘要"))
 
 
 ECHO_SPEC = ToolSpec(

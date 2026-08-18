@@ -45,6 +45,12 @@ from .context_builder import (
     estimate_tokens,
     replay_messages,
 )
+from .compaction import (
+    DEFAULT_COMPACTOR_TIMEOUT_MS,
+    CompactionApplied,
+    CompactionPolicy,
+    compact_once,
+)
 from .deps import ENGINE_HOOKS, EngineDeps, HookDispatcher, ToolInvoker
 from .engine import run_turn
 from .events import (
@@ -156,6 +162,9 @@ __all__ = [
     "Checkpoint",
     "CheckpointOwner",
     "ContextProviderBinding",
+    "CompactionApplied",
+    "CompactionPolicy",
+    "DEFAULT_COMPACTOR_TIMEOUT_MS",
     "DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS",
     "DEFAULT_INTERCEPTOR_TIMEOUT_MS",
     "DEFAULT_MAX_ITERATIONS",
@@ -231,6 +240,7 @@ __all__ = [
     "bindings_from",
     "blocked_result",
     "context_providers_from",
+    "compact_once",
     "emit_outbound",
     "engine_deps",
     "escaped_result",

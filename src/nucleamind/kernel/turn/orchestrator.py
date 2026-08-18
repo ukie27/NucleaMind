@@ -44,11 +44,11 @@ from nucleamind.contracts import (
     StreamState,
     TurnId,
     TurnOutcome,
-    TurnStatus,
 )
 from nucleamind.kernel.routing import SubmitStatus
 
 from .cancel import CancelToken, Checkpoint
+from .compaction import compact_once
 from .context_builder import assemble
 from .engine import run_turn
 from .events import (
@@ -62,12 +62,11 @@ from .events import (
     TurnEvent,
     TurnStoppedByLimit,
 )
+from .finalization import finish_turn
 from .limits import BudgetLedger
 from .orchestration import OrchestratorDeps, TurnReceipt, emit_outbound, engine_deps
 from .transcript import Transcript, TurnState
 from .translation import (
-    TERMINAL_EVENT_NAMES,
-    TERMINAL_STREAM_STATES,
     as_nuclea,
     outcome_for_error,
     outcome_from,
@@ -171,7 +170,8 @@ class TurnOrchestrator:
         # 被取消（engine 同一条理由）。检查点 1/4 抛出的取消也从这里落地——`outcome_for_error`
         # 按 `ErrorCategory` 把它翻成 `CANCELLED` 而不是 `FAILED`。
         except Exception as error:
-            return await self._finish(
+            return await finish_turn(
+                deps,
                 state,
                 outcome_for_error(
                     error,
@@ -202,7 +202,7 @@ class TurnOrchestrator:
             return routed
         if not state.model_inputs:
             # 命令类 turn：不进模型，但事件流与终态一个都不少（`KER-010`）。
-            return await self._finish(state, self._outcome(state))
+            return await finish_turn(deps, state, self._outcome(state))
 
         snapshot = await deps.sessions.load(key)
         deps.bus.publish(
@@ -212,9 +212,10 @@ class TurnOrchestrator:
         )
 
         token.checkpoint(Checkpoint.BEFORE_CONTEXT)  # 检查点 1
+        user_input = "\n\n".join(state.model_inputs)
         context = await assemble(
             snapshot=snapshot,
-            user_input="\n\n".join(state.model_inputs),
+            user_input=user_input,
             correlation=state.correlation,
             cancel=token,
             limits=deps.limits,
@@ -227,6 +228,42 @@ class TurnOrchestrator:
             provider_timeout_ms=deps.context_provider_timeout_ms,
             on_failure=lambda error: self._report(state, error),
         )
+        compacted = await compact_once(
+            snapshot=snapshot,
+            assembled=context,
+            user_input=user_input,
+            correlation=state.correlation,
+            cancel=token,
+            sessions=deps.sessions,
+            policy=deps.compactor,
+            now=deps.clock(),
+            on_failure=lambda error: self._report(state, error),
+        )
+        if compacted is not None:
+            deps.bus.publish(
+                EventName.SESSION_COMPACTED,
+                correlation=state.correlation,
+                payload={
+                    "through": compacted.through,
+                    "messages": len(compacted.snapshot.messages),
+                    "compactor": deps.compactor.name if deps.compactor is not None else None,
+                },
+            )
+            context = await assemble(
+                snapshot=compacted.snapshot,
+                user_input=user_input,
+                correlation=state.correlation,
+                cancel=token,
+                limits=deps.limits,
+                bindings=deps.context_providers,
+                extra_fragments=state.fragments,
+                memory=deps.memory,
+                hooks=deps.hooks,
+                model_info=deps.model_info,
+                now=deps.clock(),
+                provider_timeout_ms=deps.context_provider_timeout_ms,
+                on_failure=lambda error: self._report(state, error),
+            )
         state.transcript.add_inputs(batch)
 
         request = ModelRequest(
@@ -242,7 +279,8 @@ class TurnOrchestrator:
             state.truncated = True
         if isinstance(terminal, TurnStoppedByLimit):
             await self._wrap_up(request, state, token, terminal)
-        return await self._finish(
+        return await finish_turn(
+            deps,
             state,
             outcome_from(
                 terminal,
@@ -270,7 +308,7 @@ class TurnOrchestrator:
             payload={"reason": "hook"},
             error=error,
         )
-        return await self._finish(state, self._outcome(state, error))
+        return await finish_turn(self._deps, state, self._outcome(state, error))
 
     async def _route(
         self, batch: Sequence[InboundMessage], state: TurnState, token: CancelToken
@@ -292,7 +330,7 @@ class TurnOrchestrator:
                     payload={"reason": "command", "message_id": message.message_id},
                     error=error,
                 )
-                return await self._finish(state, self._outcome(state, error))
+                return await finish_turn(self._deps, state, self._outcome(state, error))
             if outcome.result is not None:
                 state.fragments.extend(outcome.result.fragments)
                 if outcome.result.content:
@@ -417,59 +455,6 @@ class TurnOrchestrator:
             state.final = response.content
         if not state.final and not state.text:
             state.final = terminal.breach.describe()
-
-    # ------------------------------------------------------------------ 收尾
-
-    async def _finish(self, state: TurnState, outcome: TurnOutcome) -> TurnReceipt:
-        """持久化 → 终态事件 → `turn_end` → 出站终帧。"""
-        deps = self._deps
-        interrupted = outcome.status is TurnStatus.CANCELLED
-        if state.final:
-            state.transcript.add_assistant(state.final, interrupted=interrupted)
-        elif state.pending:
-            # 被打断的半句：模型没能给出完整响应，但它已经说出口的部分必须留存
-            # 并标记为不完整（`KER-007`、`EDG-304`）。
-            state.transcript.add_assistant("".join(state.pending), interrupted=True)
-        elif interrupted:
-            state.transcript.mark_interrupted()
-
-        records = state.transcript.records()
-        if records:
-            try:
-                await deps.sessions.append(state.correlation.session_key, records)
-            # `SES-003`：写失败不得伪装成功，即使模型那边已经答完了。
-            except Exception as error:
-                outcome = self._outcome(state, as_nuclea(error))
-
-        deps.bus.publish(
-            TERMINAL_EVENT_NAMES[outcome.status],
-            correlation=state.correlation,
-            payload={
-                "iterations": outcome.iterations,
-                "tool_calls": outcome.tool_calls,
-                "cancel_reason": outcome.cancel_reason.value if outcome.cancel_reason else None,
-            },
-            error=outcome.error,
-        )
-        await deps.hooks.dispatch(
-            HookContext(HookName.TURN_END, correlation=state.correlation, outcome=outcome)
-        )
-
-        content = state.final or "\n\n".join(item for item in state.text if item)
-        if not content and outcome.error is not None:
-            content = outcome.error.user_message
-        # 截断答案用 `CANCELLED` 让 Channel 侧触发标记（`EDG-304`）；`TurnStatus` 仍是
-        # `COMPLETED`，不需要新的 `StreamState` 值。
-        terminal_state = StreamState.CANCELLED if state.truncated else TERMINAL_STREAM_STATES[outcome.status]
-        final = await self._emit(state, content, terminal_state, final=True)
-        return TurnReceipt(
-            turn_id=state.correlation.turn_id,
-            admitted=True,
-            outcome=outcome,
-            error=outcome.error,
-            content=content,
-            messages=(*state.emitted, *((final,) if final is not None else ())),
-        )
 
     async def _emit(
         self,

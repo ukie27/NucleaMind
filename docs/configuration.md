@@ -1,6 +1,6 @@
 # 配置参考
 
-实例布局、配置的四层优先级、`${VAR}` 凭据引用，以及**全部九个小节的逐字段表**。
+实例布局、配置的四层优先级、`${VAR}` 凭据引用，以及**全部十个小节的逐字段表**。
 
 这篇是字段的权威说明。怎么把实例跑起来见 [`getting-started.md`](./getting-started.md)，
 命令参数见 [`cli.md`](./cli.md)。
@@ -175,8 +175,13 @@ nm config show --origins
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `provider_timeout_ms` | 正整数 | `3000` | 单个 Context Provider 的独立超时。超时按其关键性中止或跳过 |
+| `compactor` | 字符串或 `null` | `null` | `COMPACTOR` 能力的名字。`null` = 只做确定性请求级裁剪、不改写 Session；**写了却不存在是启动失败** |
+| `compactor_timeout_ms` | 正整数 | `3000` | 单次 Context Compactor 调用预算。超时或非法结果会记录插件失败，并沿用首次裁剪结果 |
 
 注意 `context_max_tokens` **不在这里**：它是 turn 的六项预算之一。
+安装或注册 Context Compactor **不会自动启用**；必须显式设置 `context.compactor`。
+压缩只在本轮历史确实被预算裁掉时尝试一次，摘要正文和压缩水位由插件决定，Kernel 负责
+校验、持久化、重载与失败回退。
 
 ### `memory` —— 长期记忆召回
 

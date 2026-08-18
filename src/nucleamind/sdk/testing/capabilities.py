@@ -1,4 +1,4 @@
-"""能力边界上的 Fake：工具、Channel、Context Provider、Memory、CLI 与受限运行时。
+"""能力边界上的 Fake：工具、Channel、Context、Compactor、Memory、CLI 与受限运行时。
 
 职责：为 `TOOL` / `CHANNEL` / `CONTEXT` / `MEMORY` / `CLI_ENTRY` 与 `PluginContext` 各提供
 一个**最小合规**的参考实现，供契约测试基类与插件作者直接使用。
@@ -27,6 +27,8 @@ from nucleamind.contracts import (
     CancelReason,
     CancelSignal,
     CommandSpec,
+    CompactionRequest,
+    CompactionResult,
     ContextFragment,
     Correlation,
     ErrorCode,
@@ -60,6 +62,7 @@ __all__ = [
     "FakeTurnControl",
     "NullChannel",
     "RecordingEventSubscriber",
+    "StaticContextCompactor",
     "StaticContextProvider",
 ]
 
@@ -145,6 +148,24 @@ class StaticContextProvider:
         del snapshot, correlation, cancel
         self.calls += 1
         return self._fragments
+
+
+# ------------------------------------------------------------------------- Context Compactor
+
+
+class StaticContextCompactor:
+    """最小可脚本化 `ContextCompactor`：每次返回同一个结果或 `None`。"""
+
+    def __init__(self, result: CompactionResult | None = None) -> None:
+        self.result = result
+        self.requests: list[CompactionRequest] = []
+
+    async def compact(
+        self, request: CompactionRequest, cancel: CancelSignal
+    ) -> CompactionResult | None:
+        cancel.raise_if_requested()
+        self.requests.append(request)
+        return self.result
 
 
 # ---------------------------------------------------------------------------------- Channel

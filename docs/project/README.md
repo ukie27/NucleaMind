@@ -1,7 +1,7 @@
 # NucleaMind 项目交接
 
-- 更新时间：2026-08-18（`D50` 收口，**MAX_TOKENS 有界自动续写**）
-- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D50` 均已完成）。
+- 更新时间：2026-08-18（`D51` 收口，**插件化上下文压缩**）
+- 当前阶段：**阶段三 P1 能力插件化收口**（`D00`–`D51` 均已完成）。
   **本轮项目范围收窄**：Model Provider 止步于内建 `model-openai` + `anthropic` 插件，
   Channel 只做 `feishu`（`D34` 已交），WebUI 不做。`D35` 因此删掉了整个 `legacy/`、
   `tests/legacy/` 与 `webui/`，`R6` 守卫与债务棘轮一并退休。
@@ -27,7 +27,7 @@
   **SDK 到 `1.1.0`**（纯新增）。
   **`D46` 补齐了新层的用户文档**：`docs/getting-started.md`（装包 → `nm init` → 凭据 →
   第一次对话 → 装插件）、`docs/configuration.md`（实例布局 + 四层优先级 + `${VAR}` 语义 +
-  **九个小节的逐字段表**）、`docs/cli.md`（八个子命令的参数、退出码与「不做什么」）、
+  **十个小节的逐字段表**）、`docs/cli.md`（八个子命令的参数、退出码与「不做什么」）、
   `docs/deployment.md`（Docker / compose / systemd + 「权限模型没有监听端口这一种」）。
   三条防漂移守卫落在 `tests/e2e/test_user_docs.py`，同 PR 修掉 `deploy/` 的三处陈旧项。
   **`D47` 打通了出站附件通路**：`ToolResult.attachments`（**SDK `1.2.0`**，纯新增）→
@@ -40,6 +40,9 @@
   标记为不完整，满足 `EDG-304`。
   **`D50` 在 Kernel engine 内完成有界自动续写**：同一份消息序列和 `BudgetLedger` 最多
   追加三次请求，工具结果不会重复执行；多段正文由 orchestrator 聚合为一条会话记录。
+  **`D51` 把上下文压缩落成第十类插件能力 `COMPACTOR`**：默认关闭，只有
+  `context.compactor` 显式选中且本轮确定性裁剪确实丢掉历史时才调用一次。插件决定摘要与
+  水位，Kernel 负责超时、校验、持久化、重载、事件和失败回退；SDK 升到 `1.3.0`。
 
 本文档用于在新会话或开发者之间交接 NucleaMind 当前状态。完成一个较大的模块、
 项目阶段或架构调整后，应同步更新本文档，使下一次开发可以直接从“下一步工作”
@@ -63,7 +66,7 @@
   一条矛盾的契约约定、一条交了没通电的能力、一个缺失的契约槽位。**`D48` 补的是第四种
   缺口——一个交了信号却零消费者的机制**：`retryable` 与 `EventName.MODEL_REQUEST_FAILED`
   至此才真的通电，一次瞬时 429 / 503 不再打掉整条 turn。`D49` / `D50` 又补齐截断标记与
-  有界续写；这些都是 Provider 无关的 turn 正确性，不是向 Kernel 塞入具体能力。
+  有界续写；`D51` 再把摘要策略留给插件、Kernel 只保留压缩机制。
 - `references/` 保存本地参考源码并被 Git 忽略；其受版本控制的导航文档位于
   [`../references/`](../references/README.md)。
 
@@ -2487,6 +2490,13 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   消息，最多追加 3 次请求，并复用同一个 `BudgetLedger`；工具调用不会因续写被重复执行。
   多段响应在 orchestrator 聚合为一条会话 assistant 记录，续写次数用尽后仍按 D49 标记
   为不完整。自动续写不属于 Provider 插件能力，而是 Kernel 的 turn 语义。
+- **`D51`**：插件化上下文压缩。新增 `CapabilityKind.COMPACTOR`、
+  `ContextCompactor.compact()`、`CompactionRequest` / `CompactionResult` 与
+  `sdk.testing.ContextCompactorContract`，SDK 升到 `1.3.0`。默认
+  `context.compactor = null`，安装或注册不自动启用；确定性裁剪丢掉历史后至多调用一次，
+  成功则 `SessionStore.compact()`、发布 `session.compacted` 并重载重组，插件超时、异常或
+  非法结果只发布 `plugin.failed` 并沿用首次裁剪结果，持久化失败仍按 `SES-003` 让 turn
+  失败。不提供官方默认压缩插件，策略内容与水位完全留给用户插件。
 
 因此下一轮的候选是下面清单里**剩下的那几件**，加上两条刻意推迟的机制（插件热更新、
 `state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，它计划落在独立包
@@ -2540,7 +2550,7 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 独立事项审计（`D50` 之后剩三件）
+### 独立事项审计（`D51` 之后仍有三类事项）
 
 `D42` 之后清单上的**前五条已经交掉**，逐条留下判据：
 
@@ -2568,7 +2578,8 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   每一轮请求的内容）。**如实记着的代价**：memory 插件的 `enabled_scopes` 默认已含 `agent`，
   两边同时开会重复召回。
 
-剩下的三件，**每一件都是先要一个决定而不是先要工时**：
+上下文压缩策略已由 `D51` 以可选插件能力完成。下面三类既有事项仍然存在，**每一件都是先
+要一个决定而不是先要工时**：
 
 1. **多模态输入没有落点。** `ModelMessage.content` 是纯 `str`，因此图像输入、语音转写
    （M5 里刻意没做的 `providers/transcription.py`）与图生图都卡在同一处。**`D45` 的

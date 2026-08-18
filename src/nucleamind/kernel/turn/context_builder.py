@@ -3,8 +3,8 @@
 职责：并发调用全部生效的 `ContextProvider`（各自独立超时、失败按关键性分叉），分发
 `context_assemble` 拦截器，按 `trust` 决定片段的放置位置，并在 `context_max_tokens`
 之内裁剪出一份 `ModelMessage` 序列。
-不负责：调用模型、决定谁是 Provider（registry 说了算）、压缩历史（`SessionStore.compact`
-是 `SES-005`，见下面「仍超限怎么办」）、持久化、**长期记忆的召回策略与降级**
+不负责：调用模型、决定谁是 Provider（registry 说了算）、持久化压缩历史（D51 的
+`compaction.py` 在本函数返回后协调）、**长期记忆的召回策略与降级**
 （`memory.py`，`D44`——这里只调它一次，把结果与其余片段同批处理）——本模块不做任何 IO，
 只 await 注入进来的 Provider 与 Hook。
 
@@ -21,9 +21,8 @@
 4. **拦截器在裁剪之前**。先裁后钩等于让插件在预算之外再塞东西。
 
 **仍超限怎么办**：丢到只剩系统段与当前输入仍超预算时抛 `INPUT_TOO_LARGE`
-（→ turn `FAILED`）。压缩策略（`SessionStore.compact`）本轮不实现——把「压不下去」伪装成
-「压缩了」会让用户拿到一个悄悄缺了半截历史的回答，而 `CTX-003` 要的是「不得生成超过模型
-限制的请求」，报错同样满足它。
+（→ turn `FAILED`）。普通裁剪始终先产出确定结果；D51 的可选 compactor 只在历史确实被裁
+时尝试持久化摘要，失败不会改变本次已组装好的上下文。
 """
 
 from __future__ import annotations
@@ -139,6 +138,7 @@ class AssembledContext:
     dropped: tuple[DroppedFragment, ...]
     estimated_tokens: int
     budget: int
+    history_dropped: int = 0
 
 
 def estimate_tokens(text: str) -> int:
@@ -247,6 +247,7 @@ async def assemble(
         dropped=tuple(dropped),
         estimated_tokens=plan.tokens,
         budget=budget,
+        history_dropped=plan.history_dropped,
     )
 
 
@@ -371,6 +372,7 @@ class _Plan:
     fragments: tuple[ContextFragment, ...]
     history: tuple[ModelMessage, ...]
     tokens: int
+    history_dropped: int
 
 
 def _trim(
@@ -388,6 +390,7 @@ def _trim(
     system = tuple(item for item in fragments if item.trust is TrustLevel.SYSTEM)
     body = [item for item in fragments if item.trust is not TrustLevel.SYSTEM]
     kept_history = list(history)
+    original_history_count = len(kept_history)
 
     fixed = sum(item.estimated_tokens for item in system) + estimate_tokens(user_input)
     total = fixed + sum(item.estimated_tokens for item in body)
@@ -409,7 +412,13 @@ def _trim(
             "系统指令与本次输入本身已超出上下文预算，无法在不丢失指令的前提下裁剪。",
             detail={"estimated_tokens": total, "budget": budget},
         )
-    return _Plan(system=system, fragments=tuple(body), history=tuple(kept_history), tokens=total)
+    return _Plan(
+        system=system,
+        fragments=tuple(body),
+        history=tuple(kept_history),
+        tokens=total,
+        history_dropped=original_history_count - len(kept_history),
+    )
 
 
 def _fragment_goes_first(body: Sequence[ContextFragment]) -> bool:

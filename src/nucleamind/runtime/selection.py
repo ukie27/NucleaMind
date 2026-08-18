@@ -20,13 +20,20 @@ from nucleamind.contracts import ErrorCode, ModelInfo, ModelProvider, NucleaErro
 from nucleamind.kernel.config import NucleaConfig
 from nucleamind.kernel.plugins import (
     memory_providers_from,
+    context_compactors_from,
     model_providers_from,
     session_store_from,
 )
 from nucleamind.kernel.registry import CapabilityRegistry
-from nucleamind.kernel.turn import MemoryRecall, select_memory
+from nucleamind.kernel.turn import CompactionPolicy, MemoryRecall, select_memory
 
-__all__ = ["missing_capability", "require_sessions", "select_model", "select_recall"]
+__all__ = [
+    "missing_capability",
+    "require_sessions",
+    "select_compactor",
+    "select_model",
+    "select_recall",
+]
 
 
 def select_model(
@@ -86,6 +93,33 @@ def select_recall(registry: CapabilityRegistry, config: NucleaConfig) -> MemoryR
         timeout_ms=config.memory.recall_timeout_ms,
         priority_floor=config.memory.fragment_priority,
         critical=config.memory.critical,
+    )
+
+
+def select_compactor(
+    registry: CapabilityRegistry, config: NucleaConfig
+) -> CompactionPolicy | None:
+    """按 `context.compactor` 显式选择压缩策略；未配置就是禁用。"""
+    wanted = config.context.compactor
+    if wanted is None:
+        return None
+    bindings = context_compactors_from(registry)
+    chosen = next((binding for binding in bindings if binding.name == wanted), None)
+    if chosen is None:
+        raise NucleaError(
+            ErrorCode.CAPABILITY_MISSING,
+            "配置里指定的 Context Compactor 没有注册。",
+            detail={
+                "pointer": "/context/compactor",
+                "wanted": wanted,
+                "available": [binding.name for binding in bindings],
+            },
+        )
+    return CompactionPolicy(
+        compactor=chosen.value,
+        name=chosen.name,
+        owner=chosen.owner,
+        timeout_ms=config.context.compactor_timeout_ms,
     )
 
 

@@ -36,6 +36,7 @@ from .defaults import (
     DEFAULT_CHANNEL_QUEUE_MAX_SIZE,
     DEFAULT_COMMAND_PREFIX,
     DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
+    DEFAULT_COMPACTOR_TIMEOUT_MS,
     DEFAULT_DEDUP_CAPACITY,
     DEFAULT_DEDUP_TTL_MS,
     DEFAULT_INTERCEPTOR_TIMEOUT_MS,
@@ -156,6 +157,10 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
     "context": {
         "provider_timeout_ms": FieldSpec(
             FieldKind.POSITIVE_INT, DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+        ),
+        "compactor": FieldSpec(FieldKind.OPTIONAL_STR, None),
+        "compactor_timeout_ms": FieldSpec(
+            FieldKind.POSITIVE_INT, DEFAULT_COMPACTOR_TIMEOUT_MS
         ),
     },
     "memory": {
@@ -360,6 +365,10 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
         context=ContextSection(
             provider_timeout_ms=int_at(
                 sections["context"], "provider_timeout_ms", DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+            ),
+            compactor=opt_str_at(sections["context"], "compactor"),
+            compactor_timeout_ms=int_at(
+                sections["context"], "compactor_timeout_ms", DEFAULT_COMPACTOR_TIMEOUT_MS
             ),
         ),
         memory=MemorySection(

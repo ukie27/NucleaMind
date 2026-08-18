@@ -1,6 +1,6 @@
 """能力接口：Kernel 与能力实现之间唯一的行为契约（技术方案 §5.1、需求 §9.3 `SDK-001`）。
 
-职责：声明 9 个能力 Protocol（`ModelProvider` / `ToolHandler` / `ContextProvider` /
+职责：声明 10 个能力 Protocol（`ModelProvider` / `ToolHandler` / `ContextProvider` /
 `SessionStore` / `MemoryProvider` / `Channel` / `CommandHandler` / `HookHandler` /
 `CliEntry`）与三个支撑用的只读/动作面（`CancelSignal` / `InstanceView` / `TurnControl`），
 并在每个方法的 docstring 上固定写明**异常约定**与**取消语义**。
@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .capability import HookContext, HookOutcome
+from .compaction import CompactionRequest, CompactionResult
 from .command import CommandInvocation, CommandResult, CommandSpec
 from .context import ContextFragment, FragmentScope
 from .ids import Correlation, SessionKey, TurnId
@@ -42,6 +43,7 @@ __all__ = [
     "CliEntry",
     "CommandHandler",
     "ContextProvider",
+    "ContextCompactor",
     "HookHandler",
     "InstanceView",
     "MemoryProvider",
@@ -278,6 +280,28 @@ class ContextProvider(Protocol):
         关键插件的异常让 turn `FAILED`，否则跳过本 Provider 并记录原因（`CTX-005`）。
         **取消语义**：在每个外部查询前检查 `cancel`；被取消时抛 `CANCELLED` 类错误，
         本次贡献整体作废——半份上下文比没有上下文更危险。
+        """
+        ...
+
+
+@runtime_checkable
+class ContextCompactor(Protocol):
+    """会话历史的压缩策略（D51）。"""
+
+    async def compact(
+        self,
+        request: CompactionRequest,
+        cancel: CancelSignal,
+    ) -> CompactionResult | None:
+        """返回压缩建议，或以 `None` 表示本轮不压缩。
+
+        Kernel 负责触发、校验、持久化与回退；实现只决定摘要内容和压缩水位。
+
+        **异常约定**：可以抛 `NucleaError`；Kernel 将其记录为插件失败并沿用本轮已经完成的
+        确定性裁剪结果，不得让压缩策略故障阻断模型请求。返回的空摘要、倒退或越界水位同样
+        视为插件失败。
+        **取消语义**：在模型调用等外部操作前检查 `cancel`；收到取消后尽快停止并抛
+        `CANCELLED` 类错误。Kernel 不会取消已经开始的 Session 持久化。
         """
         ...
 

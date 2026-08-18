@@ -263,6 +263,8 @@ class TestSchema:
         config = validate_config({})
         assert config.turn.max_iterations > 0
         assert config.workspace.root is None
+        assert config.context.compactor is None
+        assert config.context.compactor_timeout_ms == 3_000
 
     def test_unknown_key_rejected_with_pointer_and_suggestion(self) -> None:
         """`CFG-001`：未知字段用自己的码，不被笼统的「配置无效」吞掉。"""
@@ -418,7 +420,7 @@ class TestSchema:
         与上面两条同理：`schema.py` 不能 import `kernel.turn`（会把 engine 与 asyncio 拖上
         配置路径），代价就是这张对照表。
         """
-        from nucleamind.kernel.turn import context_builder, hooks
+        from nucleamind.kernel.turn import compaction, context_builder, hooks
 
         config = validate_config({})
         assert config.hooks.observer_timeout_ms == hooks.DEFAULT_OBSERVER_TIMEOUT_MS
@@ -426,6 +428,10 @@ class TestSchema:
         assert (
             config.context.provider_timeout_ms
             == context_builder.DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS
+        )
+        assert (
+            config.context.compactor_timeout_ms
+            == compaction.DEFAULT_COMPACTOR_TIMEOUT_MS
         )
 
     def test_memory_defaults_match_the_turn_package(self) -> None:

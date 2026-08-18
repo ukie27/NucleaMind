@@ -108,7 +108,11 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   `routing/` 与 `plugins/`。
   **`D49` 修正 `MAX_TOKENS` 截断终态**（正文保留但按 `EDG-304` 标为不完整），
   **`D50` 已落地有界自动续写**（engine 在同一消息序列中最多追加 3 次请求，复用
-  `BudgetLedger`，不重复执行工具）。
+  `BudgetLedger`，不重复执行工具）；
+  **`D51` 已落地插件化上下文压缩**（新增第十类 `COMPACTOR`、`ContextCompactor` /
+  `CompactionRequest` / `CompactionResult`、`kernel/turn/compaction.py` 与
+  `context.compactor` 显式选择；默认关闭，只在确定性裁剪确实丢掉历史时尝试一次，
+  Kernel 负责校验、持久化、重载、事件与失败回退，**SDK `1.3.0`**）。
   `nm init` / `nm run` / `nm serve` / `nm config show` / `nm session` / `nm permissions` /
   `nm plugins` / `nm capabilities` 已可用。
 - **长期目标**：不是继续堆功能，而是把 nanobot 改造成**轻量、模块化、可扩展的 Agent Kernel**——核心保持最小化（只保留 Agent 执行循环、LLM 抽象层、消息系统、Session 管理、Context 构建接口、Tool 注册机制、Plugin Runtime、基础配置），具体能力（Telegram/Discord/Memory/Browser/MCP/WebUI/Automation/Multi-Agent 等）逐步抽离为可选插件。
@@ -130,8 +134,8 @@ src/nucleamind/            # 唯一 Python 包（src 布局，强制 editable in
 ├── builtins/              # 第 4 层：内建默认能力，与插件同等身份
 ├── runtime/               # 第 5 层：组装根 + `nm` 可执行程序
 └── embed/                 # 第 5 层：嵌入式 Python SDK
-plugins/                   # 一等公民：七个官方插件（openai-api、anthropic、discord、
-                           # feishu、web、image、mcp）
+plugins/                   # 一等公民：九个官方插件（openai-api、anthropic、discord、
+                           # feishu、web、image、mcp、memory、cron）
 examples/plugins/          # 教学用最小示例插件
 tests/                     # 镜像分层：architecture/ contracts/ kernel/ sdk/ builtins/ runtime/
                            # 是一个包（tests/__init__.py），否则 tests/builtins/ 与标准库撞名
@@ -161,13 +165,14 @@ deploy/                    # Dockerfile / compose / entrypoint
   `contracts` 导入。要再写一个密钥类型之前先想清楚哨兵测试要多扫一遍哪些输出路径。
 
 `sdk/` 同样已冻结，**且从 `D42` 起是 `1.x`**（`1.0.0` 起算 §7.6 的兼容承诺，`D45` 的
-`OpaqueBlock` 让它到 `1.1.0`、`D47` 的 `ToolResult.attachments` 让它到 `1.2.0`，
-两次都是纯新增）：`sdk.__all__` 与
+`OpaqueBlock` 让它到 `1.1.0`、`D47` 的 `ToolResult.attachments` 让它到 `1.2.0`、
+`D51` 的 `ContextCompactor` 让它到 `1.3.0`，三次都是纯新增）：`sdk.__all__` 与
 `sdk.testing.__all__` 是规范性清单，有字面量快照测试；
-`NucleaAPI` 的 9 个注册方法与 `CapabilityKind` 的 9 个取值一一对应；契约类型不从 `sdk`
+`NucleaAPI` 的 10 个注册方法与 `CapabilityKind` 的 10 个取值一一对应；契约类型不从 `sdk`
 转发（插件按 `R4` 直接 import `contracts`）；`sdk/manifest.py` 导入即不得有副作用。
-写内建能力或插件时，先继承 `sdk.testing` 的 6 个契约测试基类
-（`D39` 补上了 `MemoryProviderContract`）。**契约基类挡不住签名不一致**——它只在你自己
+写内建能力或插件时，先继承 `sdk.testing` 的 7 个契约测试基类
+（`D39` 补上 `MemoryProviderContract`，`D51` 补上 `ContextCompactorContract`）。
+**契约基类挡不住签名不一致**——它只在你自己
 传的实参下跑，`isinstance` 又只查属性存在性，见下方 `plugins/nucleamind-plugin-memory/`
 那条。那条 `inspect.signature` 守卫在 `D40` 的 `cron` 里已经照抄了一遍
 （`test_cron_plugin.py`，并扩到 `Channel` 的四个方法），**新插件继续照抄**。
@@ -184,7 +189,7 @@ deploy/                    # Dockerfile / compose / entrypoint
 分成两个 Protocol 是因为一个是只读、一个是控制动作，`D26` 可以分别授予。
 生产实现在 `runtime/introspection.py`，一致性靠返回类型标注静态证明（`wiring.py` 的先例）。
 往 `PluginContext` 加成员要同时改**两处**快照：`tests/contracts/test_protocols.py`
-（`SUPPORT_PROTOCOLS` 现在 3 条，`CAPABILITY_PROTOCOLS` 仍恒为 9）与
+（`SUPPORT_PROTOCOLS` 现在 3 条，`CAPABILITY_PROTOCOLS` 现在为 10）与
 `tests/sdk/test_public_surface.py`（`API_PROTOCOLS` + 只读属性豁免名单）。
 
 `kernel/registry/` 是**全项目冲突语义的唯一来源**：能力冲突、覆盖与遮蔽的判定只在
@@ -229,7 +234,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **准入顺序 去重 → 并发 → 分流**：`turn_id` 分配与去重在 `turn.started` **之前**，
   `turn.started` 在拿到 session 槽位**之后**。被去重或被拒的消息只发 `turn.rejected`——
   给它一个 `turn.started` 就会留下永远等不到终态的 turn。
-- **注册载荷的形状定死四个**：`RegisteredHook` / `RegisteredContextProvider` /
+- **turn 侧注册载荷的形状定死五个**：`RegisteredHook` / `RegisteredContextProvider` /
+  `RegisteredContextCompactor` /
   `RegisteredTool`（`kernel/turn/`）与 `RegisteredCommand`（`kernel/routing/`）。
   `critical` 由注册方从 manifest 带进来，kernel 不认识 manifest。
 - **`trust=SYSTEM` 是进入系统指令位置的唯一凭据**，`kind` 不参与判定；`UNTRUSTED` 的包裹
@@ -324,7 +330,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 
 `tests/integration/`（`D15`）是骨架集成验收，写进去或改到它之前记住四条：
 
-- **Fake 只在能力边界上**（模型 / 会话存储 / 工具 / Context Provider / 命令 handler），
+- **Fake 只在能力边界上**（模型 / 会话存储 / 工具 / Context Provider /
+  Context Compactor / 命令 handler），
   能力**之间**一律生产实现（registry + 覆盖解析、`HookRouter`、`ToolExecutor`、
   `Dispatcher`、`SessionScheduler`、`DedupCache`、`EventBus`、`TurnOrchestrator`）。
   往里挪一层，这套测试就退化成 `tests/kernel/` 的重复。
@@ -342,7 +349,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
 - **`CapabilityHost` 是唯一的 `NucleaAPI` 实现**，内建与外部插件共用它（`SDK-007`、
   `BAS-005`）。它不继承 `NucleaAPI`（`R2` 禁止 `kernel/` import `sdk/`），一致性由
   `runtime/wiring.py` 里那句 `conformance: NucleaAPI = host` 静态证明——有 AST 测试盯着。
-- **九个 kind 的注册载荷形状与取回函数全齐**（`D14` 四个 + `D16` 五个）。内建能力自己不
+- **十个 kind 的注册载荷形状与取回函数全齐**（`D14` 四个 + `D16` 五个 +
+  `D51` 一个）。内建能力自己不
   构造它们，Host 会按 `register_*` 的参数替你构造；取回后的实现体在 `binding.value` 上。
 - **未声明的注册与声明了却没注册都是 `PLUGIN_LOAD_FAILED`**，靠 `detail` 区分。manifest 的
   `capabilities` 是有约束力的全集，`overrides` 只能从那里来（`EDG-102`）。
@@ -781,8 +789,8 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   一直依赖着「开发环境里没装任何插件」这个它们没有声明的前提，`D30` 把它显式化了。
   要在那一层验真实 entry point 的用例自己传 `entry_points=`。
 - **`docs/plugin-development.md` 的代码块由 `tests/e2e/test_plugin_docs.py` 直接执行**
-  （Python `exec`、JSON/TOML 解析），外加「文档列出的 9 个注册方法 == `NucleaAPI` 上真有
-  的那 9 个」。比对片段挡不住这类漂移：复制粘贴来的文档在实现改名之后仍然长得一模一样。
+  （Python `exec`、JSON/TOML 解析），外加「文档列出的 10 个注册方法 == `NucleaAPI` 上真有
+  的那 10 个」。比对片段挡不住这类漂移：复制粘贴来的文档在实现改名之后仍然长得一模一样。
 
 `runtime/inspect.py`（`D29`）是全部只读诊断的入口，四条：
 

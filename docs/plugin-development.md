@@ -93,10 +93,15 @@ def setup(api: NucleaAPI) -> None:
     )
 ```
 
-`NucleaAPI` 恰好有 9 个注册方法，与 9 类能力一一对应：`register_tool` /
+`NucleaAPI` 恰好有 10 个注册方法，与 10 类能力一一对应：`register_tool` /
 `register_command` / `register_context_provider` / `register_model_provider` /
 `register_channel` / `register_memory_provider` / `register_session_store` /
-`register_cli_entry` / `on`（Hook）。
+`register_context_compactor` / `register_cli_entry` / `on`（Hook）。
+
+`register_context_compactor(name, compactor)` 注册的是持久化上下文压缩策略。安装或注册不会
+自动生效，用户还必须在 `context.compactor` 显式选择同名能力。`ContextCompactor.compact()`
+只返回摘要正文与 `through` 水位；何时触发、结果校验、Session 写入、重载和故障回退都由
+Kernel 负责。
 
 **注册是事务性的**：先进暂存批次，`setup` 正常返回才一次性并入能力表；中途抛异常则整批
 丢弃，不会留下半注册状态。因此不要在 `setup` 里派生一个后台任务去「稍后注册」。
@@ -252,7 +257,7 @@ registry 在解析之后只读，没有第二个注册时机。
 
 ## 8. 测试：继承契约测试基类
 
-`nucleamind.sdk.testing` 发布了 5 个契约测试基类与一批 Fake。内建实现与你的插件**继承
+`nucleamind.sdk.testing` 发布了 7 个契约测试基类与一批 Fake。内建实现与你的插件**继承
 同一个基类**——这就是「可替换」的可执行形态。
 
 ```python
@@ -266,8 +271,9 @@ class TestMyStore(SessionStoreContract):
 ```
 
 基类是 `ModelProviderContract` / `SessionStoreContract` / `ToolContract` /
-`ContextProviderContract` / `ChannelContract`。它们**不 import pytest**，所以你用什么
-runner 都行；子类名必须以 `Test` 开头，否则 pytest 不收集。
+`ContextProviderContract` / `ContextCompactorContract` / `MemoryProviderContract` /
+`ChannelContract`。它们**不 import pytest**，所以你用什么 runner 都行；子类名必须以
+`Test` 开头，否则 pytest 不收集。
 
 ## 9. 出错时看哪里
 

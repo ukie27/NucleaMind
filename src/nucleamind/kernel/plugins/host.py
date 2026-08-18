@@ -1,4 +1,4 @@
-"""唯一的 Host `NucleaAPI` 实现：把 9 个注册方法分派进 `RegistrationBatch`（技术方案 §7.5）。
+"""唯一的 Host `NucleaAPI` 实现：把 10 个注册方法分派进 `RegistrationBatch`（技术方案 §7.5）。
 
 职责：接住插件 `setup(api)` 里的 9 类注册调用，回查声明表取 `overrides` 与 `priority`，
 包成对应 kind 的注册载荷，逐条放进批次；并在 `finish()` 时核对声明与实际注册一一对应。
@@ -36,6 +36,7 @@ from nucleamind.contracts import (
     CliEntry,
     CommandHandler,
     CommandSpec,
+    ContextCompactor,
     ContextProvider,
     ErrorCode,
     HookHandler,
@@ -54,6 +55,7 @@ from nucleamind.kernel.turn import RegisteredContextProvider, RegisteredHook, Re
 from .capabilities import (
     RegisteredChannel,
     RegisteredCliEntry,
+    RegisteredContextCompactor,
     RegisteredMemoryProvider,
     RegisteredModelProvider,
     RegisteredSessionStore,
@@ -66,7 +68,7 @@ _ContextT = TypeVar("_ContextT")
 
 
 class CapabilityHost(Generic[_ContextT]):
-    """`NucleaAPI` 的宿主实现。恰好 9 个注册方法 + `ctx`，与 `CapabilityKind` 一一对应。
+    """`NucleaAPI` 的宿主实现。恰好 10 个注册方法 + `ctx`，与 `CapabilityKind` 一一对应。
 
     生命周期：由 loader 建好、交给 `setup(api)`、`setup` 返回后 loader 调 `finish()` 再
     `commit()`。Host 自己**从不提交**——`setup` 的返回时刻在 loader 的作用域里，而
@@ -123,6 +125,14 @@ class CapabilityHost(Generic[_ContextT]):
             CapabilityKind.CONTEXT,
             name,
             RegisteredContextProvider(provider=provider, critical=self._critical),
+        )
+
+    def register_context_compactor(self, name: str, compactor: ContextCompactor) -> None:
+        """注册一个上下文压缩策略。"""
+        self._register(
+            CapabilityKind.COMPACTOR,
+            name,
+            RegisteredContextCompactor(compactor=compactor),
         )
 
     def register_model_provider(self, name: str, provider: ModelProvider) -> None:
