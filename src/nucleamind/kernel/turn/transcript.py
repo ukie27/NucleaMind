@@ -158,6 +158,9 @@ class TurnState:
     #: 模型给出的最终答复（没有 tool_calls 的那一轮）。
     final: str = ""
     ledger: BudgetLedger | None = None
+    #: `True` 表示答案因 `MAX_TOKENS` 停止被截断（`EDG-304`）。由 orchestrator 在
+    #: 处理 `TurnCompleted` 事件时赋值，`_finish` 据此把出站消息改为 `CANCELLED` 状态。
+    truncated: bool = False
 
     def collect_attachments(self, result: ToolResult) -> None:
         """收下一条工具结果里的附件。

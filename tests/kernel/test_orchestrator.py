@@ -827,3 +827,38 @@ async def test_a_silent_model_becomes_a_failure_with_a_sentence() -> None:
     assert receipt.outcome.status is TurnStatus.FAILED
     assert receipt.content == "模型连续 3 次返回空回答。"
     assert receipt.messages[-1].content == "模型连续 3 次返回空回答。"
+
+
+# ------------------------------------------------------------------ L 截断（`EDG-304`）
+
+
+async def test_max_tokens_turn_has_cancelled_stream_state() -> None:
+    """被截断的答案出站时 `stream_state=CANCELLED`，Channel 因此会附加标记（`EDG-304`）。
+
+    `TurnStatus` 仍然是 `COMPLETED`——模型没报错、turn 也没被取消——只是出站消息的
+    呈现状态要说清楚这不是一个完整答案。
+    """
+    from nucleamind.contracts import ModelResponse, StopReason
+
+    truncated_response = ModelResponse(
+        model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="被截断的答案"
+    )
+    harness = build(ScriptedProvider([truncated_response]))
+
+    receipt = await harness.send()
+
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.COMPLETED
+    assert receipt.messages[-1].stream_state is StreamState.CANCELLED
+    assert receipt.content == "被截断的答案"
+
+
+async def test_end_turn_response_keeps_final_stream_state() -> None:
+    """正常结束的 turn 出站消息仍是 `FINAL`，不受截断逻辑影响。"""
+    harness = build(ScriptedProvider([text_response("完整答案")]))
+
+    receipt = await harness.send()
+
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.COMPLETED
+    assert receipt.messages[-1].stream_state is StreamState.FINAL

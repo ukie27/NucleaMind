@@ -22,8 +22,8 @@
 ——`after_model_response` 是观察者、`HookOutcome` 没有 `response` 槽，拿一个
 `MAX_TOKENS` 响应去延长它这条路在契约层封死。「请求根本没拿到响应」是另一件事，重发同
 一个请求不改写任何响应。**长度截断续写（`_MAX_LENGTH_RECOVERIES`）仍然没做**，
-`StopReason.MAX_TOKENS` 且无工具调用时 engine 照旧 `TurnCompleted`——一个被截断的答案
-以 `COMPLETED` 报出去、不带 `EDG-304` 要求的标记，那是本模块**没有**覆盖的缺口。
+`StopReason.MAX_TOKENS` 且无工具调用时 Kernel 会将回答标为不完整并保留已有内容，
+自动续写属于本模块之外的后续功能。
 """
 
 from __future__ import annotations

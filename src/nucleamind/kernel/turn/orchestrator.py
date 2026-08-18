@@ -58,6 +58,7 @@ from .events import (
     TerminalEvent,
     ToolCallCompleted,
     ToolCallStarted,
+    TurnCompleted,
     TurnEvent,
     TurnStoppedByLimit,
 )
@@ -237,6 +238,8 @@ class TurnOrchestrator:
             timeout_ms=deps.limits.turn_timeout_ms,
         )
         terminal = await self._drive(request, state, token)
+        if isinstance(terminal, TurnCompleted) and terminal.truncated:
+            state.truncated = True
         if isinstance(terminal, TurnStoppedByLimit):
             await self._wrap_up(request, state, token, terminal)
         return await self._finish(
@@ -454,9 +457,10 @@ class TurnOrchestrator:
         content = state.final or "\n\n".join(item for item in state.text if item)
         if not content and outcome.error is not None:
             content = outcome.error.user_message
-        final = await self._emit(
-            state, content, TERMINAL_STREAM_STATES[outcome.status], final=True
-        )
+        # 截断答案用 `CANCELLED` 让 Channel 侧触发标记（`EDG-304`）；`TurnStatus` 仍是
+        # `COMPLETED`，不需要新的 `StreamState` 值。
+        terminal_state = StreamState.CANCELLED if state.truncated else TERMINAL_STREAM_STATES[outcome.status]
+        final = await self._emit(state, content, terminal_state, final=True)
         return TurnReceipt(
             turn_id=state.correlation.turn_id,
             admitted=True,

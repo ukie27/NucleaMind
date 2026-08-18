@@ -740,10 +740,10 @@ engine 的不变量（写进 docstring 并由测试守护）：
   `STOPPED_BY_LIMIT`；收尾请求失败只记一条 `plugin.failed`，并回落到
   `LimitBreach.describe()` 作为用户可见文本——让用户面对一张空卡片同样不可接受
   （基线 `test_budget_exhaustion_is_pushed_through_the_stream`）。
-- **长度截断续写与空回复重试仍未实现**。旧实现的 `_MAX_LENGTH_RECOVERIES = 3` /
-  `_MAX_EMPTY_RETRIES = 2` 是「模型返回异常时重试几次」的编排策略，做法已经明确
-  （用同一个 `ledger` 再调一次 `run_turn`，见 §6.2.1），但 `D14` 未落地：它需要真实
-  Provider 的 `stop_reason=LENGTH` 才有意义，留到 `D19` 之后再论证次数。
+- **长度截断续写仍未实现，空回复重试已经实现**。`RetryingModel` 负责在没有拿到有效
+  响应时按停止原因重发请求；它不改写已经收到的 `MAX_TOKENS` 响应。自动续写应使用同一
+  `BudgetLedger` 再调用 `run_turn`，且不能重复执行已经完成的工具调用，仍留作后续功能。
+  当前 `MAX_TOKENS` 输出会保留已生成内容并标记为不完整，符合 `EDG-304`。
 - **assistant 的 `tool_calls` 不进会话历史**。`SessionMessage` 没有这个字段，因此工具往返
   仍完整写进会话文件（`/session` 与诊断要看得到），但 `context_builder.replay_messages()`
   重放时**跳过 `role=TOOL` 的记录**：一条没有对应调用声明的 tool 消息会让下一次请求在

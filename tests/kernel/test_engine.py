@@ -838,6 +838,32 @@ async def test_provider_error_chunk_fails_the_turn_but_keeps_deltas() -> None:
     assert terminal.error.code is ErrorCode.EXTERNAL_MODEL_PROVIDER
 
 
+async def test_max_tokens_turn_is_marked_truncated() -> None:
+    """engine 在 `MAX_TOKENS` 时把 `TurnCompleted.truncated` 置为 `True`（`EDG-304`）。"""
+    from nucleamind.contracts import ModelResponse
+
+    response = ModelResponse(
+        model_id="fake-model", stop_reason=StopReason.MAX_TOKENS, content="被截断的答案"
+    )
+    model = ScriptedProvider([response])
+    events = await collect(run_turn(make_request(), build_deps(model), CancelToken()))
+
+    terminal = events[-1]
+    assert isinstance(terminal, TurnCompleted)
+    assert terminal.truncated is True
+    assert terminal.response.content == "被截断的答案"
+
+
+async def test_end_turn_is_not_marked_truncated() -> None:
+    """`END_TURN` 是正常结束，`truncated` 必须为 `False`。"""
+    model = ScriptedProvider([text_response("完整答案")])
+    events = await collect(run_turn(make_request(), build_deps(model), CancelToken()))
+
+    terminal = events[-1]
+    assert isinstance(terminal, TurnCompleted)
+    assert terminal.truncated is False
+
+
 # ======================================================================================
 # I. 结构守卫（不变量 1：只通过 deps 与外界交互）
 # ======================================================================================

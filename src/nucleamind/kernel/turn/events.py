@@ -139,11 +139,16 @@ class ToolCallCompleted:
 
 @dataclass(frozen=True, slots=True)
 class TurnCompleted:
-    """终态：模型给出了不带工具调用的回答（`TurnStatus.COMPLETED`）。"""
+    """终态：模型给出了不带工具调用的回答（`TurnStatus.COMPLETED`）。
+
+    `truncated=True` 表示模型因 `MAX_TOKENS` 停止、答案被截断（`EDG-304`）。
+    此时出站消息的 `stream_state` 会被 orchestrator 改为 `CANCELLED` 以触发标记。
+    """
 
     response: ModelResponse
     iterations: int
     tool_calls: int
+    truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

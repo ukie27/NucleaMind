@@ -25,8 +25,8 @@ turn 总超时的看门狗、模型请求的重发与长度截断续写——前
 ——`HookOutcome` 没有 `response` 槽（`after_model_response` 是观察者），因此**长度截断后的
 续写**只有一个正规做法：用同一个 `ledger` 再调一次 `run_turn`，把上一轮的 assistant 消息
 放进 `messages`。`ledger` 因此是可注入的：多次调用共享一本账，`iterations` 才不会分裂成
-几本。**那件事至今没做**——`StopReason.MAX_TOKENS` 且无工具调用时这里照旧
-`TurnCompleted`，一个被截断的答案以 `COMPLETED` 报出去、不带 `EDG-304` 要求的标记。
+几本。**自动续写仍未实现**——`StopReason.MAX_TOKENS` 且无工具调用时这里会产生带
+`truncated=True` 的 `TurnCompleted`；编排层保留已生成内容，并让出站消息标为不完整。
 
 「模型根本没给出响应」是另一件事：重发同一个请求不改写任何响应，因此它落在包住
 `ModelProvider` 的 `retry.py` 里，engine 一个字都不用改。**不能反过来在 orchestrator 重跑
@@ -50,6 +50,7 @@ from nucleamind.contracts import (
     ModelMessage,
     ModelRequest,
     NucleaError,
+    StopReason,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -183,7 +184,10 @@ async def _iterate(
 
         if not response.tool_calls:
             yield ModelResponseCompleted(iteration, response)
-            yield TurnCompleted(response, ledger.iterations, ledger.tool_calls)
+            # `MAX_TOKENS` 停止意味着答案被截断（`EDG-304`）；`truncated=True` 让
+            # orchestrator 把出站消息的 stream_state 改成 `CANCELLED`，触发标记。
+            truncated = response.stop_reason is StopReason.MAX_TOKENS
+            yield TurnCompleted(response, ledger.iterations, ledger.tool_calls, truncated=truncated)
             return
 
         assistant = assistant_message(response)
