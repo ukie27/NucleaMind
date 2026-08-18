@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from nucleamind.contracts import JsonValue
 from nucleamind.contracts.errors import ErrorCode, NucleaError
 from nucleamind.kernel.config import (
     CLI_ORIGIN,
@@ -40,6 +41,7 @@ from nucleamind.kernel.config import (
     read_config_file,
     validate_config,
 )
+from nucleamind.kernel.config.fields import FieldKind, FieldSpec
 from nucleamind.kernel.config.sources import MAX_CONFIG_BYTES
 
 
@@ -239,6 +241,23 @@ class TestPriority:
         assert result.origin_of("turn", "max_iterations") == FILE_ORIGIN
 
 
+def _other_value(spec: FieldSpec) -> JsonValue:
+    """给一个字段挑一个**合法但不等于默认值**的取值。
+
+    只认识 `FieldKind` 的六个形状，不认识任何字段名——加一种形状才改这里，加一个字段
+    不用改（与 `kernel/config/fields.py` 的分界线相同）。
+    """
+    if spec.kind is FieldKind.BOOL:
+        return not spec.default
+    if spec.kind in (FieldKind.POSITIVE_INT, FieldKind.OPTIONAL_POSITIVE_INT):
+        return int(spec.default) + 1 if isinstance(spec.default, int) else 7
+    if spec.kind is FieldKind.STR_LIST:
+        return ["probe"]
+    if spec.choices:
+        return next(item for item in spec.choices if item != spec.default)
+    return "probe"
+
+
 class TestSchema:
     def test_defaults_form_a_valid_config(self) -> None:
         config = validate_config({})
@@ -423,6 +442,56 @@ class TestSchema:
         assert config.memory.fragment_priority == memory.DEFAULT_MEMORY_FRAGMENT_PRIORITY
         assert config.memory.on_failure == memory.DEFAULT_MEMORY_ON_FAILURE
         assert MEMORY_ON_FAILURE_CHOICES == memory.MEMORY_ON_FAILURE_CHOICES
+
+    def test_retry_defaults_match_the_turn_package(self) -> None:
+        """模型请求重试的四项默认值同样在两处各写一份（`D48`）。
+
+        `to_policy()` 与 `to_limits()` 一样用函数内 import，理由相同：`schema.py` 不得
+        module-level import `kernel.turn`。
+        """
+        from nucleamind.kernel.turn import retry
+
+        config = validate_config({})
+        assert config.retry.max_attempts == retry.DEFAULT_RETRY_MAX_ATTEMPTS
+        assert config.retry.base_delay_ms == retry.DEFAULT_RETRY_BASE_DELAY_MS
+        assert config.retry.max_delay_ms == retry.DEFAULT_RETRY_MAX_DELAY_MS
+        assert config.retry.retry_empty_response == retry.DEFAULT_RETRY_EMPTY_RESPONSE
+
+    def test_the_retry_section_converts_to_a_policy(self) -> None:
+        """四个字段一个不漏地过去——漏一个的后果是那一项静默用回默认值。"""
+        config = validate_config({"retry": {"max_attempts": 5, "retry_empty_response": False}})
+        policy = config.retry.to_policy()
+        assert policy.max_attempts == 5
+        assert policy.retry_empty_response is False
+        assert policy.base_delay_ms == config.retry.base_delay_ms
+        assert policy.max_delay_ms == config.retry.max_delay_ms
+
+    def test_every_declared_field_actually_reaches_the_config_object(self) -> None:
+        """**每个字段都要真的被 `validate_config` 接进对应的小节 dataclass。**
+
+        这条守卫是 `D48` 加的，它拦的是一个刚发生过的坑：`SECTION_SPECS` 里加了
+        `retry` 小节、`sections.py` 里加了 `RetrySection`、
+        `test_every_section_spec_has_a_dataclass_field` 照样绿——因为
+        `validate_config()` 的返回值是**逐小节显式构造**的，漏掉一节的后果是用户写进
+        `config.json` 的值被静默忽略、全程用默认值，而没有任何东西会响。
+
+        做法是给每个字段挑一个与默认值不同的合法值，喂进去，再读回来。
+        `plugins` 小节跳过：它的键空间对插件 id 开放，形状校验在 `plugin_blocks.py`。
+        """
+        for section, specs in SECTION_SPECS.items():
+            if section == "plugins":
+                continue
+            for name, spec in specs.items():
+                probe = _other_value(spec)
+                loaded = validate_config({section: {name: probe}})
+                actual = getattr(getattr(loaded, section), name)
+                assert actual == probe, f"{section}.{name} 没有被 validate_config 接上"
+
+    def test_the_reach_guard_would_notice_a_dropped_field(self) -> None:
+        """自证：`_other_value` 真的给出了与默认值不同的值，否则上一条恒真。"""
+        for specs in SECTION_SPECS.values():
+            for name, spec in specs.items():
+                assert _other_value(spec) != spec.default, name
 
     def test_memory_recall_is_off_unless_a_provider_is_named(self) -> None:
         """默认不启用 kernel 侧召回。

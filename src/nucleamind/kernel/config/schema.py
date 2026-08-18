@@ -48,6 +48,10 @@ from .defaults import (
     DEFAULT_OBSERVER_TIMEOUT_MS,
     DEFAULT_PLUGIN_STOP_TIMEOUT_MS,
     DEFAULT_QUEUE_MAX_SIZE,
+    DEFAULT_RETRY_BASE_DELAY_MS,
+    DEFAULT_RETRY_EMPTY_RESPONSE,
+    DEFAULT_RETRY_MAX_ATTEMPTS,
+    DEFAULT_RETRY_MAX_DELAY_MS,
     DEFAULT_SESSION_CONCURRENCY,
     DEFAULT_TOOL_RESULT_MAX_BYTES,
     DEFAULT_TOOL_TIMEOUT_MS,
@@ -89,6 +93,7 @@ __all__ = [
     "OnDisable",
     "PluginEntry",
     "PluginsSection",
+    "RetrySection",
     "RoutingSection",
     "TurnSection",
     "WorkspaceSection",
@@ -170,6 +175,12 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
         "provider": FieldSpec(FieldKind.OPTIONAL_STR, None),
         "name": FieldSpec(FieldKind.OPTIONAL_STR, None),
     },
+    "retry": {
+        "max_attempts": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_RETRY_MAX_ATTEMPTS),
+        "base_delay_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_RETRY_BASE_DELAY_MS),
+        "max_delay_ms": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_RETRY_MAX_DELAY_MS),
+        "retry_empty_response": FieldSpec(FieldKind.BOOL, DEFAULT_RETRY_EMPTY_RESPONSE),
+    },
     "logging": {
         "level": FieldSpec(FieldKind.STR, "info"),
         "file_enabled": FieldSpec(FieldKind.BOOL, True),
@@ -188,6 +199,7 @@ from .sections import (  # noqa: E402 - 见上面那段注释，位置刻意在�
     ModelSection,
     NucleaConfig,
     PluginsSection,
+    RetrySection,
     RoutingSection,
     TurnSection,
     WorkspaceSection,
@@ -306,6 +318,7 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
     plugins = sections["plugins"]
     memory = sections["memory"]
     model = sections["model"]
+    retry = sections["retry"]
     logging_values = sections["logging"]
     return NucleaConfig(
         turn=TurnSection(
@@ -370,6 +383,14 @@ def validate_config(data: Mapping[str, JsonValue]) -> NucleaConfig:
         model=ModelSection(
             provider=opt_str_at(model, "provider"),
             name=opt_str_at(model, "name"),
+        ),
+        retry=RetrySection(
+            max_attempts=int_at(retry, "max_attempts", DEFAULT_RETRY_MAX_ATTEMPTS),
+            base_delay_ms=int_at(retry, "base_delay_ms", DEFAULT_RETRY_BASE_DELAY_MS),
+            max_delay_ms=int_at(retry, "max_delay_ms", DEFAULT_RETRY_MAX_DELAY_MS),
+            retry_empty_response=bool_at(
+                retry, "retry_empty_response", DEFAULT_RETRY_EMPTY_RESPONSE
+            ),
         ),
         logging=LoggingSection(
             level=str_at(logging_values, "level", "info"),

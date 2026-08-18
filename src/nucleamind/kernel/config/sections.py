@@ -1,7 +1,8 @@
-"""配置的类型化视图：九个小节 dataclass 与 `NucleaConfig`（技术方案 §6.7）。
+"""配置的类型化视图：十个小节 dataclass 与 `NucleaConfig`（技术方案 §6.7）。
 
 职责：把 `schema.SECTION_SPECS` 那张字段表表达成不可变、带默认值、可静态检查的类型，
-并提供 `TurnSection.to_limits()` / `MemorySection.critical` 这类「配置 → 机制参数」的换算。
+并提供 `TurnSection.to_limits()` / `RetrySection.to_policy()` / `MemorySection.critical`
+这类「配置 → 机制参数」的换算。
 不负责：定义有哪些字段（`schema.SECTION_SPECS` 是唯一依据）、校验（`schema.validate_config`）、
 默认值常量（`defaults.py`）、渲染成 JSON（`document.py`）。
 
@@ -13,9 +14,9 @@
 那个文件撞上了 `kernel/` 的 500 行上限。`schema.py` 原样再导出全部名字，因此既有 import
 一个都没变。
 
-**不要在这里 module-level import `kernel.turn`**：`to_limits()` 用函数内 import，理由见
-`defaults.py`——那会把 engine/scheduling/folding 与 asyncio 拖上配置路径（`NFR-405` 的
-冷启动预算 300 ms）。
+**不要在这里 module-level import `kernel.turn`**：`to_limits()` / `to_policy()` 用函数内
+import，理由见 `defaults.py`——那会把 engine/scheduling/folding 与 asyncio 拖上配置路径
+（`NFR-405` 的冷启动预算 300 ms）。
 """
 
 from __future__ import annotations
@@ -41,6 +42,10 @@ from .defaults import (
     DEFAULT_OBSERVER_TIMEOUT_MS,
     DEFAULT_PLUGIN_STOP_TIMEOUT_MS,
     DEFAULT_QUEUE_MAX_SIZE,
+    DEFAULT_RETRY_BASE_DELAY_MS,
+    DEFAULT_RETRY_EMPTY_RESPONSE,
+    DEFAULT_RETRY_MAX_ATTEMPTS,
+    DEFAULT_RETRY_MAX_DELAY_MS,
     DEFAULT_SESSION_CONCURRENCY,
     DEFAULT_TOOL_RESULT_MAX_BYTES,
     DEFAULT_TOOL_TIMEOUT_MS,
@@ -51,6 +56,7 @@ from .plugin_blocks import PluginEntry
 if TYPE_CHECKING:
     from ...contracts import JsonValue
     from ..turn.limits import TurnLimits
+    from ..turn.retry import RetryPolicy
 
 __all__ = [
     "ContextSection",
@@ -60,6 +66,7 @@ __all__ = [
     "ModelSection",
     "NucleaConfig",
     "PluginsSection",
+    "RetrySection",
     "RoutingSection",
     "TurnSection",
     "WorkspaceSection",
@@ -221,6 +228,42 @@ class ModelSection:
 
 
 @dataclass(frozen=True, slots=True)
+class RetrySection:
+    """模型请求的重试策略（`D48`，需求 `MOD-003`）。
+
+    **它不是 turn 的第七项预算**：那六项说的是「一次 turn 能用掉多少」，重试说的是
+    「一次失败之后怎么办」。`TurnLimits` 的 docstring 明写着不要往里加第七项。
+
+    判定依据只有一个 `NucleaError.retryable`——Provider 已经如实标过了
+    （`model_openai/faults.py` 连 429 里的「限速」与「欠费」都分开标），kernel 不再按
+    状态码猜第二遍。取消类错误**一律不重试**，那条在 `kernel/turn/retry.py` 里。
+    """
+
+    #: **总尝试次数含第一次**，因此 `1` 就是「不重试」。刻意没有第二个 `enabled` 开关：
+    #: 两个旋钮表达同一件事只会让它们有机会互相矛盾。
+    max_attempts: int = DEFAULT_RETRY_MAX_ATTEMPTS
+    #: 指数退避的基数：第 n 次重试等 `base * 2**(n-1)`，再乘一个 [0.5, 1.0] 的抖动系数。
+    #: 供应商发了 `Retry-After` 时**用它的值且不加抖动**——抖动只会把它往小了调，
+    #: 而那意味着再吃一次 429。
+    base_delay_ms: int = DEFAULT_RETRY_BASE_DELAY_MS
+    max_delay_ms: int = DEFAULT_RETRY_MAX_DELAY_MS
+    #: 空回复（既无正文也无工具调用）算不算故障。`False` = 原样放行，也就是 `D48` 之前的
+    #: 行为：终帧空正文被 `emit_outbound` 丢掉，用户什么都收不到而 turn 记 `COMPLETED`。
+    retry_empty_response: bool = DEFAULT_RETRY_EMPTY_RESPONSE
+
+    def to_policy(self) -> RetryPolicy:
+        """转成 `RetryPolicy`。**函数内 import**，理由同 `to_limits()`。"""
+        from ..turn.retry import RetryPolicy as _RetryPolicy
+
+        return _RetryPolicy(
+            max_attempts=self.max_attempts,
+            base_delay_ms=self.base_delay_ms,
+            max_delay_ms=self.max_delay_ms,
+            retry_empty_response=self.retry_empty_response,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class LoggingSection:
     """事件 sink 的开关。sink 实现在 `D12`。"""
 
@@ -241,6 +284,7 @@ class NucleaConfig:
     workspace: WorkspaceSection = field(default_factory=WorkspaceSection)
     plugins: PluginsSection = field(default_factory=PluginsSection)
     model: ModelSection = field(default_factory=ModelSection)
+    retry: RetrySection = field(default_factory=RetrySection)
     logging: LoggingSection = field(default_factory=LoggingSection)
 
     def to_json(self) -> dict[str, JsonValue]:

@@ -113,8 +113,27 @@ from .memory import (
     MemoryRecall,
     select_memory,
 )
-from .orchestration import EventTap, OrchestratorDeps, TurnReceipt, emit_outbound
+from .orchestration import (
+    EventTap,
+    OrchestratorDeps,
+    TurnReceipt,
+    emit_outbound,
+    engine_deps,
+)
 from .orchestrator import TurnOrchestrator
+from .retry import (
+    DEFAULT_RETRY_BASE_DELAY_MS,
+    DEFAULT_RETRY_EMPTY_RESPONSE,
+    DEFAULT_RETRY_MAX_ATTEMPTS,
+    DEFAULT_RETRY_MAX_DELAY_MS,
+    MAX_HELD_CHUNKS,
+    RETRY_POLL_MS,
+    RetryingModel,
+    RetryPolicy,
+    is_empty_answer,
+    retry_delay_ms,
+    wait_before_retry,
+)
 from .scheduling import execute_batch, partition_tool_batches
 from .transcript import Transcript, TurnState
 from .translation import (
@@ -147,6 +166,10 @@ __all__ = [
     "DEFAULT_MEMORY_RECALL_LIMIT",
     "DEFAULT_MEMORY_RECALL_TIMEOUT_MS",
     "DEFAULT_OBSERVER_TIMEOUT_MS",
+    "DEFAULT_RETRY_BASE_DELAY_MS",
+    "DEFAULT_RETRY_EMPTY_RESPONSE",
+    "DEFAULT_RETRY_MAX_ATTEMPTS",
+    "DEFAULT_RETRY_MAX_DELAY_MS",
     "DEFAULT_TOOL_CANCEL_GRACE_MS",
     "DEFAULT_TOOL_RESULT_MAX_BYTES",
     "DEFAULT_TOOL_TIMEOUT_MS",
@@ -166,6 +189,7 @@ __all__ = [
     "LIMIT_OUTCOMES",
     "LimitBreach",
     "LimitKind",
+    "MAX_HELD_CHUNKS",
     "MEMORY_ON_FAILURE_CHOICES",
     "MEMORY_RECALL_SCOPE",
     "MemoryRecall",
@@ -174,9 +198,12 @@ __all__ = [
     "ModelTextDelta",
     "OrchestratorDeps",
     "OrphanTask",
+    "RETRY_POLL_MS",
     "RegisteredContextProvider",
     "RegisteredHook",
     "RegisteredTool",
+    "RetryPolicy",
+    "RetryingModel",
     "StreamFolder",
     "TERMINAL_EVENTS",
     "TERMINAL_EVENT_NAMES",
@@ -205,15 +232,18 @@ __all__ = [
     "blocked_result",
     "context_providers_from",
     "emit_outbound",
+    "engine_deps",
     "escaped_result",
     "estimate_tokens",
     "execute_batch",
     "fold_tool_result",
+    "is_empty_answer",
     "outcome_for_error",
     "outcome_from",
     "outcome_without_engine",
     "partition_tool_batches",
     "replay_messages",
+    "retry_delay_ms",
     "run_turn",
     "select_memory",
     "skipped_result",
@@ -221,4 +251,5 @@ __all__ = [
     "tool_event_name",
     "tools_from",
     "unknown_tool_result",
+    "wait_before_retry",
 ]

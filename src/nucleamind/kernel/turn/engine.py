@@ -3,7 +3,8 @@
 职责：执行模型与工具的迭代循环，在 4 个命名检查点上响应取消，在每轮迭代前与每批工具发起前
 判预算，分发 4 个 turn 内 Hook，并把全过程表达为一条**以恰好一个终态事件结尾**的事件流。
 不负责：session 加载与写入、context 组装、命令分流、事件发布、`OutboundMessage` 生成、
-turn 总超时的看门狗、长度截断续写与空回复重试——全部在 `D14` 的 `orchestrator.py`；
+turn 总超时的看门狗、模型请求的重发与长度截断续写——前者在 `retry.py`（包在
+`EngineDeps.model` 外面，engine 因此不知道重试存在），其余在 `D14` 的 `orchestrator.py`；
 本模块只通过 `EngineDeps` 与外界交互，不做任何文件、网络或数据库操作。
 
 **三条不变量**（技术方案 §6.2，全部有测试守护）：
@@ -20,10 +21,16 @@ turn 总超时的看门狗、长度截断续写与空回复重试——全部在
 不是 turn 被取消。本项目的 turn 取消走 `CancelToken` 正是为了让这两件事可区分（§6.4）；
 把它们也吞掉，等于把「进程正在退出」伪装成「这轮对话结束了」。
 
-**续写与重试不在这里**：`HookOutcome` 没有 `response` 槽（`after_model_response` 是观察者），
-响应改写这条路在契约层就是封死的。`D14` 要实现「长度截断后续写」只有一个正规做法——
-**用同一个 `ledger` 再调一次 `run_turn`**，把上一轮的 assistant 消息放进 `messages`。
-`ledger` 因此是可注入的：多次调用共享一本账，`iterations` 才不会分裂成几本。
+**续写与重试的分界线**（`D48` 划的）：「模型给了一个我们不满意的响应」这条路在契约层封死
+——`HookOutcome` 没有 `response` 槽（`after_model_response` 是观察者），因此**长度截断后的
+续写**只有一个正规做法：用同一个 `ledger` 再调一次 `run_turn`，把上一轮的 assistant 消息
+放进 `messages`。`ledger` 因此是可注入的：多次调用共享一本账，`iterations` 才不会分裂成
+几本。**那件事至今没做**——`StopReason.MAX_TOKENS` 且无工具调用时这里照旧
+`TurnCompleted`，一个被截断的答案以 `COMPLETED` 报出去、不带 `EDG-304` 要求的标记。
+
+「模型根本没给出响应」是另一件事：重发同一个请求不改写任何响应，因此它落在包住
+`ModelProvider` 的 `retry.py` 里，engine 一个字都不用改。**不能反过来在 orchestrator 重跑
+`run_turn` 来实现它**——那会把已经执行过的工具再做一遍。
 """
 
 from __future__ import annotations

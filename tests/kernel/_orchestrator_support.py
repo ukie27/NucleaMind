@@ -50,6 +50,7 @@ from nucleamind.kernel.routing import (
 from nucleamind.kernel.turn import (
     ContextProviderBinding,
     OrchestratorDeps,
+    RetryPolicy,
     TurnLimits,
     TurnOrchestrator,
     TurnReceipt,
@@ -320,6 +321,7 @@ def build(
     commands: dict[str, RegisteredCommand] | None = None,
     context_providers: Sequence[ContextProviderBinding] = (),
     limits: TurnLimits | None = None,
+    retry: RetryPolicy | None = None,
     stream: bool = False,
     clock: Callable[[], datetime] | None = None,
 ) -> Harness:
@@ -345,6 +347,9 @@ def build(
         scheduler=SessionScheduler[TurnReceipt](),
         dedup=DedupCache(),
         limits=limits or TurnLimits(),
+        # 默认「只试一次」：绝大多数用例的脚本恰好写了几条响应，让重试去多要一条会把
+        # 它们变成 `模型脚本已耗尽`。要验重试的用例自己传一个策略（`D48`）。
+        retry=retry or RetryPolicy(max_attempts=1),
         model_id="fake-model",
         tool_specs=tuple(tool_specs),  # type: ignore[arg-type]
         context_providers=tuple(context_providers),

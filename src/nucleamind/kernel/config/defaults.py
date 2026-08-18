@@ -1,12 +1,12 @@
 """配置默认值里那些**镜像自别处**的字面量（技术方案 §6.7）。
 
-职责：把 turn 六项预算、routing 七项、hooks/context 三项超时与插件停止预算的默认值集中
-成一处常量，供 `schema.SECTION_SPECS` 引用。
+职责：把 turn 六项预算、routing 七项、hooks/context 三项超时、插件停止预算与模型请求
+重试四项的默认值集中成一处常量，供 `schema.SECTION_SPECS` 引用。
 不负责：定义有哪些字段（`schema.py` 的那张表）、校验（`fields.py`）、读取任何来源
 （`sources.py`）；本模块只有字面量，没有逻辑。
 
 **这些常量是各自真实归属地的副本，不是第二个真相来源**：真正的定义在
-`kernel/turn/limits.py`、`kernel/routing/`、`kernel/turn/{hooks,context_builder}.py` 与
+`kernel/turn/limits.py`、`kernel/routing/`、`kernel/turn/{hooks,context_builder,retry}.py` 与
 `kernel/plugins/lifecycle.py`，每一组都有一条逐项对照的测试盯着。
 
 **为什么不 import 那些模块**：`kernel.turn` / `kernel.routing` / `kernel.plugins` 的
@@ -39,6 +39,10 @@ __all__ = [
     "DEFAULT_OBSERVER_TIMEOUT_MS",
     "DEFAULT_PLUGIN_STOP_TIMEOUT_MS",
     "DEFAULT_QUEUE_MAX_SIZE",
+    "DEFAULT_RETRY_BASE_DELAY_MS",
+    "DEFAULT_RETRY_EMPTY_RESPONSE",
+    "DEFAULT_RETRY_MAX_ATTEMPTS",
+    "DEFAULT_RETRY_MAX_DELAY_MS",
     "DEFAULT_SESSION_CONCURRENCY",
     "DEFAULT_TOOL_RESULT_MAX_BYTES",
     "DEFAULT_TOOL_TIMEOUT_MS",
@@ -96,3 +100,13 @@ DEFAULT_MEMORY_ON_FAILURE: Final = "degrade"
 #: `memory.on_failure` 的合法取值，与 `kernel/turn/memory.py::MEMORY_ON_FAILURE_CHOICES`
 #: 同源同序。
 MEMORY_ON_FAILURE_CHOICES: Final = ("degrade", "fail")
+
+#: 模型请求重试四项（`D48`、`MOD-003`）。**与 `kernel/turn/retry.py` 的同名 `DEFAULT_*`
+#: 必须逐一相等**，由 `test_retry_defaults_match_the_turn_package` 盯着。
+#:
+#: `DEFAULT_RETRY_MAX_ATTEMPTS` 是**总尝试次数含第一次**，因此 `1` 就是「不重试」——
+#: 没有第二个 `enabled` 开关，两个旋钮表达同一件事只会让它们有机会互相矛盾。
+DEFAULT_RETRY_MAX_ATTEMPTS: Final = 3
+DEFAULT_RETRY_BASE_DELAY_MS: Final = 500
+DEFAULT_RETRY_MAX_DELAY_MS: Final = 8_000
+DEFAULT_RETRY_EMPTY_RESPONSE: Final = True

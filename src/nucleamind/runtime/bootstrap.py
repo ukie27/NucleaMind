@@ -693,6 +693,7 @@ def _assemble(
         context_provider_timeout_ms=config.context.provider_timeout_ms,
         deliver=deliver,
         memory=select_recall(registry, config),
+        retry=config.retry.to_policy(),
     )
     orchestrator = TurnOrchestrator(deps)
     diagnostics = Diagnostics(

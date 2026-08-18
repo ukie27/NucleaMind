@@ -50,7 +50,6 @@ from nucleamind.kernel.routing import SubmitStatus
 
 from .cancel import CancelToken, Checkpoint
 from .context_builder import assemble
-from .deps import EngineDeps
 from .engine import run_turn
 from .events import (
     ModelReasoningDelta,
@@ -63,7 +62,7 @@ from .events import (
     TurnStoppedByLimit,
 )
 from .limits import BudgetLedger
-from .orchestration import EventTap, OrchestratorDeps, TurnReceipt, emit_outbound
+from .orchestration import OrchestratorDeps, TurnReceipt, emit_outbound, engine_deps
 from .transcript import Transcript, TurnState
 from .translation import (
     TERMINAL_EVENT_NAMES,
@@ -307,12 +306,7 @@ class TurnOrchestrator:
         """驱动 engine 并翻译事件流，返回终态事件。"""
         deps = self._deps
         state.ledger = BudgetLedger(deps.limits)
-        engine = EngineDeps(
-            model=deps.model,
-            tools=deps.tools,
-            hooks=EventTap(deps.hooks, deps.bus),
-            limits=deps.limits,
-        )
+        engine = engine_deps(deps, state.ledger)
         watchdog = asyncio.ensure_future(self._watchdog(token, deps.limits.turn_timeout_ms))
         terminal: TurnEvent | None = None
         try:
@@ -404,6 +398,9 @@ class TurnOrchestrator:
         engine 撞上限即停、不替模型收尾（§6.2.1），但让用户面对一张空卡片同样不可接受
         （基线 `test_budget_exhaustion_is_pushed_through_the_stream`）。收尾失败就算了：
         终态已经是 `STOPPED_BY_LIMIT`，再失败一次不改变结论，只多一条诊断。
+
+        **它走的是没包重试的 `deps.model`**（`D48`）：终态已经定了，为一条注定不改变结论
+        的请求重试只会把一个已经确定的 turn 再拖几秒。
         """
         try:
             response = await self._deps.model.complete(

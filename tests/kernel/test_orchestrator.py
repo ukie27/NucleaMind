@@ -43,7 +43,7 @@ from nucleamind.contracts import (
 )
 from nucleamind.contracts.message import MAX_ATTACHMENTS
 from nucleamind.kernel.routing import ConcurrencyPolicy, SessionScheduler
-from nucleamind.kernel.turn import TurnLimits, TurnReceipt
+from nucleamind.kernel.turn import RetryPolicy, TurnLimits, TurnReceipt
 from nucleamind.kernel.turn.transcript import Transcript, TurnState
 
 from ._engine_support import (
@@ -739,3 +739,91 @@ async def test_a_final_frame_with_only_attachments_is_still_sent() -> None:
 
     assert receipt.messages[-1].content == ""
     assert len(receipt.messages[-1].attachments) == 1
+
+
+# ------------------------------------------------------------------ K 重试（`D48`）
+
+RETRY_FAST = RetryPolicy(max_attempts=3, base_delay_ms=1, max_delay_ms=1)
+
+
+def _flaky() -> NucleaError:
+    """一条如实标了 `retryable=True` 的上游故障，形状同 `model_openai/faults.py`。"""
+    return NucleaError(ErrorCode.EXTERNAL_MODEL_PROVIDER, "模型供应商限流。", retryable=True)
+
+
+async def test_a_transient_model_failure_no_longer_kills_the_turn() -> None:
+    """`D48` 之前：一次 429 / 503 直接把整条 turn 打成 `FAILED`，用户要自己重发。
+
+    重试**不**重新分发 `before_model_request`，因此 `model.request_started` 的条数仍然
+    等于迭代数（engine 的那条不变量），重试只多出一条 `model.request_failed`。
+    """
+    harness = build(
+        ScriptedProvider([_flaky(), text_response("一共 12 个")]), retry=RETRY_FAST
+    )
+
+    receipt = await harness.send()
+
+    assert names(harness) == [
+        "turn.started",
+        "session.started",
+        "model.request_started",
+        "model.request_failed",
+        "model.response_received",
+        "turn.completed",
+    ]
+    assert receipt.content == "一共 12 个"
+
+
+async def test_a_retry_does_not_re_execute_tools_that_already_ran() -> None:
+    """**这条是「包一层 ModelProvider」而不是「重跑 run_turn」的理由。**
+
+    在 orchestrator 重调一次 `run_turn` 会从第一轮重来，那个 `fs.read` 会被执行两次——
+    一条 `rm` 或一次转账不会因为模型那边抖了一下就该做两遍。
+    """
+    invoker = RecordingToolInvoker()
+    harness = build(
+        ScriptedProvider(
+            [tool_response(tool_call("fs.read")), _flaky(), text_response("好了")]
+        ),
+        tool_specs=[tool_spec("fs.read")],
+        tools=invoker,
+        retry=RETRY_FAST,
+    )
+
+    receipt = await harness.send()
+
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.COMPLETED
+    assert [name for name, _ in invoker.invocations_by_name] == ["fs.read"]
+    assert receipt.outcome.tool_calls == 1
+
+
+async def test_a_persistent_failure_still_fails_the_turn_with_the_real_reason() -> None:
+    """重试不是掩盖：三次都不行时，用户看到的仍是供应商那句话。"""
+    harness = build(
+        ScriptedProvider([_flaky(), _flaky(), _flaky()]), retry=RETRY_FAST
+    )
+
+    receipt = await harness.send()
+
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.FAILED
+    assert receipt.content == "模型供应商限流。"
+    assert [event.name.value for event in harness.events.events].count(
+        "model.request_failed"
+    ) == 3
+
+
+async def test_a_silent_model_becomes_a_failure_with_a_sentence() -> None:
+    """`D48` 之前：终帧空正文被 `emit_outbound` 丢掉，用户**一条消息都收不到**。"""
+    harness = build(
+        ScriptedProvider([text_response(""), text_response(""), text_response("")]),
+        retry=RETRY_FAST,
+    )
+
+    receipt = await harness.send()
+
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.FAILED
+    assert receipt.content == "模型连续 3 次返回空回答。"
+    assert receipt.messages[-1].content == "模型连续 3 次返回空回答。"

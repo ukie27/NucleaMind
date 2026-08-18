@@ -97,6 +97,10 @@ NucleaMind 是基于 [HKUDS/nanobot](https://github.com/HKUDS/nanobot)（MIT 协
   **`D47` 打通了出站附件通路**（`ToolResult.attachments` → `TurnState.collect_attachments`
   → 终帧 `OutboundMessage.attachments` → 内建 CLI 印路径 / `discord` 真上传，
   `image` 的落点从 state_dir 改到 workspace，**`SDK 1.2.0`**）；
+  **`D48` 让模型请求重试第一次真的通电**（`kernel/turn/retry.py` 的 `RetryingModel` 包住
+  `EngineDeps.model`、`retry` 配置小节、`orchestration.engine_deps()`）——在此之前
+  `retryable` 在 `src/` 里**被设置 8 次、消费 0 次**，`EventName.MODEL_REQUEST_FAILED`
+  躺在冻结清单里零发布者，一次瞬时 429 / 503 直接把整条 turn 打成 `FAILED`；
   `runtime/` 有 `wiring.py`、`introspection.py`、`plugin_context.py`、`bootstrap.py`、
   `first_run.py`、`inventory.py`、`plugin_plan.py`、`plugin_disable.py`、`instance.py`、
   `inspect.py`、`config_edit.py`、`selection.py`、`access/` 与 `cli/`，
@@ -186,6 +190,17 @@ deploy/                    # Dockerfile / compose / entrypoint
 不存在内建专用注册 API。`kernel/` 不 import `sdk/`，因此 manifest 的 `overrides` 以**原始串**
 跨层传递，两侧共用 `contracts.parse_capability_target()` 解码。
 
+**`D48` 起 `EngineDeps.model` 上包着一层 `RetryingModel`**（`kernel/turn/retry.py`），
+engine 对此一无所知。四条：**在 orchestrator 重跑 `run_turn` 是错的**（它拿不到 engine
+累积的 `messages`，重来会把已经执行过的工具再做一遍）；形状先例是 `orchestration.EventTap`
+——`EngineDeps` 只有四个槽还能长出新行为的方式是**把东西包进去**，装配点统一在
+`orchestration.engine_deps(deps, ledger)`；**只在首个实质分片放行之前才可以重来**
+（放行过的分片已经是用户看得见的输出，重发会让答案出现两次，因此 `folding.finish()`
+那两处 `retryable=True` 仍然会打掉整个 turn）；**判据是 `ErrorCategory` 不是 `retryable`**
+（`cancel.py` 的取消错误自称可重试）。「重试」与「续写」的分界线是**有没有拿到响应**：
+`_MAX_LENGTH_RECOVERIES`（`MAX_TOKENS` 续写）**仍然没做**，而它现在的表现是一个被截断的
+答案以 `COMPLETED` 报出去、不带 `EDG-304` 要求的标记。
+
 `kernel/turn/` 是 turn 执行的全部机制。取消一律用 `CancelToken` 而不是
 `asyncio.CancelledError`（后者无法保证「保存已产生内容再退出」），检查点一律用
 `token.checkpoint(Checkpoint.X)`——`CHECKPOINT_OWNERS` 已经定死 engine 拿 2/3/5/6、
@@ -240,6 +255,10 @@ import 白名单与 ≤400 行各有测试盯着；engine 只分发 4 个 Hook
   **`docs/configuration.md` 的字段表是第六处**（`D46`）：它由
   `tests/e2e/test_user_docs.py` 与 `SECTION_SPECS` 逐项比对（名字 + 默认值，不比对说明
   文字——那会让每次改文案都失败一次），加字段漏改它会红。
+  **第七处是 `validate_config()` 本身**（`D48` 当场踩到）：它是**逐小节显式构造**的，
+  声明了小节、写了 dataclass、原有守卫全绿，而用户写进 `config.json` 的值被静默忽略。
+  `test_every_declared_field_actually_reaches_the_config_object` 现在拦着它：给每个字段
+  挑一个非默认的合法值喂进去再读回来。
 - **`kernel/config/` 全包不写任何文件**（`EDG-501`）：`config.json` 只以 `"rb"` 打开且只在
   `sources.read_config_file` 一处。`D24` 的 `scaffold.py` / `json_schema.py` 也不例外——
   它们只**渲染**，落盘在 `runtime/first_run.py`（`O_CREAT|O_EXCL`，没有 `--force`，

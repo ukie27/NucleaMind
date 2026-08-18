@@ -3,8 +3,15 @@
 职责：把 `ModelChunk` 序列折叠成一个 `ModelResponse`（`StreamFolder`）；把 `ModelResponse` 与
 `ToolResult` 折叠成下一轮请求要用的 `ModelMessage`（空结果占位、按 `tool_result_max_bytes`
 截断）；为三条**未执行**路径（未知工具 / Hook 阻断 / 取消跳过）合成合法的 `ToolResult`。
-不负责：发起请求、产出事件、判断 turn 是否结束、决定重试与续写——`_MAX_LENGTH_RECOVERIES`
-与 `_MAX_EMPTY_RETRIES` 那类策略属于 `D14`；本模块是纯函数与纯状态机，不含 IO、不认识取消。
+不负责：发起请求、产出事件、判断 turn 是否结束、决定重试与续写——重发一个没拿到响应的
+请求在 `retry.py`（它包在 `EngineDeps.model` 外面，因此本模块看不见），长度截断后的续写
+**至今没做**（见 `engine.py` 模块 docstring 那一段）；本模块是纯函数与纯状态机，
+不含 IO、不认识取消。
+
+**本模块抛出的两处 `retryable=True` 有一个真正的消费者了**（`D48`）：它们发生在
+`finish()` 里，也就是**流已经被 engine 消费完之后**——`retry.py` 的闸门只在首个实质分片
+放行之前才敢重来，因此这两处仍然会打掉整个 turn。真正被重试接住的是「出任何输出之前就
+失败了」的那一类，判定在 `_StreamGate.failed_early()`。
 
 两处「为什么在这里」：
 

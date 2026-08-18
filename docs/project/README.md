@@ -56,7 +56,9 @@
 - 宿主的第三方依赖从 36 个降到 4 个（pydantic / httpx / jsonschema / packaging）。
   **能力所需的包由那个能力自己的发行包声明**，不回到宿主。
 - **M5 已全部交齐**，没有待迁移的模块。`D43`–`D45` 清掉的是「机制缺口」而不是新能力：
-  一条矛盾的契约约定、一条交了没通电的能力、一个缺失的契约槽位。Kernel 本身不再扩张。
+  一条矛盾的契约约定、一条交了没通电的能力、一个缺失的契约槽位。**`D48` 补的是第四种
+  缺口——一个交了信号却零消费者的机制**：`retryable` 与 `EventName.MODEL_REQUEST_FAILED`
+  至此才真的通电，一次瞬时 429 / 503 不再打掉整条 turn。Kernel 本身不再扩张。
 - `references/` 保存本地参考源码并被 Git 忽略；其受版本控制的导航文档位于
   [`../references/`](../references/README.md)。
 
@@ -2466,6 +2468,13 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
   （内建 CLI 印路径、`discord` 经 `ctx.fs.read_bytes()` 真上传）。`image` 的落点从
   `<state_dir>/images` 换到 `<workspace>/artifacts/images`——**那是它能被当成附件发出去的
   前提**，不是顺手整理目录。`orchestrator.py` 只加了一行（它当时 497/500）。
+- **`D48`**：模型请求重试。**它不在当时那份剩余清单上**——是回答「剩下三件有没有必要做」
+  时顺手核出来的：`retryable` 在 `src/` 里被**设置 8 次、消费 0 次**（唯一读取点是
+  `observability/redaction.py` 把它序列化进事件载荷），`folding.py` 的 docstring 引着两个
+  **在 `src/` 里根本不存在**的常量（`_MAX_LENGTH_RECOVERIES` / `_MAX_EMPTY_RETRIES`），
+  而 `EventName.MODEL_REQUEST_FAILED` 在冻结事件清单里躺着、零发布者。三处都是
+  `D14` 把这件事指派给自己之后没交。落点是 `kernel/turn/retry.py` 的 `RetryingModel`——
+  **包住 `ModelProvider`，engine 一个字不改**（详见下方事实清单）。
 
 因此下一轮的候选是下面清单里**剩下的那几件**，加上两条刻意推迟的机制（插件热更新、
 `state_version` 迁移）。**M6「生态兼容」（OpenClaw）没有立项**，它计划落在独立包
@@ -2519,7 +2528,7 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 - **错误消息定义成模块级 `Final` 常量**，动态部分一律进 `detail`：`ruff` 的 `TRY003` 会拦
   写在 `raise` 处的多词消息（`builtins/model_openai/settings.py::_BASE_URL_SCHEME` 的先例）。
 
-### 挂着的独立事项（`D47` 之后剩三件，全部需要先做一个决定）
+### 挂着的独立事项（`D48` 之后剩四件）
 
 `D42` 之后清单上的**前五条已经交掉**，逐条留下判据：
 
@@ -2569,6 +2578,69 @@ WebUI 不做。**没有待迁移的模块了**，`references/nanobot/` 从此只
 一条相关但更小的：**opaque 块跨 turn 拿不回来**（`D45` 如实记着）。它不进
 `SessionMessage`，因此 `anthropic` 的 thinking 回放只在同一条 turn 的工具循环内成立。
 要跨 turn 得先决定「一份加密的思考签名该不该成为用户资产」——`SES-006` 一旦发布就是契约。
+
+**`D48` 从这份清单外面又找出一条，并顺手留下第二条：**
+
+4. **长度截断后的续写仍然没做**（`_MAX_LENGTH_RECOVERIES` 那半条悬空引用）。
+   `StopReason.MAX_TOKENS` 且无工具调用时，`engine.py` 直接 `yield TurnCompleted(...)`
+   ——**一个被截断的答案以 `COMPLETED` 报出去，不带任何标记**，而
+   `TERMINAL_STREAM_STATES[COMPLETED]` 是 `FINAL`，Channel 侧的 `TERMINAL_MARKERS`
+   因此一个字都不加。这与 `EDG-304`（非完整回答必须带标记）直接冲突。
+   **它不是重试而是续写**：要把半截 assistant 消息放回 `messages` 再用同一个 `ledger`
+   调一次 `run_turn`，预算记账与终态语义都是另一套，因此 `D48` 刻意没做。
+   **但「不带标记」这半条是纯 bug，可以先单独修**——那只要让终态或 metadata 说出
+   「这个答案被截断了」。
+
+这份清单的教训值得单独记一句：**「剩余工作」清单只记得住被讨论过的东西。**
+`D48` 那三处（设置了没人消费的字段、引用了不存在的常量、声明了没人发布的事件名）
+一条都不在清单上，因为它们从来没有被当成「一件事」讨论过——只在某几行 docstring 里
+写着「这属于 `D14`」，而 `D14` 交付时漏掉了。**下次找剩余工作，除了读清单，
+还要 grep 一遍「只被写、没被读」的字段与「声明了却零发布者」的枚举取值。**
+
+### `D48` 留下的、后续必须用到的事实
+
+1. **重试的落点是「包住 `ModelProvider`」，不是改 engine，更不是重跑 `run_turn`。**
+   最后一条是硬的：orchestrator 手里只有 `state.transcript`，engine 累积的 `messages`
+   （含**已经执行过的工具结果**）它拿不到；重调一次 `run_turn` 会从第一轮重来，
+   **已经发生的副作用被再做一遍**。包装器只看得见一个 `ModelRequest`，结构上不可能。
+   形状先例是 `orchestration.EventTap`——`EngineDeps` 只有四个槽还能长出新行为的方式
+   是**把东西包进去**，而不是再开一个槽。装配点统一到了新的
+   `orchestration.engine_deps(deps, ledger)`，`orchestrator._drive` 因此反而短了 5 行。
+2. **「重试」与「续写」的分界线是「有没有拿到响应」。** engine/folding 那两句
+   「重试属于 `D14`」讲的是**响应改写**（`after_model_response` 是观察者、`HookOutcome`
+   没有 `response` 槽，拿一个 `MAX_TOKENS` 响应去延长它这条路在契约层封死）。
+   「请求根本没拿到响应」是另一件事，重发同一个请求不改写任何响应。两处 docstring
+   已按这条分界线重写，**不要再把它们读成「重试都归 orchestrator」**。
+3. **只在首个实质分片放行之前才可以重来**（`_StreamGate`）。放行过的分片已经变成
+   `ModelTextDelta` 发给用户了，重发会让同一段答案出现两次。因此
+   `folding.finish()` 那两处 `retryable=True` **仍然会打掉整个 turn**——它们发生在流被
+   消费完之后。被重试接住的是「出任何输出之前就失败了」，含**缓冲期收到的
+   `DONE(stop_reason=ERROR)`**（契约允许 Provider 这么报中途失败）。
+   暂存上界 `MAX_HELD_CHUNKS = 8`，撞上就放弃判定、整批放行、从此直通。
+4. **取消错误自称可重试。** `cancel.py::_to_error` 写的是
+   `retryable=reason is not CancelReason.SHUTDOWN`，因此**判据必须是 `ErrorCategory`
+   而不是 `retryable`**（`D44` 的同一条）。`test_retry.py` 有一条专门钉住这个前提的用例，
+   它先断言「取消错误确实自称可重试」再断言「判定仍然拒绝它」——前提变了会当场说出来。
+   同理**退避被取消时抛的是取消错误而不是原来那个 503**：`terminal_from_error` 按
+   `ErrorCategory` 分叉，抛错了类别终态就会从 `CANCELLED` 变成 `FAILED`。
+5. **空回复只在这条 turn 还没执行过工具时才算故障**（`ledger.tool_calls == 0`）。
+   这条是被一条现成用例逼出来的：`test_a_final_frame_with_only_attachments_is_still_sent`
+   造的正是「跑完工具产出一张图、模型收尾句为空」，第一版判据把它判成了 `FAILED`。
+   一条已经跑过工具的 turn 产出了真东西——工具结果、产物、`D47` 挂在终帧上的出站附件
+   都已经落地，因为收尾句是空的就否掉它们是错的。**`RetryingModel` 因此拿的是整个
+   `BudgetLedger` 而不是一个 `remaining_ms` 回调。**
+6. **服务端说的 `Retry-After` 原样用且不加抖动**；计算出来的指数退避才乘 `[0.5, 1.0]`。
+   抖动只会把服务端给的值往小了调，而那意味着再吃一次 429。`jitter` 是注入的
+   （默认 `random.random`），因此整棵测试树的退避是确定的、不依赖 `random`。
+7. **`SECTION_SPECS` 里加一节还不够，`validate_config()` 是逐小节显式构造的。**
+   `D48` 当场踩到：`retry` 小节声明了、`RetrySection` 也有了、
+   `test_every_section_spec_has_a_dataclass_field` 照样绿，而用户写进 `config.json`
+   的值被**静默忽略**。新增的
+   `test_every_declared_field_actually_reaches_the_config_object` 补上了这个洞：
+   给每个字段挑一个非默认的合法值喂进去再读回来，配一条自证用例。
+   **「加一个配置小节要改六处」现在有守卫拦第七处了。**
+8. **`nm run` 的 `--set` 是验重试最快的手**：`--set retry.max_attempts=1` 一次都不重试，
+   手验时不用改 `config.json` 再改回来。
 
 ### `D46`/`D47` 留下的、后续必须用到的事实
 

@@ -1,7 +1,8 @@
 """编排的装配面与产物：`OrchestratorDeps`、`TurnReceipt`、`EventTap`（技术方案 §10.2）。
 
-职责：声明 orchestrator 需要哪些协作者、一次 `handle()` 交回什么，以及把
-`before_model_request` 的分发时刻翻译成 `model.request_started` 的包装器。
+职责：声明 orchestrator 需要哪些协作者、一次 `handle()` 交回什么、把
+`before_model_request` 的分发时刻翻译成 `model.request_started` 的包装器，以及把这些
+协作者装成 engine 的四个槽（`engine_deps()`）。
 不负责：任何流程（`orchestrator.py`）、任何 IO。
 
 **与流程分成两个模块**有两个理由，都不是「文件太长」：`orchestrator.py` 的 ≤500 行是
@@ -12,7 +13,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final
 
@@ -37,9 +38,10 @@ from nucleamind.kernel.observability import EventBus
 from nucleamind.kernel.routing import DedupCache, Dispatcher, SessionScheduler
 
 from .context_builder import DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS, ContextProviderBinding
-from .deps import HookDispatcher, ToolInvoker
-from .limits import TurnLimits
+from .deps import EngineDeps, HookDispatcher, ToolInvoker
+from .limits import BudgetLedger, TurnLimits
 from .memory import MemoryRecall
+from .retry import RetryingModel, RetryPolicy
 from .transcript import TurnState
 
 __all__ = [
@@ -48,6 +50,7 @@ __all__ = [
     "OrchestratorDeps",
     "TurnReceipt",
     "emit_outbound",
+    "engine_deps",
     "utc_now",
 ]
 
@@ -161,7 +164,28 @@ class OrchestratorDeps:
     #: 长期记忆的召回（`D44`）。`None` = 没有 kernel 侧召回，这也是默认——配置里没写
     #: `memory.provider` 时装配根不装它。见 `memory.py` 的模块 docstring。
     memory: MemoryRecall | None = None
+    #: 模型请求的重试策略（`D48`）。默认值就是开箱行为：可重试的失败重发两次、空回复
+    #: 当故障。见 `retry.py` 的模块 docstring。
+    retry: RetryPolicy = field(default_factory=RetryPolicy)
     clock: Callable[[], datetime] = utc_now
+
+
+def engine_deps(deps: OrchestratorDeps, ledger: BudgetLedger) -> EngineDeps:
+    """把编排层的协作者装成 engine 的四个槽。
+
+    **两个槽都是包装器**，而 engine 对此一无所知：`hooks` 外面套 `EventTap` 补
+    `model.request_started`，`model` 外面套 `RetryingModel` 做重发（`D48`）。这正是
+    `EngineDeps` 只有四个槽还能长出新行为的方式——把东西包进去，而不是再开一个槽。
+
+    `ledger` 交给重试是为了不睡过 turn 的死线、以及判断这条 turn 跑过工具没有；它与
+    engine 用同一本账，因此两边看到的是同一份记账。
+    """
+    return EngineDeps(
+        model=RetryingModel(deps.model, deps.retry, deps.bus, ledger=ledger),
+        tools=deps.tools,
+        hooks=EventTap(deps.hooks, deps.bus),
+        limits=deps.limits,
+    )
 
 
 class EventTap:
