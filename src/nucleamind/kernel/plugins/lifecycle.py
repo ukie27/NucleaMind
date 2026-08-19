@@ -15,8 +15,8 @@
 可以永远不返回，而实例退出不能被它扣住。放弃意味着那个协程可能仍在跑——`StopOutcome`
 如实标着 `timed_out`，`TIMEOUT_PLUGIN_STOP` 因此是一条独立的错误码而不是复用加载失败。
 
-**`PluginState` 是显示口径，`PluginPhase` 是判定口径**（`D12` 定的「不发明第二套生命周期
-taxonomy」的兑现方式）：阶段只有这一份，诊断要的粗粒度状态由 `PHASE_STATES` 投影出来，
+**`PluginState` 是显示口径，`PluginPhase` 是判定口径**：阶段只有这一份，诊断所需的
+粗粒度状态由 `PHASE_STATES` 投影出来，
 不是另一套并行的枚举。
 """
 
@@ -60,11 +60,11 @@ class PluginPhase(StrEnum):
     `DISABLED` 不在这里——它是配置结论而不是阶段，一个被禁用的插件根本不会进入生命周期。
     """
 
-    #: 候选被发现、manifest 已读（`D25`）。
+    #: 候选被发现、manifest 已读。
     DISCOVERED = "discovered"
-    #: 阶段 A 全部通过：SDK 兼容、依赖可解、配置合 schema、状态版本一致（`D27`）。
+    #: 阶段 A 全部通过：SDK 兼容、依赖可解、配置合 schema、状态版本一致。
     VALIDATED = "validated"
-    #: `setup()` 跑完且整批注册已提交（`D16` 的事务性注册）。
+    #: `setup()` 跑完且整批注册已提交。
     LOADED = "loaded"
     #: 实例已就绪，插件的后台任务与事件订阅在跑。
     STARTED = "started"
@@ -164,7 +164,7 @@ class PluginLifecycle:
 
     @property
     def state(self) -> PluginState:
-        """诊断口径的状态（`D29` 的 `nm plugins` 与会话内 `/plugins` 用）。"""
+        """诊断口径的状态，供 `nm plugins` 与会话内 `/plugins` 使用。"""
         return PHASE_STATES[self.phase]
 
     @property
@@ -211,8 +211,8 @@ class StopOutcome:
 def stop_order(order: Sequence[str]) -> tuple[str, ...]:
     """停止顺序 = 启动拓扑序的逆序（`PLG-005`）。
 
-    参数就是 `LoadPlan.order`。这个函数存在只为把「逆序」这件事写在一处——`D27` 的
-    `plan_load_order()` 是加载顺序的唯一来源，停止侧不重算一遍拓扑（见模块 docstring）。
+    参数就是 `LoadPlan.order`。这个函数只把“逆序”写在一处；`plan_load_order()` 是加载
+    顺序的唯一来源，停止侧不重算拓扑（见模块 docstring）。
     """
     return tuple(reversed(tuple(order)))
 
@@ -269,8 +269,9 @@ async def _stop_one(unit: StopUnit, *, timeout_ms: int) -> StopOutcome:
 
 
 def _error_of(task: "asyncio.Future[None]", *, plugin_id: str) -> NucleaError | None:
-    """取出停止动作的异常。**只放类型名不放异常消息**——第三方插件的异常文本可能带凭据
-    （`D13` 的先例）。`CancelledError` 走 `BaseException` 通道原样冒泡：整个停止流程被
+    """取出停止动作的异常。**只放类型名不放异常消息**，第三方异常文本可能带凭据。
+
+    `CancelledError` 走 `BaseException` 通道原样冒泡：整个停止流程被
     取消时，把它记成「这个插件停不下来」是在报一个假结论。"""
     if task.cancelled():
         raise asyncio.CancelledError

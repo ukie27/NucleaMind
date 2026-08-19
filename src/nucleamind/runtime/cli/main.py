@@ -1,11 +1,11 @@
-"""`nm` 的进程入口：argv 解析与子命令派发（技术方案 §4.2、开发方案 `D23`）。
+"""`nm` 的进程入口：argv 解析与子命令派发（技术方案 §4.2）。
 
 职责：解析顶层 argv 与实例选择参数，把控制权交给 `run` / `config` / `session` 三个子命令，
 并把未捕获的异常折成可读诊断与非零退出码。
 不负责：装配实例（`runtime/bootstrap.py`）、实现交互（`builtins/cli_entry/`）、
 各子命令的正文（`runtime/cli/commands/`）。
 
-**入口与能力是两件事**（开发方案 `D23` 的要点）：`builtins/cli_entry/` 是可被插件覆盖的
+**入口与能力是两件事**：`builtins/cli_entry/` 是可被插件覆盖的
 **能力**（把 stdin 变成 `InboundMessage`），本模块是不可被覆盖的**进程入口**——它决定
 argv 怎么解析、实例怎么装、退出码是什么。`BAS-010` 的「插件可覆盖 CLI 实现」说的是前者。
 

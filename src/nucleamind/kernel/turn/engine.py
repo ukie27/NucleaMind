@@ -3,8 +3,8 @@
 职责：执行模型与工具的迭代循环，在 4 个命名检查点上响应取消，在每轮迭代前与每批工具发起前
 判预算，分发 4 个 turn 内 Hook，并把全过程表达为一条**以恰好一个终态事件结尾**的事件流。
 不负责：session 加载与写入、context 组装、命令分流、事件发布、`OutboundMessage` 生成、
-turn 总超时的看门狗与模型请求的重发——前者在 `retry.py`（engine 不知道重试存在），其余在
-`D14` 的 `orchestrator.py`；长度截断续写属于本模块的模型-消息循环；
+turn 总超时的看门狗与模型请求的重发——前者在 `retry.py`（Engine 不知道重试存在），其余在
+`orchestrator.py`；长度截断续写属于本模块的模型-消息循环；
 本模块只通过 `EngineDeps` 与外界交互，不做任何文件、网络或数据库操作。
 
 **三条不变量**（技术方案 §6.2，全部有测试守护）：
@@ -21,7 +21,7 @@ turn 总超时的看门狗与模型请求的重发——前者在 `retry.py`（e
 不是 turn 被取消。本项目的 turn 取消走 `CancelToken` 正是为了让这两件事可区分（§6.4）；
 把它们也吞掉，等于把「进程正在退出」伪装成「这轮对话结束了」。
 
-**续写与重试的分界线**（`D48` 划的）：长度续写不能靠 Hook 改写响应，只能在同一轮循环中
+**续写与重试的分界线**：长度续写不能靠 Hook 改写响应，只能在同一轮循环中
 复用 `ledger`，把上一轮 assistant 消息放回 `messages`。`MAX_TOKENS` 且无工具调用时，
 engine 最多续写 `_MAX_LENGTH_RECOVERIES` 次；耗尽后以 `truncated=True` 收尾，编排层聚合正文。
 
@@ -281,8 +281,8 @@ async def _prepare_request(
 ) -> ModelRequest:
     """派生本轮请求并过一遍 `before_model_request` Hook。
 
-    ⚠️ 这个 Hook 由 engine **每轮**分发。技术方案 §10.2 把它画在进 engine 之前——第一轮两者
-    重合，第 2..N 轮的请求只有 engine 造得出来。`D14` 不得在调用 engine 前再分发一次。
+    这个 Hook 由 Engine **每轮**分发。第一轮请求与进入 Engine 的边界重合；第 2..N 轮的
+    请求只有 Engine 能构造，因此编排层不得在调用前额外分发一次。
     """
     current = replace(
         request,
@@ -346,8 +346,8 @@ async def _invoke_one(
     """走完一次工具调用的全流程。四条路径里只有一条真的执行。
 
     未知工具在这里拦下而不是交给 invoker：本轮生效的工具集就是 `request.tools`，
-    「模型报了一个不在里面的名字」是 engine 唯一有权判定的事。旧实现同样以对话式回复处理
-    （模型下一轮可能就改对了），`D09` 保留这个行为。
+    「模型报了一个不在里面的名字」是 Engine 唯一有权判定的事。它被折成对话式工具结果，
+    让模型下一轮有机会修正名字，而不是把整个 turn 判为系统故障。
     """
     if call.name not in specs:
         return _Attempt(unknown_tool_result(call, tuple(specs)), ToolDisposition.UNKNOWN_TOOL)

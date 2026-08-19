@@ -277,7 +277,9 @@ src/nucleamind/
 │   │   ├── files.py           # 读写分离的文件门面
 │   │   ├── shell.py           # 受限子进程（exec，不经 shell）
 │   │   └── net.py             # SSRF 守卫 + 手动跟随重定向
-│   ├── bootstrap.py           # 启动序列（§10.1 的 10 步）
+│   ├── bootstrap.py           # 唯一启动序列（§10.1 的 10 步）
+│   ├── plugin_bootstrap.py    # Manifest 配置、权限、规划与统一注册策略
+│   ├── startup.py             # 实例构造成功前的资源所有权事务
 │   ├── first_run.py           # 首次运行落盘 config.json + config.schema.json（D24）
 │   ├── instance.py            # AgentInstance：就绪 / 运行 / 停止
 │   └── cli/                   # nm 可执行程序
@@ -1163,6 +1165,13 @@ DISCOVERED -> VALIDATED -> LOADED -> STARTED -> STOPPING -> STOPPED
   失败之后怎么收场。`setup()` 跑在事件循环里，一个中途失败的插件可能已经订阅过事件或
   `spawn_task()` 过——注册被回滚了，这些副作用没有。因此 `FAILED -> STOPPING` 是合法边，
   否则那些任务会活过实例本身。同理 `LOADED -> STOPPING`（装配失败时插件从未 `STARTED`）。
+- **实例构造成功前，副作用由启动资源事务所有**。`runtime/startup.py::StartupResources`
+  记录已经创建的 PluginContext 与 sink；关键 setup 失败、必需能力校验失败或 CLI 回落重装
+  时，先按逆序停止任务与订阅，再关闭普通资源。只有 `AgentInstance` 成功构造后才一次性
+  转交所有权，随后由实例停止路径负责。
+- **阶段 D 是原子状态转换**。`AgentInstance.start()` 只有在所有 Channel、入站泵与 ready
+  hook 成功后才进入运行态并发布 `instance.ready`；中途失败会走同一停止路径，已经启动的
+  Channel、插件上下文、sink 和实例锁不能留在半启动状态。
 - **停止超时的处置是「放弃等待」而不是「等它结束」**（`EDG-104`）：取消那个任务、记一条
   `TIMEOUT_PLUGIN_STOP`（新增的错误码，复用 `PLUGIN_LOAD_FAILED` 会把「它没能起来」与
   「它没能停下」记成一件事）、继续停下一个。被放弃的协程可能仍在跑，`StopOutcome.timed_out`
@@ -2025,4 +2034,3 @@ a 步同样不再是「补基线测试」：`D32` 起就改成直接读旧实现
 | `DST-001`–`DST-005` | §8、§10.4、§10.5、§11 |
 | `EDG-1xx`–`EDG-5xx` | §6–§11 各流程的异常分支 |
 | `NFR-1xx`–`NFR-7xx` | §3.1、§6、§12 |
-

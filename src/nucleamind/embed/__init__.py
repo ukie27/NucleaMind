@@ -1,12 +1,11 @@
-"""嵌入式 Python SDK：把 NucleaMind 当库用的薄门面（技术方案 §4.2、开发方案 `D23`）。
+"""嵌入式 Python SDK：把 NucleaMind 当库用的薄门面（技术方案 §4.2）。
 
 职责：暴露 `open_instance()`（异步上下文管理器）与 `run()`（一次性问答），两者都只是
 `runtime.bootstrap()` + `AgentInstance` 的包装。
 不负责：复制任何 turn 编排逻辑、导入 `builtins/`、提供第二套配置或注册路径。
 
-**它与 CLI 用的是同一个 `AgentInstance`**（开发方案 `D23` 的验收：同一 Fake 输入产生等价
-的 turn 结果）。门面里没有一行 turn 逻辑——多一行就意味着「嵌入式跑出来的结果与 `nm`
-不同」成为可能。
+**它与 CLI 使用同一个 `AgentInstance`**。门面里不复制 Turn 逻辑，否则嵌入式调用与 `nm`
+就可能产生不同结果。
 
 ```python
 async with open_instance(instance="default") as agent:

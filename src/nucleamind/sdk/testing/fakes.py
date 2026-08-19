@@ -1,4 +1,4 @@
-"""公开测试夹具：Fake 能力实现与构造辅助（开发方案 `D05`、技术方案 §12.3）。
+"""公开测试夹具：Fake 能力实现与构造辅助（技术方案 §12.3）。
 
 职责：提供可脚本化的 `FakeModelProvider`、`InMemorySessionStore`、`RecordingHook` 与
 `ManualCancel`，以及一组构造契约对象的小辅助。

@@ -16,7 +16,7 @@
 - **取消一律通过 `CancelSignal` 观测，而不是捕获 `asyncio.CancelledError`**
   （技术方案 §6.4）。`CancelledError` 会在任意 await 点抛出，「保存已产生内容并标记为
   取消」这个语义在它下面无法实现。能力实现方拿到的只有观测面——`request()` 与
-  `child()` 在 Kernel 侧的 `CancelToken`（`D08`）上，能力实现无权取消整个 turn。
+  `child()` 只在 Kernel 侧的 `CancelToken` 上，能力实现无权取消整个 turn。
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .capability import HookContext, HookOutcome
-from .compaction import CompactionRequest, CompactionResult
 from .command import CommandInvocation, CommandResult, CommandSpec
+from .compaction import CompactionRequest, CompactionResult
 from .context import ContextFragment, FragmentScope
 from .ids import Correlation, SessionKey, TurnId
 from .message import InboundMessage, OutboundMessage
@@ -58,7 +58,7 @@ __all__ = [
 class CancelSignal(Protocol):
     """取消信号的只读观测面（技术方案 §6.4）。
 
-    `D08` 的 `kernel/turn/cancel.py::CancelToken` 结构化满足本 Protocol，并额外提供
+    `kernel/turn/cancel.py::CancelToken` 结构化满足本 Protocol，并额外提供
     `request()` 与 `child()`。分成两个面是刻意的：能力实现需要知道「该停了」，
     但不该有能力替 Kernel 决定整个 turn 的终态。
     """
@@ -78,7 +78,7 @@ class CancelSignal(Protocol):
 
 @runtime_checkable
 class InstanceView(Protocol):
-    """实例的只读视图（`D22`，需求 `PLG-006`、`NFR-502`、`CMD-001`）。
+    """实例的只读视图（需求 `PLG-006`、`NFR-502`、`CMD-001`）。
 
     存在的理由：`/help`、`/capabilities`、`/plugins`、`/config`、`/session` 这五个命令
     要回答的都是「这个实例现在是什么样」，而 `R4` 禁止 `builtins/` 与 `plugins/` import
@@ -87,7 +87,7 @@ class InstanceView(Protocol):
     享受特权」当场破例，第三方也永远写不了 `/status` 这类命令。
 
     它落在 `contracts/` 而不是 `sdk/`：kernel 侧的实现要结构化满足它，而 `R2` 禁止
-    `kernel/` import `sdk/`——与 `CliEntry`（`D05`）、`SecretStr`（`D11`）同一条理由。
+    `kernel/` import `sdk/`；放在共享契约层可让生产实现与插件依赖同一个 Protocol。
 
     **只读，且只读一份快照**。这里没有任何改状态的方法：改配置是 `nm config`、
     启停插件是 `nm plugins`，两者都在进程外。命令能做的只有把现状讲给用户听。
@@ -114,7 +114,7 @@ class InstanceView(Protocol):
         """覆盖解析报告的 JSON 形态：`active` / `shadowed` / `disabled` / `failures`。
 
         每一项都标明由内建还是哪个插件提供（`PLG-006`）——这正是 `/capabilities` 要显示
-        的东西，也是 `nm capabilities`（`D29`）的同一份数据源。
+        的东西，也是 `nm capabilities` 的同一份数据源。
 
         **异常约定**：不抛；报告本身可能含 `failures`，那是数据不是异常。
         **取消语义**：同步纯查询，不接受取消信号。
@@ -136,7 +136,7 @@ class InstanceView(Protocol):
         """**完整**的生效配置文档，供 `/config` 渲染。
 
         这是本门面唯一越过 `CFG-002`（`ctx.config` 只给自己那一块）的地方，因为
-        `/config` 的职责就是显示整份配置。**明文不会在这里**：`D11` 定死配置树自始至终
+        `/config` 的职责就是显示整份配置。**明文不会在这里**：配置树自始至终
         持有 `${VAR}` 字面量、解析出的明文只在 `SecretMap` 里，因此这份文档
         「没有别的东西可泄漏」——脱敏是结构性成立的，不是靠调用方记得过滤。
 
@@ -161,10 +161,10 @@ class InstanceView(Protocol):
 
 @runtime_checkable
 class TurnControl(Protocol):
-    """在跑 turn 的观测与取消（`D22`，技术方案 §10.3）。
+    """在跑 turn 的观测与取消（技术方案 §10.3）。
 
     与 `InstanceView` 分开而不是合成一个七成员门面：一个是只读可观测性、一个是**控制
-    动作**。`D26` 落地权限模型后，「能看」与「能取消别人的 turn」应当可以分别授予，
+    动作**。「能看」与「能取消别人的 turn」应当可以分别授予，
     合并成一个门面就没有这个分界线了。
     """
 
@@ -286,7 +286,7 @@ class ContextProvider(Protocol):
 
 @runtime_checkable
 class ContextCompactor(Protocol):
-    """会话历史的压缩策略（D51）。"""
+    """会话历史的压缩策略。"""
 
     async def compact(
         self,
@@ -373,7 +373,7 @@ class MemoryProvider(Protocol):
     `expires_at`，恰好覆盖 `MEM-002`（范围）与 `MEM-004`（来源与可信度标记），
     而且召回结果可以直接进上下文，不需要中间形态。
 
-    **它是实例级（`FragmentScope.AGENT`）长期记忆的接口。这是决定，不是默认**（`D44`）。
+    **它是实例级（`FragmentScope.AGENT`）长期记忆的接口。这是决定，不是默认。**
     下面三个方法**一个 `SessionKey` 都不带**，因此经这条接口根本表达不出「哪个会话的
     记忆」——`scope=SESSION` 传下去，实现方只能猜。会话级与工作区级的记忆归
     `ContextProvider`：它的 `provide()` 拿得到 `SessionSnapshot.session_key`
@@ -483,7 +483,7 @@ class Channel(Protocol):
         `message.is_complete_answer` 为假时必须附加明确标记，不得渲染成完整回答
         （`EDG-304`）。
 
-        **它可能被并发调用**（`D33`）：Channel 泵按 conversation 扇出之后，不同
+        **它可能被并发调用**：Channel 泵按 conversation 扇出之后，不同
         conversation 的 turn 会同时跑到这一步。**同一 conversation 内不会并发**——
         lane 与 `SessionScheduler` 双重串行保证了这一点，因此按 conversation 分片的
         缓冲（流式 edit-in-place 那类）不需要加锁。
@@ -493,9 +493,8 @@ class Channel(Protocol):
         走到自己的终态并完整持久化（`EDG-204`）。因此实现方**不需要**为了保住 turn 而把
         投递故障吞成成功——那样「消息一直发不出去」就只能靠用户来发现。
 
-        `D43` 之前这里与 `EDG-204` 是矛盾的：本 docstring 要求抛，而抛出去会把一次成功的
-        turn 变成失败，于是四个实现全都选了不抛。消解它的是那条事件，而不是改这条约定——
-        「投递失败了」必须有人说出来，能说的只有实现方自己。
+        调用方会把异常转换成 `channel.delivery_failed`，而不会改写已经完成并持久化的 turn
+        终态。实现方仍必须抛错，因为只有它知道投递是否真正成功。
         **取消语义**：不接受取消——投递是 turn 的最后一步，此时取消只会让用户什么也收不到。
         """
         ...
@@ -544,8 +543,8 @@ class HookHandler(Protocol):
 class CliEntry(Protocol):
     """本地命令行入口（需求 §9.2 `BAS-009`、`BAS-010`、`EDG-108`、技术方案 §8.1）。
 
-    这是 `CapabilityKind.CLI_ENTRY` 的载荷类型，`D04` 只冻结了另外 8 个 Protocol，
-    留下的正是这一个缺口。它落在 `contracts/` 而不是 `sdk/`：`kernel/` 与 `runtime/`
+    这是 `CapabilityKind.CLI_ENTRY` 的载荷类型。它落在 `contracts/` 而不是 `sdk/`：
+    `kernel/` 与 `runtime/`
     都要调用 CLI 能力，而 `R2` 禁止它们 import `sdk/`。
 
     CLI 入口不可禁用——不装任何 Channel 插件也必须存在本地交互入口。插件可以覆盖它

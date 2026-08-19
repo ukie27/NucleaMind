@@ -3,7 +3,7 @@
 职责：`Grant`（一项被声明的权限）、`PluginGrants`（一个提供方的生效授权）、
 `PermissionLedger`（TOFU 判定，读写委托给 `permission_codec.py`）。
 不负责：文件长什么样（`permission_codec.py`）、认识 `PermissionDecl`（那是
-`sdk/manifest.py`，`R2` 禁止 kernel import 它——翻译在 `runtime/bootstrap.py`）、
+`sdk/manifest.py`，`R2` 禁止 kernel import 它——翻译在 `runtime/plugin_bootstrap.py`）、
 构造 `PluginContext` 与实现被守卫的资源门面（都在 `runtime/`）。
 
 **批准模型是 TOFU（trust on first use）+ 扩权需显式**：

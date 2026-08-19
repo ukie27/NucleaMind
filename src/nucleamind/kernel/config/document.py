@@ -1,14 +1,11 @@
-"""把一份已校验的 `NucleaConfig` 渲染成诊断用的 JSON 文档（`D33` 从 `schema.py` 拆出）。
+"""把一份已校验的 `NucleaConfig` 渲染成诊断用的 JSON 文档。
 
 职责：`NucleaConfig` → `dict[str, JsonValue]`，元组转列表，保证真能被 `json.dumps` 编码。
 不负责：定义有哪些字段（`schema.SECTION_SPECS`）、校验（`fields.py` / `schema.py`）、
 读取任何来源（`sources.py`）。
 
-**它是那张字段表的派生物，不是第二份真相来源**——与 `json_schema.py` 同一档：一个渲染给
-编辑器看，一个渲染给 `/config` 与 `nm config show` 看。拆出来的直接原因是 `schema.py` 又
-撞上了 `kernel/` 的 500 行上限（`D13` → `fields.py`、`D24` → 六个 `*_at()`、
-`D28` → `defaults.py` 之后同一条规则的第四次应用）：先被挪走的应当是「只是把已有结构换个
-形状」的那部分，而不是字段表本身。
+**它是字段表的派生视图，不是第二份真相来源**：`json_schema.py` 面向编辑器，本模块面向
+`/config` 与 `nm config show`。渲染逻辑独立成模块，字段定义仍只属于 `SECTION_SPECS`。
 
 加字段时**两处都要改**：`schema.SECTION_SPECS` 与这里的渲染。`tests/kernel/test_config.py`
 有一条「渲染出来的键集合 == 字段表的键集合」的对照测试盯着这件事。

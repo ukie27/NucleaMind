@@ -1,4 +1,4 @@
-"""只读诊断查询：不启动实例也能回答「装了什么」「谁提供了这项能力」（`D29`）。
+"""只读诊断查询：不启动实例也能回答「装了什么」「谁提供了这项能力」。
 
 职责：为 `nm plugins list` / `nm capabilities` / `nm session` 提供**不取实例锁、
 不装 orchestrator、不写 `permissions.json`** 的三条查询路径——`inspect_plugins()` 跑到
@@ -7,30 +7,29 @@
 不负责：装配可用实例（`bootstrap.py`）、改配置（`config_edit.py`）、格式化输出
 （`runtime/cli/commands/`）、发现与阶段 A 的判定（`inventory.py` / `plugin_plan.py`）。
 
-除了 `open_session_store()`（`D23` 起就在这里的形态，它沿用 `write_config_error()` 那条
-`EDG-501` 的后半句），本模块不写任何文件。
+除了配置读取的既有错误诊断，以及插件状态目录的幂等版本标记，本模块不写业务数据。
 
 **为什么不直接调 `bootstrap()`**，三条理由都是硬的：
 
 1. 它**取实例锁**。看一眼装了什么不该与正在跑的实例互斥——`nm config show` 与
    `nm permissions` 已经立过这条规矩。
-2. 它**写 `permissions.json`**（`ledger.save()`）。`D26` 定死只读路径判定照做、但从头到尾
-   没人调 `save()`（`open_session_store` 的先例），否则一条不取锁的命令会与正在跑的实例
-   抢同一个文件。
+2. 它**写 `permissions.json`**（`ledger.save()`）。只读路径只做权限判定，不保存账本；否则
+   一条不取锁的命令会与正在跑的实例抢同一个文件。
 3. 它跑 §10.1 步骤 8 的必需能力校验。一个还没配模型的实例会让 `nm capabilities` 以
    「没有指定要用哪个模型」失败，而那恰恰是最需要看一眼能力表的时刻。
 
 **同样地，报告里的冲突不抛出**：`raise_if_failed()` 是启动路径的语义。对这两条命令而言，
-冲突正是要印出来的东西（`NFR-502`、`PLG-006`）。
+冲突正是要印出来的诊断结果。
 
 **一处如实记下的副作用**：阶段 A 的 `check_state_version()` 在插件状态目录**已经存在**
 且还没有标记文件时会补写 `.nucleamind-state.json`。它与一次真实加载写的内容完全相同、
-幂等，也不会为一个从未写盘的插件建目录（`D27` 的约定）。除此之外这两条路一个字节都不写。
+幂等，也不会为一个从未写盘的插件建目录。除此之外这两条路不写业务数据。
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,17 +41,18 @@ from nucleamind.kernel.plugins import LoadOutcome, PermissionLedger
 from nucleamind.kernel.registry import ResolutionReport
 from nucleamind.sdk import PluginManifest
 
-from .bootstrap import (
-    load_config_or_report,
+from .bootstrap import load_config_or_report
+from .inventory import PluginInventory
+from .plugin_bootstrap import (
     plan_external,
-    require_sessions,
     select_manifests,
     wire_all,
 )
-from .inventory import PluginInventory
-from .plugin_context import PluginRuntime, RuntimePluginContext
+from .plugin_context import PluginRuntime
 from .plugin_disable import suppressed_capabilities
 from .plugin_plan import discover_plugins
+from .selection import require_sessions
+from .startup import StartupResources
 
 __all__ = ["Inspection", "inspect_capabilities", "inspect_plugins", "open_session_store"]
 
@@ -115,8 +115,7 @@ def inspect_plugins(
     """发现外部插件并跑完阶段 A，**不导入任何 `setup`**。
 
     `nm plugins list` 的数据源。跳过原因、发现阶段的失败与阶段 A 的失败在同一份清单里
-    ——用户不需要知道一个插件是在哪个阶段落的榜，他只需要知道它没被加载、以及为什么
-    （`D27` 的结论）。
+    ——用户不需要知道一个插件是在哪个阶段落的榜，他只需要知道它没被加载、以及为什么。
 
     **异常约定**：配置读不出来（文件坏了、字段非法）时原样抛 `NucleaError`——那时连
     「装了哪些插件」都无从谈起。插件自身的问题一律进 `inventory.failures`，不抛。
@@ -162,8 +161,7 @@ async def inspect_capabilities(
     **跑完就把 ctx 收掉**：`setup()` 里订阅的事件与派生的后台任务在这条路上没有实例去
     停它们（`AgentInstance.stop()` 不在这条路上），因此本函数自己走一遍
     `RuntimePluginContext.shutdown()`——一条只读命令不该让进程带着几个还在跑的插件任务
-    退出。收尾不按停止顺序（`PLG-005` 讲的是「被依赖者后停」，而这里根本没有人被启动
-    过）；它只是把刚刚建出来的东西还回去。
+    退出。这里没有进入正式生命周期，只需把本次诊断创建的上下文按逆序还回去。
 
     **异常约定**：与 `inspect_plugins()` 相同——配置问题抛，插件问题进报告。
     关键插件在阶段 A 失败同样只记不抛（`strict=False`）。
@@ -185,7 +183,7 @@ async def inspect_capabilities(
         builtins,
         strict=False,
     )
-    contexts: list[RuntimePluginContext] = []
+    resources = StartupResources()
     try:
         wiring = await wire_all(
             (*builtins, *plan.manifests),
@@ -195,24 +193,24 @@ async def inspect_capabilities(
             bus,
             PluginRuntime(),
             env,
-            contexts,
+            resources.contexts,
             PermissionLedger.load(layout.permissions_path),
             external_ids=[manifest.id for manifest in plan.manifests],
             # `on_disable=leave_missing` 抑制掉的能力在这里同样要缺席，否则
-            # `nm capabilities` 印出来的生效集合与真正启动时的不是同一份（`D30`）。
+            # 诊断与真实启动必须应用同一份能力抑制规则，否则报告会展示不可用的能力。
             suppressed=suppressed_capabilities(inventory, loaded.config),
             # 关键提供方失败也只记不抛：凭据还没导出时，`model-openai` 的 `setup()` 会
             # 取不到密钥，而那正是最需要看一眼能力表的时刻（见 `wire_capabilities`）。
             halt_on_critical=False,
         )
     finally:
-        for ctx in reversed(contexts):
-            await ctx.shutdown()
+        await resources.rollback(timeout_ms=loaded.config.plugins.stop_timeout_ms)
     return Inspection(
         loaded=loaded, inventory=inventory, report=wiring.report, outcomes=wiring.outcomes
     )
 
 
+@asynccontextmanager
 async def open_session_store(
     *,
     instance_dir: Path | str | None = None,
@@ -220,12 +218,15 @@ async def open_session_store(
     env: Mapping[str, str] | None = None,
     home: Path | None = None,
     manifests: Sequence[PluginManifest] = BUILTIN_MANIFESTS,
-) -> tuple[LoadedConfig, SessionStore]:
+) -> AsyncGenerator[tuple[LoadedConfig, SessionStore]]:
     """只把会话存储装起来（`nm session` 用）。**不取实例锁、不装 orchestrator。**
 
     只加载声明了 `SESSION_STORE` 的 manifest，因此不会因为「模型还没配」而让一条只读的
     诊断命令失败——但它仍然走同一条注册路径，插件覆盖了会话存储时 `nm session` 看到的
     就是插件那一份。直接 `new JsonlSessionStore(...)` 会让这条命令永远只认内建实现。
+
+    返回异步上下文而不是裸 Store：第三方 Session 插件的 `setup()` 同样可能创建任务或
+    订阅事件，命令结束时必须在停止预算内清理，不能把 PluginContext 丢给事件循环退出兜底。
     """
     layout = InstanceLayout.resolve(
         instance_dir=instance_dir, instance=instance, env=env, home=home
@@ -238,7 +239,7 @@ async def open_session_store(
         if any(decl.kind is CapabilityKind.SESSION_STORE for decl in manifest.capabilities)
     )
     bus = EventBus(InstanceId(layout.root.name))
-    # 外部插件走同一条路（`D27`）：覆盖了会话存储的插件，`nm session` 看到的就是它那一份。
+    # 外部插件走同一条路：覆盖了会话存储的插件，`nm session` 看到的就是它那一份。
     # 同样只取声明了 `SESSION_STORE` 的那些——一条只读命令不该因为「模型还没配」而失败。
     plan, _ = plan_external(
         discover_plugins(loaded.config, layout, bus),
@@ -253,20 +254,24 @@ async def open_session_store(
         for manifest in plan.manifests
         if any(decl.kind is CapabilityKind.SESSION_STORE for decl in manifest.capabilities)
     )
-    wiring = await wire_all(
-        (*selected, *external),
-        loaded.config,
-        layout,
-        loaded.workspace_root,
-        bus,
-        PluginRuntime(),
-        env,
-        [],
-        # **只读路径不落盘**：`nm session` 不取实例锁，让它改写 `permissions.json` 会与
-        # 正在跑的实例抢同一个文件。判定照做（会话存储插件的授权语义不能两套），
-        # 但这个账本从头到尾没人调 `save()`。
-        PermissionLedger.load(layout.permissions_path),
-        external_ids=[manifest.id for manifest in external],
-    )
-    wiring.report.raise_if_failed()
-    return loaded, require_sessions(wiring.registry)
+    resources = StartupResources()
+    try:
+        wiring = await wire_all(
+            (*selected, *external),
+            loaded.config,
+            layout,
+            loaded.workspace_root,
+            bus,
+            PluginRuntime(),
+            env,
+            resources.contexts,
+            # **只读路径不落盘**：`nm session` 不取实例锁，让它改写 `permissions.json` 会与
+            # 正在跑的实例抢同一个文件。判定照做（会话存储插件的授权语义不能两套），
+            # 但这个账本从头到尾没人调 `save()`。
+            PermissionLedger.load(layout.permissions_path),
+            external_ids=[manifest.id for manifest in external],
+        )
+        wiring.report.raise_if_failed()
+        yield loaded, require_sessions(wiring.registry)
+    finally:
+        await resources.rollback(timeout_ms=loaded.config.plugins.stop_timeout_ms)

@@ -1,9 +1,9 @@
 """唯一的 Host `NucleaAPI` 实现：把 10 个注册方法分派进 `RegistrationBatch`（技术方案 §7.5）。
 
-职责：接住插件 `setup(api)` 里的 9 类注册调用，回查声明表取 `overrides` 与 `priority`，
+职责：接住插件 `setup(api)` 里的 10 类注册调用，回查声明表取 `overrides` 与 `priority`，
 包成对应 kind 的注册载荷，逐条放进批次；并在 `finish()` 时核对声明与实际注册一一对应。
 不负责：提交或回滚批次（那是 `builtin_loader.py`，因为 `setup` 返回给的是 loader 而不是
-Host）、构造 `PluginContext`（`D26`）、发现插件（`D27`）、判定谁最终生效
+Host）、构造 `PluginContext`、发现插件、判定谁最终生效
 （`kernel/registry/resolution.py`）。本模块不做 IO。
 
 **内建与插件共用这一个实现**（`SDK-007`、`BAS-005`）：不存在内建专用注册 API。两者的差别
@@ -11,7 +11,7 @@ Host）、构造 `PluginContext`（`D26`）、发现插件（`D27`）、判定�
 差异不延伸到能力注册接口。
 
 **不 import `sdk/`**（规则 `R2`），因此本类是 `NucleaAPI` 的**结构化**实现而非继承——
-仓库已有先例（`HookRouter`「结构化满足 `deps.HookDispatcher`」）。ctx 做成泛型参数
+`HookRouter` 同样结构化满足 `deps.HookDispatcher`。ctx 做成泛型参数
 `CapabilityHost[ContextT]`：kernel 对它连一个结构假设都不做，只负责原样转交。把 ctx 标成
 `object` 是行不通的——那样 `ctx` 的返回类型与 `NucleaAPI.ctx` 声明的 `PluginContext`
 不兼容，「Host 真的满足 `NucleaAPI`」就在任何地方都证明不了。一致性的证明落在
@@ -88,7 +88,7 @@ class CapabilityHost(Generic[_ContextT]):
         self._batch = batch
         self._ctx = ctx
         self._critical = critical
-        #: **精确声明表，命名空间不在其中**（`D38-A`）。分成两张表是为了让规则只有一条：
+        #: **精确声明表，命名空间不在其中**。分成两张表是为了让规则只有一条：
         #: 一条命名空间声明放行的**恰好是** `<前缀>.<后缀>`，前缀本身不在内。让它同时
         #: 落进精确表，就等于一条声明有两套判据，而其中一套没写在任何地方。
         self._declared = {
@@ -198,7 +198,7 @@ class CapabilityHost(Generic[_ContextT]):
         `slot_name` 只有 HOOK 用得上（登记名带序号、声明名不带）。`priority` 参数同样只有
         HOOK 传，其余 kind 的优先级只能来自声明。
 
-        **回查是两步：先精确、再命名空间**（`D38-A`）。顺序不可颠倒——一条精确声明与一条
+        **回查是两步：先精确、再命名空间**。顺序不可颠倒——一条精确声明与一条
         命名空间声明可能同时匹配（`mcp.probe` 与前缀 `mcp`），静默挑一个就等于让
         「哪条声明生效」取决于表的遍历顺序。
         """
@@ -250,7 +250,7 @@ class CapabilityHost(Generic[_ContextT]):
     def finish(self) -> None:
         """核对每条声明都真的被注册过。由 loader 在 `setup` 正常返回后、提交之前调用。
 
-        **命名空间声明豁免**（`D38-A`）：它表达的是「本提供方可以注册这个前缀下的能力」，
+        **命名空间声明豁免**：它表达的是「本提供方可以注册这个前缀下的能力」，
         不是「一定会注册」。一个 MCP server 连不上时该插件注册零条工具，那是它如实反映
         外部状态，不该被判成「声明了却没注册」。这条豁免是结构性的——`_declared` 里
         本来就没有命名空间声明。

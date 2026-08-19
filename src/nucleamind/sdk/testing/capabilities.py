@@ -355,12 +355,11 @@ class FakeTurnControl:
 
 
 class FakePluginContext:
-    """最小合规 `PluginContext`，权限语义是**真的**（`D26` 之前的行为基准）。
+    """最小合规 `PluginContext`，权限拒绝语义与生产契约一致。
 
     四个资源访问器是 property：未授予时**属性访问**就抛 `PERMISSION_DENIED`，
-    插件拿不到「看起来能用、调用才失败」的对象。`D16` 的 Host 只持有并转交它，
-    因此这里不需要 fs / net / shell 的真实实现——`granted` 里给了也只会拿到一个
-    `NotImplementedError`，那正是「D16 不做权限」的诚实形态。
+    插件拿不到“看起来能用、调用才失败”的对象。Fake 不实现真实 fs/net/shell I/O；测试若
+    显式授权这些资源，访问时会得到 `NotImplementedError`，避免伪装成生产资源门面。
     """
 
     def __init__(

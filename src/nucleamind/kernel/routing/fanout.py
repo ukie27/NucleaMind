@@ -1,4 +1,4 @@
-"""Channel 入站的按 conversation 扇出（开发方案 `D33`，需求 `EDG-202`、`KER-008`）。
+"""Channel 入站的按 conversation 扇出（需求 `EDG-202`、`KER-008`）。
 
 职责：把一条 Channel 的入站消息流按 `conversation_id` 分成互不相干的 lane，同一 lane 内
 严格按到达顺序串行、跨 lane 并发；lane 空即回收；队列或并发上界满时明确拒绝。

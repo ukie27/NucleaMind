@@ -10,9 +10,8 @@
 然后在这里加一个同名同默认值的属性——两侧不一致会被
 `test_every_section_spec_has_a_dataclass_field` 当场抓住。
 
-**从 `schema.py` 拆出来的理由与 `defaults.py` 相同**（`D28` 拆常量、`D44` 拆这些）：
-那个文件撞上了 `kernel/` 的 500 行上限。`schema.py` 原样再导出全部名字，因此既有 import
-一个都没变。
+类型化视图独立成模块，让字段声明、校验和运行时类型各自保持单一职责。`schema.py` 原样
+再导出这些名字，调用方仍可从配置包的既有入口导入。
 
 **不要在这里 module-level import `kernel.turn`**：`to_limits()` / `to_policy()` 用函数内
 import，理由见 `defaults.py`——那会把 engine/scheduling/folding 与 asyncio 拖上配置路径
@@ -29,8 +28,8 @@ from .defaults import (
     DEFAULT_CHANNEL_CONCURRENCY,
     DEFAULT_CHANNEL_QUEUE_MAX_SIZE,
     DEFAULT_COMMAND_PREFIX,
-    DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     DEFAULT_COMPACTOR_TIMEOUT_MS,
+    DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     DEFAULT_DEDUP_CAPACITY,
     DEFAULT_DEDUP_TTL_MS,
     DEFAULT_INTERCEPTOR_TIMEOUT_MS,
@@ -106,7 +105,7 @@ class TurnSection:
 
 @dataclass(frozen=True, slots=True)
 class RoutingSection:
-    """输入分流与 Session 并发（`D13`）。字段与 `kernel/routing/` 的构造参数一一对应。
+    """输入分流与 Session 并发。字段与 `kernel/routing/` 的构造参数一一对应。
 
     `command_prefix` 是路由的配置项而不是命令身份的一部分（见 `contracts/command.py`）：
     改前缀不该等于改全部命令声明。
@@ -119,7 +118,7 @@ class RoutingSection:
     queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE
     dedup_capacity: int = DEFAULT_DEDUP_CAPACITY
     dedup_ttl_ms: int = DEFAULT_DEDUP_TTL_MS
-    #: 一条 Channel 上同时活跃的 conversation 上限（`D33`）。它是**饱和护栏**而不是
+    #: 一条 Channel 上同时活跃的 conversation 上限。它是**饱和护栏**而不是
     #: 调优旋钮，因此没有「不限」哨兵。
     channel_concurrency: int = DEFAULT_CHANNEL_CONCURRENCY
     #: 单个 conversation 在 Channel 泵里的排队上限；超出即拒绝并回音（`EDG-202`）。
@@ -156,7 +155,7 @@ class ContextSection:
 
 @dataclass(frozen=True, slots=True)
 class MemorySection:
-    """长期记忆的召回（`D44`，需求 §9.8 `MEM-002`–`MEM-003`）。
+    """长期记忆的召回（需求 §9.8 `MEM-002`–`MEM-003`）。
 
     **`provider = None` 是默认，含义是「不启用 kernel 侧召回」而不是「自动挑一个」。**
     自动挑会让装上一个记忆插件就悄悄改变每一轮请求的内容；而这一节唯一的作用是让运维
@@ -205,16 +204,16 @@ class PluginsSection:
     「保留键为什么撞不上插件 id」的理由都在 `plugin_blocks.py`。
     """
 
-    #: 显式启用的插件 id（`D25`，技术方案 §7.1「发现与启用分离」）。**不在这张表里的
+    #: 显式启用的插件 id（技术方案 §7.1「发现与启用分离」）。**不在这张表里的
     #: 候选连 manifest 都不会被读**，「安装 ≠ 启用」（`DST-002`）因此没有绕行路径。
     enabled: tuple[str, ...] = ()
     #: 显式禁用的提供方 id。它压过 `enabled`，也对内建生效（`resolve(disabled=...)`）。
     disable: tuple[str, ...] = ()
-    #: 插件搜索路径（技术方案 §7.1 的 `plugins.paths`；键名沿用 `D23` 已发布的这一个）。
+    #: 插件搜索路径（技术方案 §7.1 的 `plugins.paths`）。
     #: 每条路径下的直接子项：含 `plugin.toml` 的目录，或单个 `.py`。**不含
     #: `InstanceLayout.plugins_dir`**——那是插件的状态目录，不是代码来源。
     search_paths: tuple[str, ...] = ()
-    #: 单个插件的停止预算（`D28`、`EDG-104`）：超时即放弃等待、记事件、继续停其余插件。
+    #: 单个插件的停止预算（`EDG-104`）：超时即放弃等待、记事件、继续停其余插件。
     stop_timeout_ms: int = DEFAULT_PLUGIN_STOP_TIMEOUT_MS
     #: 插件 id -> 它的 `{config, secrets}`。装配根按 id 取，取不到就给空块。
     entries: Mapping[str, PluginEntry] = blocks.NO_PLUGIN_ENTRIES
@@ -252,8 +251,8 @@ class RetrySection:
     #: 而那意味着再吃一次 429。
     base_delay_ms: int = DEFAULT_RETRY_BASE_DELAY_MS
     max_delay_ms: int = DEFAULT_RETRY_MAX_DELAY_MS
-    #: 空回复（既无正文也无工具调用）算不算故障。`False` = 原样放行，也就是 `D48` 之前的
-    #: 行为：终帧空正文被 `emit_outbound` 丢掉，用户什么都收不到而 turn 记 `COMPLETED`。
+    #: 空回复（既无正文也无工具调用）算不算故障。`False` 表示原样放行：终帧空正文被
+    #: `emit_outbound` 丢掉，用户什么都收不到而 turn 记 `COMPLETED`。
     retry_empty_response: bool = DEFAULT_RETRY_EMPTY_RESPONSE
 
     def to_policy(self) -> RetryPolicy:

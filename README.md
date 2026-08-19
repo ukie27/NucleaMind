@@ -109,9 +109,13 @@ Start here:
 Also:
 
 - [Documentation index](./docs/README.md)
+- [Current project status](./docs/project/README.md)
 - [Writing a plugin](./docs/plugin-development.md)
 - [Permission model](./docs/permissions.md)
 - [Development background](./docs/project/开发背景.md)
+- [Architecture map](./docs/project/architecture-map.md)
+- [Evolution boundaries](./docs/project/evolution-boundaries.md)
+- [Common change guide](./docs/project/change-guide.md)
 - [Repository instructions](./AGENTS.md)
 - [Architecture constraints](./.agent/design.md)
 - [Security boundaries](./.agent/security.md)

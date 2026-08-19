@@ -20,6 +20,10 @@ nanobot 实现的文档一并删除——它们教人跑的是 `nanobot onboard`
 | 了解项目方向 | [`project/开发背景.md`](./project/开发背景.md) |
 | 遵循仓库开发规则 | [`../AGENTS.md`](../AGENTS.md) |
 | 接手当前开发工作 | [`project/README.md`](./project/README.md) |
+| 查层次、主链路与代码所有权 | [`project/architecture-map.md`](./project/architecture-map.md) |
+| 查某类改动需要修改哪些位置 | [`project/change-guide.md`](./project/change-guide.md) |
+| 判断稳定边界与未来设计闸门 | [`project/evolution-boundaries.md`](./project/evolution-boundaries.md) |
+| 回顾 D00–D52 里程碑 | [`project/history.md`](./project/history.md) |
 | 参考项目的阅读规范 | [`references/README.md`](./references/README.md) |
 | 写一个插件 | [`plugin-development.md`](./plugin-development.md) |
 | 理解插件权限模型 | [`permissions.md`](./permissions.md) |
@@ -50,4 +54,10 @@ nanobot 实现的文档一并删除——它们教人跑的是 `nanobot onboard`
 - 一条能力以插件形态落地时，在同一个 PR 里写它的文档；**不要**先留一篇描述
   「将来会怎样」的占位文档。
 - 所有权边界移进或移出 Kernel 时更新架构说明（当前在
+  [`project/architecture-map.md`](./project/architecture-map.md) 与
   [`project/technical-design.md`](./project/technical-design.md)）。
+- 活跃入口只描述当前事实和长期规则。阶段流水账压缩到
+  [`project/history.md`](./project/history.md)，精确过程交给 Git，不再复制进 `AGENTS.md`。
+- 新的公开接缝或持久化语义要同步更新
+  [`project/evolution-boundaries.md`](./project/evolution-boundaries.md)；常见改动位置发生变化时
+  更新 [`project/change-guide.md`](./project/change-guide.md)。

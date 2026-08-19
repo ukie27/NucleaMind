@@ -3,8 +3,8 @@
 职责：定义 `CapabilityKind` 的 10 个取值与每个 kind 的 arity 常量表、结构化的
 `ProviderId`（`Builtin` | `Plugin`）与 `CapabilityRef`，以及冻结的 10 个 `HookName`、
 其观察者/拦截器分类和 Hook 的输入输出 `HookContext` / `HookOutcome`。
-不负责：注册、冲突解析、覆盖判定、Hook 的调度与超时——那些在 `kernel/registry/`
-（`D06`）与 `kernel/observability/`、`kernel/turn/`（`D12`、`D14`）；本模块不含任何 IO。
+不负责：注册、冲突解析、覆盖判定、Hook 的调度与超时——那些在 `kernel/registry/`、
+`kernel/observability/` 与 `kernel/turn/`；本模块不含任何 IO。
 
 三件必须由本模块（而不是各注册点）统一持有的东西：
 
@@ -12,13 +12,12 @@
   就构造不出对应的判定，注册器也就没有「按加载顺序择一」的可乘之机（`EDG-102`）。
 - **`ProviderId` 是联合类型而不是裸字符串**（`SDK-002`）。"builtin" 与某个恰好叫
   builtin 的插件在字符串世界里无法区分，在类型世界里连写错的机会都没有。
-- **覆盖目标的编解码**（`CapabilityRef.target` / `parse_capability_target`）。manifest
-  的 `overrides` 字段（`D05`）与覆盖解析（`D06`）必须复用同一份实现，两处各写一套
+- **覆盖目标的编解码**（`CapabilityRef.target` / `parse_capability_target`）。Manifest
+  声明与 Registry 覆盖解析必须复用同一份实现，两处各写一套
   正则是这类字段最典型的失配来源。
 
-技术方案 §6.1 的 arity 表格只列了 8 个 kind，漏了 `MEMORY`；`D04` 定为
-`MULTI_UNIQUE`：`register_memory_provider(name, m)` 带 name 本身就意味着可以并存多个
-具名实现，而 `MEM-003`「Memory 不可用时按配置降级」要求换一个后端不必先卸载现有的。
+`MEMORY` 使用 `MULTI_UNIQUE`：`register_memory_provider(name, m)` 的名字允许多个后端
+并存，也让故障降级或切换后端不必先卸载现有实现。
 """
 
 from __future__ import annotations
@@ -110,7 +109,7 @@ class CapabilityArity(StrEnum):
     """唯一生效实现；替换必须显式声明覆盖。"""
 
 
-#: kind 到 arity 的唯一映射（技术方案 §6.1 表格 + `D04` 补齐的 `MEMORY` 行）。
+#: kind 到 arity 的唯一映射。
 #: 10 个 kind 全部登记，缺项会让 `CapabilityKind.arity` 直接 KeyError——这是刻意的：
 #: 冲突语义未定的能力不该有注册路径。
 CAPABILITY_ARITY: Final[Mapping[CapabilityKind, CapabilityArity]] = MappingProxyType(

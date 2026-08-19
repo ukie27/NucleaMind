@@ -41,16 +41,18 @@ async def _session(options: Options) -> int:
             detail={"known": ["list", "show"]},
         )
 
-    _, sessions = await open_session_store(
+    async with open_session_store(
         instance=options.instance, instance_dir=options.instance_dir
-    )
-    if action == "list":
-        return await _list(sessions)
-    if len(options.rest) < 2:
-        raise NucleaError(
-            ErrorCode.INPUT_MALFORMED, "session show 需要一个会话 id。", detail={"usage": _USAGE}
-        )
-    return await _show(sessions, options.rest[1])
+    ) as (_, sessions):
+        if action == "list":
+            return await _list(sessions)
+        if len(options.rest) < 2:
+            raise NucleaError(
+                ErrorCode.INPUT_MALFORMED,
+                "session show 需要一个会话 id。",
+                detail={"usage": _USAGE},
+            )
+        return await _show(sessions, options.rest[1])
 
 
 async def _list(sessions: SessionStore) -> int:

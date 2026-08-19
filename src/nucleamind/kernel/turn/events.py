@@ -3,10 +3,10 @@
 职责：定义 `run_turn()` 事件流的全部事件类型、`TurnEvent` / `TerminalEvent` 两个封闭联合，
 以及把逸出异常翻译成终态事件的 `terminal_from_error()`。
 不负责：分配 `sequence`、读时钟、认识 `InstanceId`、把事件翻译成 `contracts.RuntimeEvent`——
-那三样属于 `D12` 的 EventBus 与 `D14` 的 orchestrator；本模块不含 IO，也不 import
+那三样属于 EventBus 与 Orchestrator；本模块不含 IO，也不 import
 `contracts.events`。
 
-**为什么是封闭联合而不是「一个类 + kind 枚举」**：唯一的消费者是 `D14` 的 orchestrator，
+**为什么是封闭联合而不是「一个类 + kind 枚举」**：唯一消费者是 Orchestrator，
 而它必须处理每一种事件（每种都对应一次持久化或一条 `OutboundMessage`）。联合类型让
 `match event:` 在 basedpyright 严格模式下拿到穷尽性检查——将来新增一个事件而 orchestrator
 忘了处理，是类型检查期报错而不是线上少发一条消息。契约层的 `ModelChunk` 选了 kind + 可选载荷
@@ -18,7 +18,7 @@ test_field_traceability.py` 要求每个契约类型对上需求 §10 的某一�
 变成永久公开表面（`NFR-104`），等于承诺 engine 的循环结构今后不变；插件观察 turn 的正规路径
 是 `RuntimeEvent` 与 10 个 Hook。其三，`TurnCancelled.checkpoint` 与 `TurnStoppedByLimit.breach`
 引用的是 kernel 的 `Checkpoint` 与 `LimitBreach`，搬进零依赖的 contracts 就得把那两个也搬，
-而 `D08` 刚论证过它们是机制不是契约。
+而它们是 Kernel 机制，不是跨层契约。
 
 **事件流的不变量**（由 `engine.py` 的结构保证，并由测试断言）：恰好以一个 `TerminalEvent`
 结尾，终态之后不再有任何事件；单个事件一旦 yield，其内容不再变更（全部 frozen）。
@@ -66,7 +66,7 @@ class ToolDisposition(StrEnum):
     """一次工具调用最终是怎么了。
 
     显式登记而不是让消费方去嗅 `result.error.code`：冻结的事件名里有
-    `tool.call_completed` / `tool.call_blocked` / `tool.call_failed` 三个，`D14` 要在它们之间
+    `tool.call_completed` / `tool.call_blocked` / `tool.call_failed` 三个，Orchestrator 要在其间
     选一个。用错误码当控制流用，等于让「换一个错误码」变成「换一条事件路由」。
     """
 
@@ -186,10 +186,8 @@ class TurnStoppedByLimit:
 
     `breach.describe()` 就是那份「可诊断说明」，可直接进 `OutboundMessage`。
 
-    **一个已知缺口，留给 `D12`/`D14`**：`contracts.EventName` 的 turn 族只有 5 个，
-    **没有** `turn.stopped_by_limit`。orchestrator 发布 `RuntimeEvent` 时要么用
-    `turn.completed` 承载（按事件名路由的 sink 会误认为正常完成，与 `EDG-304` 冲突），
-    要么按 `NFR-104` 走评审新增一个事件名。engine 不发 `RuntimeEvent`，因此不在这里决定。
+    Orchestrator 将它翻译成独立的 `turn.stopped_by_limit`，不能用 `turn.completed` 承载；
+    观察者必须能区分模型自然结束和预算中止（`EDG-304`）。
 
     `turn_timeout_ms` 越界**不**产生本事件：它的 `terminal_status` 是 `CANCELLED`
     （见 `limits.LIMIT_OUTCOMES`），走 `TurnCancelled(reason=TIMEOUT)`。

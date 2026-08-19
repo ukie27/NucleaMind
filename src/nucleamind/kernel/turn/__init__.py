@@ -2,7 +2,7 @@
 
 职责：re-export `kernel/turn/` 各模块的公开表面，使调用方只需要
 `from nucleamind.kernel.turn import ...` 一条导入路径。
-不负责：装配一个实例（`runtime/`，`D23`）、提供具体能力（`builtins/`）；
+不负责：装配一个实例（`runtime/`）、提供具体能力（`builtins/` 与插件）；
 本包不读文件、不访问网络——IO 只经注入进来的 `SessionStore` / `ModelProvider` 等发生。
 
 包内依赖是单向的，没有环：
@@ -33,6 +33,12 @@ from .cancel import (
     Checkpoint,
     CheckpointOwner,
 )
+from .compaction import (
+    DEFAULT_COMPACTOR_TIMEOUT_MS,
+    CompactionApplied,
+    CompactionPolicy,
+    compact_once,
+)
 from .context_builder import (
     DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     HISTORY_TRIM_PRIORITY,
@@ -44,12 +50,6 @@ from .context_builder import (
     context_providers_from,
     estimate_tokens,
     replay_messages,
-)
-from .compaction import (
-    DEFAULT_COMPACTOR_TIMEOUT_MS,
-    CompactionApplied,
-    CompactionPolicy,
-    compact_once,
 )
 from .deps import ENGINE_HOOKS, EngineDeps, HookDispatcher, ToolInvoker
 from .engine import run_turn

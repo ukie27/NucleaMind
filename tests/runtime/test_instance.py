@@ -24,10 +24,12 @@ from nucleamind.contracts import (
     NucleaError,
     StreamState,
 )
+from nucleamind.kernel.config import InstanceLock
 from nucleamind.kernel.plugins import PluginPhase
 from nucleamind.kernel.turn import CancelToken
 from nucleamind.runtime.cli.commands.run import _Interrupts
 from nucleamind.runtime.instance import AgentInstance, delivery_error
+from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginManifest
 
 from ._support import (
     MULTI_CHANNEL_ID,
@@ -88,6 +90,41 @@ async def test_stop_is_idempotent_and_publishes_both_events(tmp_path: Path) -> N
     assert names.count(EventName.INSTANCE_STOPPING) == 1
 
 
+async def test_a_failed_channel_start_rolls_back_the_whole_instance(tmp_path: Path) -> None:
+    """部分启动不能留下泵、插件任务、错误生命周期或仍被占用的实例锁。"""
+    _FAILING_CHANNELS.clear()
+    failing = PluginManifest(
+        id="failing-channel",
+        version="0.1.0",
+        sdk_range=">=1.0.0,<2.0.0",
+        setup="tests.runtime.test_instance:setup_failing_channel",
+        capabilities=(
+            CapabilityDecl(kind=CapabilityKind.CHANNEL, name=MULTI_CHANNEL_ID),
+        ),
+    )
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=(*TEST_MANIFESTS, failing))
+
+    with pytest.raises(RuntimeError, match="channel start failed"):
+        await instance.start()
+
+    channel = _FAILING_CHANNELS[0]
+    assert channel.started == 1
+    assert channel.stopped == 1
+    assert all(lifecycle.phase is PluginPhase.STOPPED for lifecycle in instance.lifecycles)
+    names = [event.name for event in instance.diagnostics.events.events()]
+    assert EventName.INSTANCE_READY not in names
+    assert names.count(EventName.INSTANCE_STOPPING) == 1
+    assert names.count(EventName.INSTANCE_STOPPED) == 1
+    InstanceLock(instance.layout.lock_path).acquire().release()
+
+    await instance.stop()
+    assert channel.stopped == 1
+    with pytest.raises(NucleaError) as caught:
+        await instance.start()
+    assert caught.value.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+
+
 async def test_stop_cancels_plugin_tasks(tmp_path: Path) -> None:
     """`EDG-104`/`EDG-105`：插件派生的后台任务在停止时被收走。"""
     write_config(tmp_path)
@@ -102,6 +139,21 @@ async def test_stop_cancels_plugin_tasks(tmp_path: Path) -> None:
     task = next(iter(ctx.tasks))
     await instance.stop()
     assert task.cancelled()
+
+
+class FailingStartChannel(ScriptedChannel):
+    async def start(self) -> None:
+        self.started += 1
+        raise RuntimeError("channel start failed")
+
+
+_FAILING_CHANNELS: list[FailingStartChannel] = []
+
+
+def setup_failing_channel(api: NucleaAPI) -> None:
+    channel = FailingStartChannel()
+    _FAILING_CHANNELS.append(channel)
+    api.register_channel(MULTI_CHANNEL_ID, channel)
 
 
 # ---------------------------------------------------------------- D28 生命周期

@@ -2,8 +2,8 @@
 
 职责：定义工具声明 `ToolSpec`、模型发出的 `ToolCall`、带执行上下文的 `ToolInvocation`、
 产物引用 `ArtifactRef` 与结果 `ToolResult`，以及权限、风险、并发与副作用四组枚举。
-不负责：执行工具、判定权限、截断内容、调度并发——那些在 `kernel/tools/`（`D11`）与
-`builtins/tools/`（`D19`–`D21`）；本模块不含任何 IO。
+不负责：执行工具、判定权限、截断内容、调度并发——那些属于 Kernel 调用机制与具体工具
+实现；本模块不含任何 IO。
 
 两条不肯让步的规则：
 
@@ -233,12 +233,9 @@ class ToolResult:
     `duration_ms` 与 `error.detail` 构成「安全的诊断信息」——堆栈不进这里，
     `NucleaError` 在构造时已完成脱敏。
 
-    **`trust` 决定 `content` 进模型时要不要被包成不可信数据块**（`D42`）。
-    在它之前，工具结果一律以裸文本进入 tool 消息，于是 `web.fetch` 抓回来的网页与
-    `memory.recall` 召回的记录只能靠工具自己在正文里加一行**提醒性**横幅——
-    那挡不住「忽略以上指令」，两个官方插件的 README 里都如实写着「是提醒不是隔离」。
-    现在隔离由契约层完成（与 `ContextFragment` 同一个 `wrap_untrusted`），
-    工具因此没有「自己拼一段文本混进去」的绕行路径。
+    **`trust` 决定 `content` 进入模型时是否包成不可信数据块**。这个判定必须是结构化
+    契约，不能依赖每个工具自行在正文里添加提醒性横幅；后者既无法验证，也容易遗漏。
+    包裹由契约层与 `ContextFragment` 共用的 `wrap_untrusted` 完成。
     """
 
     call_id: str
@@ -248,7 +245,7 @@ class ToolResult:
     side_effect: SideEffect
     data: Mapping[str, JsonValue] | None = None
     artifacts: tuple[ArtifactRef, ...] = ()
-    #: 要随本轮**终帧**出站消息发给用户的附件（`D47`）。与 `artifacts` 分工不同，见
+    #: 要随本轮**终帧**出站消息发给用户的附件。与 `artifacts` 分工不同，见
     #: `ArtifactRef` 的 docstring：产物面向 Workspace 与后续工具，附件面向 Channel 投递。
     #: 同一个文件常常两者都给一条——那不是重复，是两个消费者。
     #:

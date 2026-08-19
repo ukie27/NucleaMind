@@ -5,7 +5,7 @@
 `state_version` 与它状态目录里已记录的版本比对。
 不负责：认识 manifest（`R2` 禁止 `kernel/` import `sdk/`，翻译在 `runtime/plugin_plan.py`）、
 发现候选（`discovery.py`）、跑 `setup` 与事务性注册（`builtin_loader.py`）、
-判定权限（`permissions.py` 的账本，调用点在 `runtime/bootstrap.py::approve()`）、
+判定权限（`permissions.py` 的账本，调用点在 `runtime/plugin_bootstrap.py::approve()`）、
 决定失败的后果（那是装配根按 `critical` 判的）。
 
 **本模块与 `builtin_loader.py` 的分工就是阶段 A 与阶段 B**：前者只看声明、一个插件模块

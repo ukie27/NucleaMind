@@ -2,20 +2,20 @@
 
 职责：把 `plugins` 小节里那些**不是保留键**的条目解析成 `PluginEntry`，并在形状不对时
 给出带 JSON Pointer 的问题；顺带回答「哪些插件 id 在配置里出现过」。
-不负责：逐字段校验插件配置（那要用 manifest 自带的 `config_schema`，属 `D25` 阶段 A）、
+不负责：逐字段校验插件配置（那要用 manifest 自带的 `config_schema`，属阶段 A）、
 解析 `${VAR}`（`secrets.py`，且解析发生在 `ctx.secret()` 调用时而不是加载时）、
-决定谁被加载（`D25`/`D27`）。
+决定谁被加载。
 
 **从 `schema.py` 拆出来的分界线与 `fields.py` 那次相同**：`schema.py` 只放具体字段表，
-本模块一个字段名都不认识——它认识的是「插件条目长什么样」这个**形状**。`schema.py` 在
-`D22` 收口时已 474 行，而 `kernel/` 的单文件上限是 500。
+本模块一个字段名都不认识——它认识的是「插件条目长什么样」这个**形状**。独立模块也避免
+让具体字段表和插件条目解析共同挤压 Kernel 的 500 行上限。
 
 **为什么是 `plugins.<id>` 而不是 `plugins.config.<id>`**：技术方案 §6.7 写死的形状是
 `plugins.<plugin_id>.config`，`schema.py` 的模块 docstring 举的例子（`/plugins/acme/config/
 api_key`）也是它。代价是保留键与插件 id 共用一个命名空间，因此一个叫 `disable` 的插件
 无法配置——那被显式拒绝（`CONFIG_INVALID`）而不是静默当成保留键。
 
-**`secrets` 与 `config` 分开是 `CFG-003` 的结构性保证**（`D19` 的结论）：凭据不在插件
+**`secrets` 与 `config` 分开是 `CFG-003` 的结构性保证**：凭据不在插件
 自己的配置块里，`model-openai` 的 `config_schema` 因此根本没有 `api_key` 这个键，
 `ctx.config` 交给插件的那份东西里也就没有可泄漏的东西。`secrets` 的值只能是 `${VAR}`
 形态的字符串字面量，明文由 `ctx.secret()` 在调用时从环境变量取。
@@ -58,13 +58,13 @@ PLUGINS_SECTION: Final = "plugins"
 #: ——新增保留键时请沿用这条形状。
 RESERVED_PLUGIN_KEYS: Final = ("enabled", "disable", "search_paths", "stop_timeout_ms")
 
-#: 一个插件条目里的两个键。写成常量是因为 `D24` 的 `json_schema.py` 要按名字给它们各
+#: 一个插件条目里的两个键。写成常量是因为 `json_schema.py` 要按名字给它们各
 #: 派生一段 schema——两处各写一个字面量就会在改名时安静地对不上。
 CONFIG_KEY: Final = "config"
 SECRETS_KEY: Final = "secrets"
 
-#: `D30` 加的第三个键（§10.4、`BAS-004`）。`on_override_failure` 仍未落地，因此仍不放行
-#: ——放行一个没人读的键等于让它看起来生效了。
+#: 覆盖者被禁用时的显式策略（§10.4、`BAS-004`）。未实现的键不得提前放行，否则用户会
+#: 误以为配置已经生效。
 ON_DISABLE_KEY: Final = "on_disable"
 
 #: 一个插件条目允许的键。
@@ -215,7 +215,7 @@ def entries_to_json(
     """诊断视图里的插件条目（`NucleaConfig.to_json()` 用）。
 
     `secrets` 原样交出 `${VAR}` 字面量——那里从来就没有明文，`/config` 的脱敏因此是
-    结构性成立的（`D11`、`D22`）。按 id 排序，让 `nm config show` 的输出可比对。
+    结构性成立的。按 id 排序，让 `nm config show` 的输出可比对。
 
     `on_disable` 没写时交出 `None` 而不是省掉这个键：`/config` 是用来回答「现在生效的是
     什么」的，一个缺席的键与一个值为 null 的键在那份输出里应当都读作「没表态」。

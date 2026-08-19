@@ -6,9 +6,11 @@
 
 三条不变量（技术方案 §5.1）：契约对象一律不可变；契约层不出现 `Any`；契约层不出现 IO。
 
-当前已落地 `D02` 基础层（`ids` / `errors` / `events`）、`D03` 领域与执行层
-（`metadata` / `message` / `session` / `context` / `tool` / `model`）与 `D04` 能力层
-（`command` / `capability` / `protocols`）。
+子模块按职责分为三组：
+
+- 基础标识与诊断：`ids` / `errors` / `events`；
+- 消息与执行数据：`metadata` / `message` / `session` / `context` / `tool` / `model`；
+- 能力边界：`command` / `capability` / `protocols` / `compaction`。
 
 模块间的依赖方向（子模块只在 `TYPE_CHECKING` 下反向从包根导入 `JsonValue`，
 运行时不成环）：

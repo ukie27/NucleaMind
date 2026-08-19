@@ -14,8 +14,8 @@
 与诊断只需要十几个整数（`NFR-405` 给整个冷启动的预算是 300 ms）。抄一份字面量 + 一条
 对照测试，是这条约束下唯一诚实的做法——两处不一致时测试会响，而不是用户的实例会。
 
-拆出本模块是因为 `schema.py` 撞到了 `kernel/` 的 500 行上限（`D28`）：先被挪走的应当是
-「没有逻辑、只是被别处引用」的那部分，而不是字段表本身。
+默认值单独成模块，使字段表保持聚焦，也避免 `schema.py` 因纯常量接近 Kernel 的 500 行
+上限。新增字段仍应先在 `SECTION_SPECS` 声明，再按需要引用这里的机制默认值。
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ DEFAULT_SESSION_CONCURRENCY: Final = "queue"
 DEFAULT_QUEUE_MAX_SIZE: Final = 32
 DEFAULT_DEDUP_CAPACITY: Final = 4096
 DEFAULT_DEDUP_TTL_MS: Final = 600_000
-#: Channel 泵的扇出两项（`D33`）。`DEFAULT_CHANNEL_QUEUE_MAX_SIZE` 与
+#: Channel 泵的扇出两项。`DEFAULT_CHANNEL_QUEUE_MAX_SIZE` 与
 #: `DEFAULT_QUEUE_MAX_SIZE` **恰好相等不是巧合**：lane 队列接替（而不是叠加）
 #: `SessionScheduler` 的界成为 Channel 流量的唯一上限，取同一个数是为了让用户可见的
 #: 积压容量与串行泵时代一个字没变。
@@ -85,12 +85,12 @@ DEFAULT_INTERCEPTOR_TIMEOUT_MS: Final = 5_000
 DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS: Final = 3_000
 DEFAULT_COMPACTOR_TIMEOUT_MS: Final = 3_000
 
-#: 单个插件的停止预算（`D28`、`EDG-104`）。**与 `kernel/plugins/lifecycle.py` 的
+#: 单个插件的停止预算（`EDG-104`）。**与 `kernel/plugins/lifecycle.py` 的
 #: `DEFAULT_STOP_TIMEOUT_MS` 必须相等**，由
 #: `test_the_stop_budget_default_matches_the_config_schema` 盯着。
 DEFAULT_PLUGIN_STOP_TIMEOUT_MS: Final = 5_000
 
-#: 长期记忆的召回四项（`D44`、`MEM-003`）。**与 `kernel/turn/memory.py` 的同名 `DEFAULT_*`
+#: 长期记忆的召回四项（`MEM-003`）。**与 `kernel/turn/memory.py` 的同名 `DEFAULT_*`
 #: 必须逐一相等**，由 `test_memory_defaults_match_the_turn_package` 盯着。理由与上面那三个
 #: 超时完全相同：`kernel/config/` 不得 module-level import `kernel.turn`（那会把 engine 与
 #: asyncio 拖上配置路径，`NFR-405` 的冷启动预算 300 ms）。
@@ -103,7 +103,7 @@ DEFAULT_MEMORY_ON_FAILURE: Final = "degrade"
 #: 同源同序。
 MEMORY_ON_FAILURE_CHOICES: Final = ("degrade", "fail")
 
-#: 模型请求重试四项（`D48`、`MOD-003`）。**与 `kernel/turn/retry.py` 的同名 `DEFAULT_*`
+#: 模型请求重试四项（`MOD-003`）。**与 `kernel/turn/retry.py` 的同名 `DEFAULT_*`
 #: 必须逐一相等**，由 `test_retry_defaults_match_the_turn_package` 盯着。
 #:
 #: `DEFAULT_RETRY_MAX_ATTEMPTS` 是**总尝试次数含第一次**，因此 `1` 就是「不重试」——

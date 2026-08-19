@@ -1,29 +1,29 @@
 """生产级 `PluginContext`：内建与插件在运行期真正拿到的那个受限运行时（技术方案 §7.5）。
 
-职责：把实例的配置块、私有状态目录、事件总线、凭据引用与 `D22` 的两个门面
+职责：把实例的配置块、私有状态目录、事件总线、凭据引用与两个运行门面
 （`InstanceView` / `TurnControl`）装成一个 `PluginContext`，并按**已批准**的权限挡住四个
 资源访问器。
 不负责：决定谁被授予什么（`kernel/plugins/permissions.py` 的账本）、实现 `fs` / `net`
-/ `shell` 三个门面的行为（`runtime/access/`）、决定谁被加载（`D25`/`D27`）。
+/ `shell` 三个门面的行为（`runtime/access/`）、决定谁被加载。
 
 **这里是 `R5` 的落点**，与 `wiring.py` / `introspection.py` 同一条理由：`PluginContext`
 的类型在 `sdk/`，而 config 块、`InstanceLayout` 与 `EventBus` 在 `kernel/`——全项目只有
 `runtime/` 同时看得见两边。一致性靠 `build_plugin_context()` 的返回类型标注静态证明。
 
-**权限 = manifest 声明 ∩ 账本批准**（`D26`）：`PluginGrants` 由装配根从
+**权限 = manifest 声明 ∩ 账本批准**：`PluginGrants` 由装配根从
 `PermissionLedger.decide()` 拿到并传进来，本类只问它、不问 manifest。因此「声明了但用户
 没批准」与「根本没声明」在这里是同一种结局（`PERMISSION_DENIED`），靠 `detail` 里的
 `reason` 区分——两者的补救动作不同：前者敲 `nm permissions grant`，后者要改 manifest。
 
 **三个资源门面是真身**（`runtime/access/`），但它们**不是进程隔离**：同进程 Python 插件
 可以绕过它们直接 `import os`。这条诚实声明写在 `sdk/api.py`、`runtime/access/__init__.py`
-与技术方案 §13.7，不是隐含前提。六个内建一个都不用它们（`session_jsonl` 用 `pathlib`、
-`model_openai` 用 httpx、`tools_shell` 自己起子进程，各自如实声明权限，见 `D17`/`D19`/`D21`）。
+与技术方案 §13.7，不是隐含前提。内建实现也必须如实声明自身资源意图，但同进程代码仍可
+直接调用 Python/OS API；门面不是安全沙箱。
 
 **`instance` / `turns` 经一个可变持有者交下来**（`PluginRuntime`）：它们要等 registry 冻结
 与 orchestrator 装好之后才存在，而 `PluginContext` 必须在 `setup()` **之前**就交给插件。
-`D22` 的 `commands_source` 是 callable 也是同一条理由——那次是测试先发现的
-（构造时收快照会让 `/help` 永远为空）。
+实例观察数据同样通过 callable 获取；如果在 setup 时保存快照，`/help` 等命令会永远看到
+尚未完成注册的旧状态。
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class PluginRuntime:
 class PluginEventBridge:
     """把插件的 handler 接到 `EventBus` 的同步订阅面上。
 
-    `bus.publish()` 是同步的、绝不 await 订阅者（`D12` 的结论），而插件的 handler
+    `bus.publish()` 是同步的、绝不 await 订阅者，而插件的 handler
     **可以是同步的也可以是协程**（`sdk.EventHandler`）。两种形状各走一条路：
 
     - **同步 handler 就地跑完**。它与 bus 的原生订阅者形状完全相同，派生一条 Task
@@ -90,9 +90,8 @@ class PluginEventBridge:
       在那里凭空起一个 loop 才是错的。**同步 handler 因此在无 loop 的路径上仍然会跑**，
       这是它相对协程 handler 的实际优势，不是不一致。
 
-    **`D41` 之前只有第二条路**：`handler(event)` 的返回值被无条件喂给 `create_task`，
-    同步 handler 于是先被正常调用、再在一条 Task 里 `await None` 抛 `TypeError`。
-    官方插件 `feishu` 与 `openai-api` 都撞在这上面。见 `sdk/api.py::EventHandler`。
+    不能把 `handler(event)` 的返回值无条件交给 `create_task`：同步 handler 返回 `None`，
+    这样会额外产生一条 `await None` 的异常 Task。见 `sdk/api.py::EventHandler`。
     """
 
     def __init__(self, bus: EventBus, plugin_id: str) -> None:
@@ -285,8 +284,8 @@ class RuntimePluginContext:
     def secret(self, name: str) -> SecretStr:
         """取一个凭据：`plugins.<id>.secrets.<name>` 的 `${VAR}` 字面量 → 环境变量。
 
-        **未授权与「授权了但没配」必须可区分**（`sdk/api.py` 写死的约定，`D19` 的
-        `model_openai` 依赖它把「去改权限」和「去补配置」两种补救分开）。变量名没导出、
+        **未授权与「授权了但没配」必须可区分**（`sdk/api.py` 的公开约定），这样才能把
+        「去改权限」和「去补配置」两种补救分开。变量名没导出、
         或导出成空串，同样是 `CONFIG_SECRET_MISSING`——由 `resolve_text()` 抛出，
         错误里只有变量名与位置（`EDG-502`）。
         """
@@ -323,7 +322,7 @@ class RuntimePluginContext:
         return resolved if isinstance(resolved, SecretStr) else SecretStr(resolved)
 
     async def shutdown(self) -> None:
-        """本插件的停止动作（`D28`）：退订事件、取消后台任务、等它们回收。
+        """本插件的停止动作：退订事件、取消后台任务、等待它们回收。
 
         `EDG-105` 的三项里这里做两项。**第三项「注销能力」不在这里，也不在运行期**：
         registry 解析后只读（`NFR-403`），而首版不热更新（技术方案 §10.4）——一个被

@@ -9,7 +9,7 @@ Channel、跑 CLI 入口、按相反顺序停止一切并释放实例锁。
 `channel.receive()` 来、经 `orchestrator.handle()`、出站经 `deliver` 路由回
 `channel.deliver()`。CLI 与未来任何平台走的是同一段代码，没有第二条路径（`MSG-007`）。
 
-**泵按 conversation 扇出**（`D33`）：机制在 `kernel/routing/fanout.py`，这里只负责接线。
+**泵按 conversation 扇出**：机制在 `kernel/routing/fanout.py`，这里只负责接线。
 同一 conversation 内严格按到达顺序串行（`EDG-202` 因此逐字成立——在一条 Channel 上
 `conversation_id ↔ SessionKey` 是双射），跨 conversation 并发。在此之前一条 Channel
 同时只跑一条 turn，一个用户的慢 turn 会卡住同一个 bot 上所有人。
@@ -28,6 +28,7 @@ import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from nucleamind.contracts import (
     CancelSignal,
@@ -82,6 +83,17 @@ __all__ = ["AgentInstance", "Closer", "TurnReceipt", "delivery_error", "outbound
 Closer = Callable[[], Awaitable[None]]
 
 
+class _InstancePhase(StrEnum):
+    """实例内部生命周期。失败启动会先进入 FAILED，再由同一停止路径收敛到 STOPPED。"""
+
+    CREATED = "created"
+    STARTING = "starting"
+    RUNNING = "running"
+    FAILED = "failed"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+
+
 @dataclass(slots=True)
 class AgentInstance:
     """一个装好的实例。`bootstrap()` 是它唯一的构造者。"""
@@ -99,12 +111,12 @@ class AgentInstance:
     channels: tuple[tuple[str, Channel], ...] = ()
     outcomes: tuple[LoadOutcome, ...] = ()
     contexts: tuple[RuntimePluginContext, ...] = ()
-    #: 每个提供方的生命周期，与 `contexts` 同序（`D28`）。装配根按加载结果把它们置于
+    #: 每个提供方的生命周期，与 `contexts` 同序。装配根按加载结果把它们置于
     #: `LOADED` 或 `FAILED`；`start()` / `stop()` 在这里继续推进。
     lifecycles: tuple[PluginLifecycle, ...] = ()
     #: 单个插件的停止预算（配置 `plugins.stop_timeout_ms`，`EDG-104`）。
     stop_timeout_ms: int = DEFAULT_STOP_TIMEOUT_MS
-    #: Channel 泵的扇出上界（配置 `routing.channel_*`，`D33`）。
+    #: Channel 泵的扇出上界，来自配置 `routing.channel_*`。
     channel_concurrency: int = DEFAULT_CHANNEL_CONCURRENCY
     channel_queue_max_size: int = DEFAULT_CHANNEL_QUEUE_MAX_SIZE
     runtime: PluginRuntime = field(default_factory=PluginRuntime)
@@ -112,40 +124,57 @@ class AgentInstance:
     closers: tuple[Closer, ...] = ()
     _pumps: list[asyncio.Task[None]] = field(default_factory=list, init=False)
     _fanouts: list[ConversationFanout] = field(default_factory=list, init=False)
-    _started: bool = field(default=False, init=False)
-    _stopped: bool = field(default=False, init=False)
+    _active_channels: list[Channel] = field(default_factory=list, init=False)
+    _phase: _InstancePhase = field(default=_InstancePhase.CREATED, init=False)
+    _lifecycle_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     # ------------------------------------------------------------------ 生命周期
 
     async def start(self) -> None:
-        """阶段 D：启动 Channel 并派生入站泵，随后发 `instance.ready`（§10.1 步骤 9–10）。"""
-        if self._started:
-            return
-        self._started = True
-        for lifecycle in self.lifecycles:
-            # 加载失败的提供方留在 `FAILED`——它没有被启动，说它 `STARTED` 会让停止流程
-            # 与诊断都相信有东西在跑。
-            if lifecycle.phase is PluginPhase.LOADED:
-                lifecycle.advance(PluginPhase.STARTED)
-        for channel_id, channel in self.channels:
-            await channel.start()
-            fanout = self._fanout_for(channel)
-            self._fanouts.append(fanout)
-            self._pumps.append(
-                asyncio.create_task(fanout.run(channel.receive()), name=f"pump:{channel_id}")
-            )
-        await self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_READY))
-        self.bus.publish(
-            EventName.INSTANCE_READY,
-            payload={
-                "channels": [channel_id for channel_id, _ in self.channels],
-                "capabilities": len(self.report.active),
-            },
-        )
+        """原子启动 Channel 与入站泵；任一步失败都把整个实例停止干净后原样抛出。"""
+        async with self._lifecycle_lock:
+            if self._phase is _InstancePhase.RUNNING:
+                return
+            if self._phase is not _InstancePhase.CREATED:
+                raise NucleaError(
+                    ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                    "实例只能从已装配状态启动。",
+                    detail={"phase": self._phase.value},
+                )
+            self._phase = _InstancePhase.STARTING
+            try:
+                for channel_id, channel in self.channels:
+                    # 即使 start() 做到一半才抛，stop() 仍应有机会释放它已经拿到的资源。
+                    self._active_channels.append(channel)
+                    await channel.start()
+                    fanout = self._fanout_for(channel)
+                    self._fanouts.append(fanout)
+                    self._pumps.append(
+                        asyncio.create_task(
+                            fanout.run(channel.receive()), name=f"pump:{channel_id}"
+                        )
+                    )
+                await self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_READY))
+                for lifecycle in self.lifecycles:
+                    # 加载失败的提供方没有被启动，保持 FAILED 等停止路径收尾。
+                    if lifecycle.phase is PluginPhase.LOADED:
+                        lifecycle.advance(PluginPhase.STARTED)
+                self.bus.publish(
+                    EventName.INSTANCE_READY,
+                    payload={
+                        "channels": [channel_id for channel_id, _ in self.channels],
+                        "capabilities": len(self.report.active),
+                    },
+                )
+                self._phase = _InstancePhase.RUNNING
+            except BaseException:
+                self._phase = _InstancePhase.FAILED
+                await self._stop_locked()
+                raise
 
     async def run_cli(self, argv: Sequence[str], cancel: CancelSignal) -> int:
         """跑内建（或覆盖了它的）CLI 入口。**它拥有进程**，返回值即退出码。"""
-        if not self._started:
+        if self._phase is not _InstancePhase.RUNNING:
             await self.start()
         return await self.cli_entry.run(argv, cancel)
 
@@ -159,15 +188,21 @@ class AgentInstance:
 
     async def stop(self) -> None:
         """按相反顺序停止。**约定不抛**：一条失败的收尾不该盖住其余收尾。"""
-        if self._stopped:
+        async with self._lifecycle_lock:
+            await self._stop_locked()
+
+    async def _stop_locked(self) -> None:
+        """持有生命周期锁时执行唯一的停止路径。"""
+        if self._phase in {_InstancePhase.STOPPING, _InstancePhase.STOPPED}:
             return
-        self._stopped = True
+        self._phase = _InstancePhase.STOPPING
         self.bus.publish(EventName.INSTANCE_STOPPING)
         self._report_orphans()
         await self._safe(self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_SHUTDOWN)))
 
-        for _, channel in self.channels:
+        for channel in reversed(self._active_channels):
             await self._safe(channel.stop())
+        self._active_channels.clear()
         for pump in self._pumps:
             pump.cancel()
         if self._pumps:
@@ -178,7 +213,7 @@ class AgentInstance:
             await fanout.drain(cancel=True)
         self._fanouts.clear()
 
-        # 插件的停止（`D28`）：逆加载序、逐个、各有独立超时（`PLG-005`、`EDG-104`）。
+        # 插件按逆加载序逐个停止，每个插件拥有独立超时预算。
         await self._stop_plugins()
 
         self.bus.publish(EventName.INSTANCE_STOPPED)
@@ -186,19 +221,20 @@ class AgentInstance:
             await self._safe(closer())
         if self.lock is not None:
             self.lock.release()
+        self._phase = _InstancePhase.STOPPED
 
     # ------------------------------------------------------------------ 内部
 
     async def _stop_plugins(self) -> None:
-        """按逆加载序停掉每个提供方，并把结果发成事件（`D28`）。
+        """按逆加载序停掉每个提供方，并把结果发成事件。
 
-        **停止顺序不在这里算**（`PLG-005`）：`contexts` 是装配根按 `wire_all()` 的
+        **停止顺序不在这里算**：`contexts` 是装配根按 `wire_all()` 的
         manifest 顺序追加的，而那个顺序对外部插件就是 `LoadPlan.order`（内建在前）。
         `units_for()` 把它翻过来，因此「被依赖者后停」与「被依赖者先起」共用同一个序，
         没有第二次拓扑排序。
 
         每个插件各有独立超时：一个停不下来的插件只让自己记一条
-        `TIMEOUT_PLUGIN_STOP`，不会连累后面的插件或扣住进程退出（`EDG-104`）。
+        `TIMEOUT_PLUGIN_STOP`，不会连累后面的插件或扣住进程退出。
         """
         actions: dict[str, StopAction] = {ctx.plugin_id: ctx.shutdown for ctx in self.contexts}
         units = units_for(
@@ -318,9 +354,8 @@ class AgentInstance:
         """投递一条**合成的回音**（背压/去重的 `[未受理：…]`），失败只记不抛。
 
         与 `bootstrap.py::deliver` 分开是因为它走的不是 `OrchestratorDeps.deliver`：
-        这些消息由泵自己合成，orchestrator 根本没见过它们。但**失败的记法必须相同**——
-        `D43` 之前这里折的是 `plugin.failed`，于是「回音发不出去」与「某个插件炸了」在
-        事件流里长得一样，而前者恰恰是用户什么都收不到的那种情况。
+        这些消息由泵自己合成，Orchestrator 根本没见过它们。但**投递失败的记法必须相同**：
+        这里发布 `channel.delivery_failed`，不能把“回音发不出去”误报成插件执行故障。
         """
         try:
             await channel.deliver(message)
@@ -349,8 +384,8 @@ def outbound_router(
 ) -> Callable[[OutboundMessage], Awaitable[None]]:
     """造 `OrchestratorDeps.deliver`：按 `channel_id` 把出站消息路由回对应 Channel。
 
-    **它在这里而不是在装配根里**：`bootstrap.py` 只负责「装」，而「出站怎么走」是本模块
-    的职责第二条。它贴着 800 行上限，把一段有分支的运行期逻辑塞进去只会让下一次改动更难。
+        **它在这里而不是在装配根里**：`bootstrap.py` 只负责「装」，而「出站怎么走」是本模块
+        的职责第二条。路由行为与实例运行期放在一起，装配根只传入完成接线后的 callable。
 
     找不到对应 Channel 时**静默丢弃**（`MSG-006`：寻址在消息自己身上）：那是
     `embed.submit()` 这类没有 Channel 的调用方的正常情形，它拿的是 `TurnReceipt.messages`。

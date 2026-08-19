@@ -2,19 +2,17 @@
 
 职责：按顺序对每个请求开批次、调用方给的 Host 跑 `setup`、核对声明、提交或回滚，
 并如实报告每个提供方的结果。
-不负责：决定加载哪些提供方（内建来自 `builtins/registry.py` 经 `runtime/wiring.py` 翻译，
-外部插件在 `D27`）、依赖拓扑排序（`D27`）、解析覆盖（`resolve_into`）、构造 Host 与
-`PluginContext`（`D26` 与装配根）。
+不负责：决定加载哪些提供方、依赖拓扑排序、解析覆盖、构造 Host 与 `PluginContext`；
+这些由发现/规划机制和 Runtime 组装根负责。
 
-**本模块读不到 `BUILTIN_MANIFESTS`，这是刻意的**（与开发方案「静态内建清单 bootstrap」
-的字面表述有出入，取其意不取其形）：`R2` 只允许 `kernel/` import `contracts` 与 `kernel`，
+**本模块读不到 `BUILTIN_MANIFESTS`，这是刻意的**：`R2` 只允许 `kernel/` import
+`contracts` 与 `kernel`，
 而 `PluginManifest` 在 `sdk/`、`BUILTIN_MANIFESTS` 在 `builtins/`，两个都够不着。于是本
 模块做成一个**对 `LoadRequest` 泛化的 setup 运行器**，manifest 的翻译留给
-`runtime/wiring.py`。好处不止是绕开规则：`D27` 的外部插件 loader 因此是它的同级调用方
-而不是第二份实现，「内建与外部插件的差异不得延伸到能力注册接口」（`SDK-007`）才真正成立。
+`runtime/wiring.py`。因此内建和外部插件共用同一个 setup 运行器，而不是各维护一份注册实现。
 
-**零请求是一等路径**（`PLG-007`、`EDG-101`）：`D16` 的 `BUILTIN_MANIFESTS` 就是空元组，
-而「未启用任何插件时实例照常启动」是需求写死的。因此 `load_into(registry, ())` 返回空元组
+**零请求是一等路径**（`PLG-007`、`EDG-101`）：未启用可选插件时仍应正常装配。因此
+`load_into(registry, ())` 返回空元组
 并让 registry 保持可写可空，它有自己的测试，不是一条退化分支。
 
 **`critical` 决定失败的后果**（`PLG-004`、`EDG-106`）：关键提供方失败直接抛，非关键的
@@ -127,8 +125,8 @@ async def _run_one(
         batch.rollback()
         return LoadOutcome(provider=request.provider, error=error)
     except Exception as exc:
-        # 第三方 `setup` 抛什么都可能。折成 `PLUGIN_LOAD_FAILED` 时**只放类型名不放消息**
-        # ——与 `D13` 的命令 handler 同一条理由：异常文本可能带着凭据。
+        # 第三方 `setup` 抛什么都可能。折成 `PLUGIN_LOAD_FAILED` 时**只放类型名不放消息**：
+        # 异常文本可能带着凭据。
         # 只捕 `Exception`：`BaseException`（取消、Ctrl-C）要放行。
         batch.rollback()
         return LoadOutcome(
@@ -153,8 +151,8 @@ async def load_into(
 ) -> tuple[LoadOutcome, ...]:
     """按给定顺序加载全部请求，返回逐个提供方的结果。
 
-    `resolve_setup` 是可注入的（默认 `import_setup`）：这让本模块在**没有任何真实内建**的
-    情况下依然完全可测——测试给一个假解析器，永远不碰导入系统。`D16` 正处在这个状态。
+    `resolve_setup` 是可注入的（默认 `import_setup`）：测试可以提供假解析器，不触碰真实
+    导入系统或插件模块。
 
     **`host_for` 由调用方提供而不是在这里 `CapabilityHost(...)`**：Host 要拿一个
     `PluginContext`，而 `R2` 禁止 `kernel/` 认识那个类型。把构造交给

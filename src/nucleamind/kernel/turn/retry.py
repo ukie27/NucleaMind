@@ -7,23 +7,13 @@
 （Provider 自己的事）、长度截断后的续写（那不是重试，见下方第 4 条）；本模块除退避等待
 之外不含 IO，也不认识 session、工具与配置文件。
 
-**为什么是包一层 `ModelProvider` 而不是让 engine 自己重试**，四条：
+重试采用 `ModelProvider` 包装器，因为它恰好拥有安全重试所需的边界：完整的单次请求、是否
+已经向下游放行实质分片，以及本次调用是否拿到响应。Orchestrator 不能重跑整个 Engine；
+那会丢失 Engine 累积的消息并可能重复执行工具。Engine 也不需要为重试增加新的依赖槽。
 
-1. **在 orchestrator 重跑 `run_turn` 是错的。** 它手里只有 `state.transcript`，engine
-   累积的 `messages`（含**已经执行过的工具结果**）它拿不到；重调一次会从第一轮重来，
-   已经发生的副作用被再做一遍。包装器只看得见一个 `ModelRequest`，结构上不可能。
-2. **`orchestration.EventTap` 是现成先例**：包住一个协作者来补事件，而不是给 engine 开
-   第二条对外通道。`EngineDeps` 的四个槽因此一个都不加。
-3. **`engine.py` 一个字不改**，它的 ≤400 行预算与 import 白名单都不动。
-4. **「已经流给用户的东西不能重来」这条规则只有在这一层表达得出来**：包装器知道自己
-   往下游 yield 过没有，而 engine 拿到的已经是一条分片流。
-
-**它细化而不是推翻 engine/folding 那两句「重试属于 `D14`」**：那两句讲的是**响应改写**
-——`after_model_response` 是观察者、`HookOutcome` 没有 `response` 槽，拿一个
-`MAX_TOKENS` 响应去延长它这条路在契约层封死。「请求根本没拿到响应」是另一件事，重发同
-一个请求不改写任何响应。**长度截断续写（`_MAX_LENGTH_RECOVERIES`）由 engine 在同一
-消息循环内完成**；本模块只负责没有拿到响应时的重发，不参与已经收到的
-`StopReason.MAX_TOKENS` 响应。
+重试与续写按“是否拿到响应”区分：请求在首个实质分片之前失败可以重发；收到
+`StopReason.MAX_TOKENS` 后的续写由 Engine 在同一消息序列与预算账本上完成。本模块不改写
+已经收到的响应，也不重发任何用户已经看见的内容。
 """
 
 from __future__ import annotations
@@ -78,9 +68,8 @@ DEFAULT_RETRY_BASE_DELAY_MS: Final = 500
 DEFAULT_RETRY_MAX_DELAY_MS: Final = 8_000
 DEFAULT_RETRY_EMPTY_RESPONSE: Final = True
 
-#: 退避等待期间查取消的间隔。`CancelSignal` 只有 `requested` 可轮询（`CancelToken.wait()`
-#: 属 kernel 扩展面，而这里拿到的是契约那个只读面），`tools_shell/process.py` 的同一条
-#: 先例：等到延迟走完才响应取消，等于在退避期间不支持取消。
+#: 退避等待期间检查取消的间隔。这里拿到的是只读 `CancelSignal`，不能依赖 Kernel 专有的
+#: `CancelToken.wait()`；如果等完整个延迟才检查，退避期间就无法及时取消。
 RETRY_POLL_MS: Final = 50
 
 #: 首个实质分片出现之前最多暂存多少片。撞上它就放弃判空、整批放行、从此直通——
@@ -116,8 +105,8 @@ class RetryPolicy:
     max_attempts: int = DEFAULT_RETRY_MAX_ATTEMPTS
     base_delay_ms: int = DEFAULT_RETRY_BASE_DELAY_MS
     max_delay_ms: int = DEFAULT_RETRY_MAX_DELAY_MS
-    #: 空回复（既无正文也无工具调用）算不算故障。`False` = 原样放行，也就是 `D48` 之前的
-    #: 行为：`emit_outbound` 对空正文终帧返回 `None`，用户什么都收不到而 turn 记
+    #: 空回复（既无正文也无工具调用）算不算故障。`False` 表示原样放行：
+    #: `emit_outbound` 对空正文终帧返回 `None`，用户什么都收不到而 turn 记
     #: `COMPLETED`。
     retry_empty_response: bool = DEFAULT_RETRY_EMPTY_RESPONSE
 
@@ -143,8 +132,8 @@ def retry_delay_ms(
 
     判定顺序里第一条是硬的：**取消类一律不重试**。`cancel.py` 写的是
     `retryable=reason is not CancelReason.SHUTDOWN`，也就是说**取消错误自称可重试**——
-    重发一个已经被用户按了 Ctrl-C 的请求是最不该发生的事。判据取 `ErrorCategory` 而不是
-    逐个列举错误码（`D44` 的同一条）。
+    重发一个已经被用户按了 Ctrl-C 的请求是最不该发生的事。判据取 `ErrorCategory`，避免
+    新增取消错误码时漏改这里的枚举清单。
 
     其余全看 `error.retryable`。这是唯一依据：Provider 已经如实标过了
     （`model_openai/faults.py` 连 429 里的「限速」与「欠费」都分开标），kernel 再按状态码
@@ -194,7 +183,7 @@ async def wait_before_retry(delay_ms: int, cancel: CancelSignal) -> None:
 
 
 class RetryingModel:
-    """包住一个 `ModelProvider`，把可重试的失败与空回复变成重发（`D48`）。
+    """包住一个 `ModelProvider`，把可重试的失败与空回复变成重发。
 
     结构化满足 `contracts.ModelProvider`；装配在 `EngineDeps.model` 上，engine 因此
     不知道重试存在。`ledger` 与 engine 是同一本账，用来回答两个问题：
@@ -323,7 +312,7 @@ class RetryingModel:
         """空回复算不算故障。开关关掉时恒为假——那正是「原样放行」。
 
         **还有一条比开关更硬的**：只在这条 turn **还没执行过工具**时才算。一条已经跑过
-        工具的 turn 产出了真东西——工具结果、产物、`D47` 挂在终帧上的出站附件都已经落地；
+        工具的 turn 产出了真东西——工具结果、产物和终帧附件都已经落地；
         因为模型的收尾句是空的就把它判成 `FAILED`，会把这些真做完了的事一起否掉。
         而首轮就空回复的那条 turn 什么都没有，那才是「用户彻底看不到东西」的情形，
         也正是本模块要修的那一个。
@@ -354,9 +343,8 @@ class RetryingModel:
     ) -> bool:
         """把这次失败发出去，并在该重试时等完退避。返回是否可以重发。
 
-        **每次失败的尝试都发一条 `model.request_failed`**（那个取值早就在冻结事件清单里、
-        `D48` 之前零发布者）：一次成功的重试因此在事件流里是 N 条 `model.request_failed`
-        加一条 `model.response_received`，而不是悄悄好了。
+        **每次失败的尝试都发一条 `model.request_failed`**：一次成功的重试因此在事件流里是
+        N 条 `model.request_failed` 加一条 `model.response_received`，而不是悄悄恢复。
         """
         delay = retry_delay_ms(error, attempt, self._policy, jitter=self._jitter)
         if delay is not None and delay >= self._ledger.remaining_ms():

@@ -12,19 +12,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+import nucleamind.runtime.bootstrap as bootstrap_module
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS
 from nucleamind.contracts import (
+    CancelSignal,
     CapabilityKind,
     ErrorCode,
     EventName,
     NucleaError,
     SessionKey,
+    SideEffect,
     StreamState,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
 )
 from nucleamind.kernel.config import InstanceLock
 from nucleamind.kernel.turn import CancelToken
@@ -34,7 +41,8 @@ from nucleamind.runtime.bootstrap import (
     declared_grants,
 )
 from nucleamind.runtime.instance import AgentInstance
-from nucleamind.sdk import CapabilityDecl, PluginManifest
+from nucleamind.runtime.plugin_context import RuntimePluginContext
+from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginManifest
 
 from ._support import (
     FAKE_MODEL_ID,
@@ -284,9 +292,153 @@ async def test_a_failing_cli_override_falls_back_to_the_builtin(tmp_path: Path) 
         await instance.stop()
 
 
+async def test_cli_fallback_stops_the_discarded_setup_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回落会重跑 setup；第一轮产生的任务和订阅必须先被完整清理。"""
+    _SETUP_CONTEXTS.clear()
+    _SETUP_TASKS.clear()
+    tracked = PluginManifest(
+        id="tracked-setup",
+        version="0.1.0",
+        sdk_range=">=1.0.0,<2.0.0",
+        setup="tests.runtime.test_bootstrap:setup_with_side_effects",
+        capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="startup.probe"),),
+    )
+    broken = PluginManifest(
+        id="cli-broken",
+        version="0.1.0",
+        sdk_range=">=1.0.0,<2.0.0",
+        setup="tests.runtime.test_bootstrap:setup_broken_cli",
+        capabilities=(
+            CapabilityDecl(
+                kind=CapabilityKind.CLI_ENTRY, name="broken", overrides="builtin:stdio"
+            ),
+        ),
+        critical=False,
+    )
+    write_config(tmp_path)
+    actual_cli_entry_from = bootstrap_module.cli_entry_from
+    lookups = 0
+
+    def miss_the_first_cli(registry: object) -> object:
+        nonlocal lookups
+        lookups += 1
+        if lookups == 1:
+            return None
+        return actual_cli_entry_from(registry)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(bootstrap_module, "cli_entry_from", miss_the_first_cli)
+
+    instance = await _boot(tmp_path, manifests=(*TEST_MANIFESTS, tracked, broken))
+    try:
+        assert len(_SETUP_CONTEXTS) == 2
+        discarded, active = _SETUP_CONTEXTS
+        discarded_task, active_task = _SETUP_TASKS
+        assert discarded.stopping
+        assert discarded.bridge._subscription is None  # noqa: SLF001 - 验失败回滚
+        assert discarded_task.cancelled()
+        assert not active.stopping
+        assert not active_task.done()
+    finally:
+        await instance.stop()
+    assert active_task.cancelled()
+
+
+async def test_critical_setup_failure_rolls_back_prior_plugin_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """启动没有返回实例时，装配根仍拥有并必须清理已经产生的资源。"""
+    _SETUP_CONTEXTS.clear()
+    _SETUP_TASKS.clear()
+    tracked = PluginManifest(
+        id="tracked-setup",
+        version="0.1.0",
+        sdk_range=">=1.0.0,<2.0.0",
+        setup="tests.runtime.test_bootstrap:setup_with_side_effects",
+        capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="startup.probe"),),
+    )
+    failing = PluginManifest(
+        id="critical-failure",
+        version="0.1.0",
+        sdk_range=">=1.0.0,<2.0.0",
+        setup="tests.runtime.test_bootstrap:setup_critical_failure",
+        capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="startup.fail"),),
+        critical=True,
+    )
+    sink = _TrackingSink()
+    monkeypatch.setattr(bootstrap_module, "JsonlFileSink", lambda path: sink)
+    write_config(tmp_path, logging={"file_enabled": True})
+
+    with pytest.raises(NucleaError) as caught:
+        await _boot(tmp_path, manifests=(*TEST_MANIFESTS, tracked, failing))
+
+    assert caught.value.code is ErrorCode.PLUGIN_LOAD_FAILED
+    tracked_ctx = _SETUP_CONTEXTS[0]
+    assert tracked_ctx.stopping
+    assert tracked_ctx.bridge._subscription is None  # noqa: SLF001 - 验失败回滚
+    assert _SETUP_TASKS[0].cancelled()
+    assert sink.closed
+    InstanceLock(tmp_path / "instance.lock").acquire().release()
+
+
 def setup_broken_cli(api: object) -> None:
     """声明了 CLI 入口却一项都不注册。`CapabilityHost.finish()` 会如实报出来。"""
     del api
+
+
+_SETUP_CONTEXTS: list[RuntimePluginContext] = []
+_SETUP_TASKS: list[asyncio.Task[None]] = []
+
+
+class _TrackingSink:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __call__(self, event: object) -> None:
+        del event
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _StartupProbe:
+    async def execute(self, invocation: ToolInvocation, cancel: CancelSignal) -> ToolResult:
+        del cancel
+        return ToolResult(
+            call_id=invocation.call.call_id,
+            ok=True,
+            content="ok",
+            truncated=False,
+            side_effect=SideEffect.NONE,
+        )
+
+
+async def _wait_forever() -> None:
+    await asyncio.Event().wait()
+
+
+def setup_with_side_effects(api: NucleaAPI) -> None:
+    """留下两类必须回滚的 setup 副作用：事件订阅与后台任务。"""
+    ctx = api.ctx
+    assert isinstance(ctx, RuntimePluginContext)
+    ctx.events.subscribe(EventName.INSTANCE_READY, lambda event: None)
+    ctx.spawn_task(_wait_forever(), name="startup-probe")
+    _SETUP_CONTEXTS.append(ctx)
+    _SETUP_TASKS.append(next(iter(ctx.tasks)))
+    api.register_tool(
+        ToolSpec(
+            name="startup.probe",
+            description="启动回滚测试探针。",
+            parameters={"type": "object", "additionalProperties": False},
+        ),
+        _StartupProbe(),
+    )
+
+
+def setup_critical_failure(api: NucleaAPI) -> None:
+    del api
+    raise RuntimeError("boom")
 
 
 # ------------------------------------------------------------------ 步骤 9–10 与运行

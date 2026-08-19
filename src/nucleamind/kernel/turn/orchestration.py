@@ -37,8 +37,8 @@ from nucleamind.contracts import (
 from nucleamind.kernel.observability import EventBus
 from nucleamind.kernel.routing import DedupCache, Dispatcher, SessionScheduler
 
-from .context_builder import DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS, ContextProviderBinding
 from .compaction import CompactionPolicy
+from .context_builder import DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS, ContextProviderBinding
 from .deps import EngineDeps, HookDispatcher, ToolInvoker
 from .limits import BudgetLedger, TurnLimits
 from .memory import MemoryRecall

@@ -3,9 +3,9 @@
 职责：并发调用全部生效的 `ContextProvider`（各自独立超时、失败按关键性分叉），分发
 `context_assemble` 拦截器，按 `trust` 决定片段的放置位置，并在 `context_max_tokens`
 之内裁剪出一份 `ModelMessage` 序列。
-不负责：调用模型、决定谁是 Provider（registry 说了算）、持久化压缩历史（D51 的
-`compaction.py` 在本函数返回后协调）、**长期记忆的召回策略与降级**
-（`memory.py`，`D44`——这里只调它一次，把结果与其余片段同批处理）——本模块不做任何 IO，
+不负责：调用模型、决定谁是 Provider（Registry 说了算）、持久化压缩历史
+（`compaction.py` 在本函数返回后协调）、**长期记忆的召回策略与降级**
+（`memory.py` 负责；这里只调用一次并把结果与其余片段同批处理）。本模块不做任何 IO，
 只 await 注入进来的 Provider 与 Hook。
 
 **四条会影响正确性的规则**：
@@ -21,7 +21,7 @@
 4. **拦截器在裁剪之前**。先裁后钩等于让插件在预算之外再塞东西。
 
 **仍超限怎么办**：丢到只剩系统段与当前输入仍超预算时抛 `INPUT_TOO_LARGE`
-（→ turn `FAILED`）。普通裁剪始终先产出确定结果；D51 的可选 compactor 只在历史确实被裁
+（→ turn `FAILED`）。普通裁剪始终先产出确定结果；可选 Compactor 只在历史确实被裁
 时尝试持久化摘要，失败不会改变本次已组装好的上下文。
 """
 
@@ -94,7 +94,7 @@ _CHARS_PER_TOKEN: Final = 3
 class RegisteredContextProvider:
     """`CapabilityKind.CONTEXT` 的注册载荷形状（与 `hooks.RegisteredHook` 同构）。
 
-    `critical` 由注册方（`D16` 的 Host）从 manifest 带进来：`kernel/` 不认识 manifest，
+    `critical` 由 Host 从 manifest 带进来：`kernel/` 不认识 manifest，
     而 `CTX-005` 的「按关键性中止或跳过」必须在这一层判定。
     """
 
@@ -210,7 +210,7 @@ async def assemble(
     `extra_fragments` 是命令注入的片段（`CommandResult.fragments`，`CMD-004`）：它们与
     Provider 产出的片段同批参与拦截、放置与裁剪，没有旁路。
 
-    `memory` 是长期记忆的召回（`D44`，`None` = 不启用）。它产出的片段**与上面两批完全同
+    `memory` 是长期记忆的召回（`None` = 不启用）。它产出的片段**与上面两批完全同
     等**：同批拦截、同批放置、同批裁剪。做成 `assemble` 的一个参数而不是让 orchestrator
     自己召回再拼进 `extra_fragments`，是因为「召回」就是上下文组装的 a 步——放在外面会让
     「片段从哪来」有两个答案，而 `orchestrator.py` 也贴着 500 行上限。**查询词是本次输入**

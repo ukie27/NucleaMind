@@ -3,8 +3,8 @@
 职责：定义 `CapabilityDecl` / `PermissionDecl` / `PluginManifest` 三个数据类型及其校验
 规则，并提供把外部数据（`plugin.toml`、entry point 模块里的字面量）解析为 manifest 的
 `parse_manifest()`。
-不负责：发现插件、导入 `setup`、解析依赖拓扑、判定权限是否已被授权——那些在
-`kernel/plugins/`（`D25`–`D27`）；本模块不读文件、不访问网络、不碰全局状态。
+不负责：发现插件、导入 `setup`、解析依赖拓扑、判定权限是否已被授权；本模块不读文件、
+不访问网络、不碰全局状态。
 
 **导入本模块必须无副作用且廉价**（§7.2 硬约束）。阶段 A 校验要保持在毫秒级
 （`NFR-401`、`NFR-403`），所以这里只有类型定义与纯函数，没有任何 import 时执行的逻辑。
@@ -62,33 +62,13 @@ __all__ = [
     "parse_manifest",
 ]
 
-#: manifest 的 `config_schema` 文档类型：**一个 JSON 对象，值一律 `object`**。
-#: 语义上就是 `contracts.JsonSchema`，但那个类型在这里用不了，而中间的几档也都不行——
-#: `D41` 逐个试过，过程记在这里，免得下一个人再试一遍：
+#: Manifest 中 `config_schema` 的静态类型。不能直接使用递归的 `contracts.JsonValue`：
+#: pydantic 2 在 Python 3.11 解析匿名递归别名时可能递归失败，而其内建 JSON 类型又使用
+#: 不变的 `list`/`dict`，无法接受插件常用的只读 `Sequence`/`Mapping`。
 #:
-#: 1. **`contracts.JsonValue` 不行。** 它是匿名递归 Union（`Union[..., Sequence[
-#:    "JsonValue"], ...]`），pydantic 解析那个前向引用时 `typing._eval_type` 自己就先
-#:    `RecursionError`——发生在生成 core schema **之前**，因此 `SkipValidation` /
-#:    `PlainValidator` / 自定义 `__get_pydantic_core_schema__` 一个都救不回来。
-#: 2. **pydantic 自带的 `JsonValue` 不行。** 它的容器是 `list` / `dict`，而 **`list`
-#:    是不变的**。`{"enum": sorted(MODES)}` 里那个 `list[str]` 因此赋不进去，双向推断
-#:    也够不着函数调用的返回值——八个官方插件的 `config_schema` 全都撞在这上面。
-#: 3. **`TypeAliasType` 的具名递归别名不行。** pydantic 认（这才是它自带 `JsonValue`
-#:    能递归的原因），但 basedpyright 1.39 不认：值写成类型报「类型表达式中不允许使用
-#:    变量」，写成字符串报「此处应为类型而非字符串字面量」。PEP 695 的 `type` 语句要
-#:    3.12，本项目最低 3.11。
-#: 4. **只放宽一层（`Sequence[object]` / `Mapping[str, object]` 的联合）也不行。**
-#:    pydantic 的 union 校验在字段校验器**之前**跑，于是深度 1 的坏值被它先拦下，
-#:    报出来的是七个分支各失败一遍的清单；深度 2 才轮到我们的校验器。
-#:    同一种错误有两套说法，比统一说得差一点更糟。
-#:
-#: 所以判定整个交给 `PluginManifest._check_config_schema`：类型只说「是个 JSON 对象」，
-#: 「里面每个值都是 JSON 可表达的」由它真的走一遍，并给出 JSON Pointer。
-#: **这不是放松校验，是把它挪到一个说得清楚的地方。**
-#:
-#: 与 `contracts.JsonSchema` **单向可赋值**：契约那个类型赋得进来（`JsonValue` 是
-#: `object` 的子类型），反过来不行。要把这个字段交给接受 `contracts.JsonSchema` 的
-#: 调用方，走 `PluginManifest.json_schema`——那里有一次由校验器兑现的收窄。
+#: 因此字段先表示为 JSON 对象，完整递归校验统一由 `_check_config_schema()` 完成，并报告
+#: JSON Pointer。`PluginManifest.json_schema` 在校验后把它收窄成 `contracts.JsonSchema`。
+#: 这保留了严格校验，同时避免 pydantic 与类型检查器产生两套不一致的错误。
 ManifestJsonSchema = Mapping[str, object]
 
 #: `config_schema` 允许的嵌套深度。JSON Schema 文档嵌四五层已经很深，给到 32 是为了
@@ -198,14 +178,14 @@ class CapabilityDecl(BaseModel):
     决定（`EDG-102`）。`priority` 只对 MULTI 类能力（CONTEXT / HOOK）有意义，其余 kind
     的排序由 arity 语义决定，填了也不会被用来打破唯一性。
 
-    **`namespace=True` 时 `name` 是前缀而不是能力名**（`D38-A`）：本条声明放行提供方注册
+    **`namespace=True` 时 `name` 是前缀而不是能力名**：本条声明放行提供方注册
     任意多条 `<name>.<后缀>` 的能力。它是为「能力名要连上外部服务才知道」这类插件开的——
     MCP 的远端工具名只有 `list_tools` 之后才可知，而 manifest 是静态的。做成显式布尔而不是
     `name="mcp.*"` 这样的通配串，是因为后者会让「名字」这个字段有两种含义，
     而 `CapabilityRef` 的形状校验对通配串又不成立（原则 7「显式优于魔法」）。
 
-    形状先例就在 `kernel/plugins/host.py::on()`：Hook 早就是「一条声明、N 次注册」
-    （`<hook>.2` / `.3` 派生名按基名回查声明）。命名空间是同一形状的推广。
+    Hook 同样允许“一条声明、N 次注册”：`<hook>.2` / `.3` 等派生名按基名回查声明。
+    namespace 将这一机制推广到运行时才能获知名称的 MULTI_UNIQUE 能力。
 
     两条限制（`_check_namespace`）：只允许 arity 为 MULTI_UNIQUE 的 kind，且不得同时声明
     `overrides`——一个前缀覆盖不到一个具体目标，`EDG-102` 的判定会无从进行。

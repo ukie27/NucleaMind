@@ -2,15 +2,15 @@
 
 职责：定义模型能力声明 `ModelInfo`、采样参数、模型消息、`ModelRequest`、终止原因、
 用量统计、`ModelResponse` 与流式 `ModelChunk`。
-不负责：调用任何供应商 SDK、重试与限流、把错误映射成 `ErrorCode`——那些在
-`kernel/model/`（`D13`）与各 Provider 实现；本模块不含任何 IO。
+不负责：调用供应商 SDK、重试与限流、把错误映射成 `ErrorCode`；这些属于 Turn 机制与各
+Provider 实现，本模块不含任何 IO。
 
 `ModelResponse.provider_metadata` 是 `Mapping[str, JsonValue]` 且走
 `normalize_metadata()`，这就是「Provider 私有响应对象不得直接越过 Provider 边界」
 （§10.6 末段）在类型层的强制：SDK 对象连塞进来的机会都没有，切换 Provider 时历史里
 也不会残留只有旧 SDK 才认识的结构（`EDG-305`）。
 
-`OpaqueBlock`（`D45`）是那条规则的**受控例外**：有些供应商要求把自己产出的某些块原样回传
+`OpaqueBlock` 是那条规则的**受控例外**：有些供应商要求把自己产出的某些块原样回传
 才肯继续（Anthropic 的 `thinking`）。它仍然只能是归一化 JSON、仍然带着 `provider` 所有权
 标记、仍然不进 `SessionMessage`——变的只是「本轮内可以把它交还给产出它的那一家」。
 """
@@ -98,13 +98,12 @@ class ChunkKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class OpaqueBlock:
-    """一块只有产出它的 Provider 认识的内容（`D45`）。
+    """一块只有产出它的 Provider 认识的内容。
 
     存在的理由是一类真实的能力回退：有些供应商要求把它自己产出的某些块**原样回传**才肯
     继续，而那些块的内容对 Kernel 毫无意义。Anthropic 的 `thinking` 块是第一个例子——
     开了 extended thinking 又要跑工具循环时，续写请求必须带回上一轮的 `thinking` 块（含
-    `signature`），否则请求被拒。在 `D45` 之前 `ModelMessage` 没有放它的地方，那个块只能
-    被丢掉，于是 `anthropic` 插件的 thinking 与工具调用**不能同时用**。
+    `signature`），否则请求会被供应商拒绝。
 
     **三条规则，全部为了 `EDG-305`（切换 Provider 不残留只有旧 SDK 认识的结构）：**
 
@@ -217,7 +216,7 @@ class ModelMessage:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
-    #: Provider 私有块，原样回传给**产出它的那家**（`D45`，见 `OpaqueBlock`）。
+    #: Provider 私有块，原样回传给**产出它的那家**（见 `OpaqueBlock`）。
     #: 只有 assistant 消息能带——它们是模型这一轮说的话的一部分。
     provider_blocks: tuple[OpaqueBlock, ...] = ()
 
@@ -347,7 +346,7 @@ class ModelResponse:
     tool_calls: tuple[ToolCall, ...] = ()
     usage: TokenUsage = TokenUsage()
     provider_metadata: Mapping[str, JsonValue] = EMPTY_METADATA
-    #: 本轮产出的 Provider 私有块（`D45`）。`folding.assistant_message()` 把它们搬到下一轮
+    #: 本轮产出的 Provider 私有块。`folding.assistant_message()` 把它们搬到下一轮
     #: 请求的 assistant 消息上；Kernel 不读它们的内容。
     provider_blocks: tuple[OpaqueBlock, ...] = ()
 

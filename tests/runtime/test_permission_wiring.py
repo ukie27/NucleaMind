@@ -184,6 +184,9 @@ async def test_a_broken_ledger_fails_the_start(tmp_path: Path) -> None:
 async def test_a_read_only_path_never_writes_the_ledger(tmp_path: Path) -> None:
     """`nm session` 不取实例锁，让它改写 `permissions.json` 会与在跑的实例抢同一个文件。"""
     write_config(tmp_path)
-    _loaded, store = await open_session_store(instance_dir=tmp_path, manifests=TEST_MANIFESTS)
-    await store.list_keys()
+    async with open_session_store(instance_dir=tmp_path, manifests=TEST_MANIFESTS) as (
+        _loaded,
+        store,
+    ):
+        await store.list_keys()
     assert not (tmp_path / "permissions.json").exists()

@@ -1,13 +1,12 @@
-"""§10.1 步骤 8：从已冻结的 registry 里按配置挑出必需能力（`D44` 从 `bootstrap.py` 拆出）。
+"""§10.1 步骤 8：从已冻结的 registry 里按配置挑出必需能力。
 
 职责：模型供应商与模型标识、会话存储、长期记忆的召回——三项「配置指名一个、registry 里
 找它、找不到就以稳定错误码拒绝启动」。
 不负责：注册能力（`wiring.py`）、解析覆盖（`kernel/registry/`）、装 `OrchestratorDeps`
 （`bootstrap.py::_assemble`）、只读诊断（`inspect.py`）。
 
-**从 `bootstrap.py` 拆出来的理由**：那个文件贴着 800 行上限（`D29` 已经为它拆过两次：
-只读查询归 `inspect.py`、改配置归 `config_edit.py`）。这三个函数是同一件事的三个实例，
-放在一起比散在装配流程里更容易看出「必需能力缺失」这条判定一共有几处。
+模型、会话存储、记忆和压缩策略的选择集中在这里，避免装配流程与只读诊断各自形成一套
+“配置如何指向能力”的判定。
 
 **它们都不发事件、不写盘**：只读 registry 与配置，要么返回实现体，要么抛
 `CAPABILITY_MISSING` / `CONFIG_INVALID`。`inspect.py` 的只读查询因此可以跳过整个本模块
@@ -19,8 +18,8 @@ from __future__ import annotations
 from nucleamind.contracts import ErrorCode, ModelInfo, ModelProvider, NucleaError, SessionStore
 from nucleamind.kernel.config import NucleaConfig
 from nucleamind.kernel.plugins import (
-    memory_providers_from,
     context_compactors_from,
+    memory_providers_from,
     model_providers_from,
     session_store_from,
 )
@@ -69,14 +68,13 @@ def select_model(
 
 
 def select_recall(registry: CapabilityRegistry, config: NucleaConfig) -> MemoryRecall | None:
-    """按 `memory.provider` 挑一条 `MEMORY` 能力，装成 `MemoryRecall`（`D44`）。
+    """按 `memory.provider` 挑一条 `MEMORY` 能力，装成 `MemoryRecall`。
 
     **`None`（没配）就是不启用**，这是默认。自动挑一个会让「装上一个记忆插件」悄悄改变
     每一轮请求的内容；配了却不存在是 `CAPABILITY_MISSING`（判定在
     `kernel/turn/memory.py::select_memory`，这里不重写一遍）。
 
-    这是 `memory_providers_from()` 在生产路径上的**第一个**调用方：`D39` 交了 `MEMORY`
-    能力与一个实现它的插件，但 kernel 里没有消费者，因此那条能力此前只是契约形状。
+    Runtime 只在这里把注册表中的 Memory 提供方接入 Turn；Kernel 不认识具体实现。
     """
     if config.memory.provider is None:
         return None

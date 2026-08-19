@@ -22,7 +22,7 @@ JSON，并把每处问题连同 JSON Pointer 位置一起报出来；`TurnSectio
 
 **`detail` 里绝不放配置值**，只放指针、类型名与变量名：密钥可以出现在任何指针上
 （`/plugins/acme/config/api_key`），而 `contracts.redact` 按**键名**判定，一个通用的
-`{"value": ...}` 键正好绕过它。这条规则顺带预先满足 `D11` 的哨兵测试。
+`{"value": ...}` 键正好绕过它。禁止回显原值让安全性不依赖字段名是否被识别为敏感键。
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ from .defaults import (
     DEFAULT_CHANNEL_CONCURRENCY,
     DEFAULT_CHANNEL_QUEUE_MAX_SIZE,
     DEFAULT_COMMAND_PREFIX,
-    DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     DEFAULT_COMPACTOR_TIMEOUT_MS,
+    DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS,
     DEFAULT_DEDUP_CAPACITY,
     DEFAULT_DEDUP_TTL_MS,
     DEFAULT_INTERCEPTOR_TIMEOUT_MS,
@@ -102,7 +102,7 @@ __all__ = [
     "validate_config",
 ]
 
-#: 生成的 `config.json` 里那句 schema 引用（`D24`）。它**不是**配置字段：编辑器读它，
+#: 生成的 `config.json` 里那句 schema 引用。它**不是**配置字段：编辑器读它，
 #: 运行期忽略它。
 SCHEMA_KEY: Final = "$schema"
 
@@ -112,7 +112,7 @@ SCHEMA_KEY: Final = "$schema"
 IGNORED_TOP_LEVEL_KEYS: Final[tuple[str, ...]] = (SCHEMA_KEY,)
 
 #: 全部已知字段。**这是 `extra="forbid"` 的唯一依据**：不在表里的键即未知字段。
-#: `D11`（secrets）/`D12`（可观测性）/`D19` 在此扩展，不要在别处另开一张表。
+#: 新字段只在此扩展，不要在别处另开一张表。
 SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
     "turn": {
         "max_iterations": FieldSpec(FieldKind.POSITIVE_INT, DEFAULT_MAX_ITERATIONS),
@@ -193,9 +193,8 @@ SECTION_SPECS: Final[Mapping[str, Mapping[str, FieldSpec]]] = {
 }
 
 
-#: 九个小节 dataclass 与 `NucleaConfig` 住在 `sections.py`（`D44` 拆出，理由同 `D28` 的
-#: `defaults.py`：本文件撞上了 500 行上限）。**从这里原样再导出**，既有 import 一个没变——
-#: 「字段只加在 `SECTION_SPECS`」那条规则因此仍然指向本文件。
+#: 小节 dataclass 与 `NucleaConfig` 位于 `sections.py`。这里原样再导出，保持配置包的稳定
+#: 导入入口；字段声明的唯一来源仍是上面的 `SECTION_SPECS`。
 from .sections import (  # noqa: E402 - 见上面那段注释，位置刻意在字段表之后
     ContextSection,
     HooksSection,

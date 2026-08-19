@@ -1,7 +1,9 @@
 # Design Constraints
 
 以下规则约束 NucleaMind 的架构决策。添加功能或修复 bug 时，优先选择尊重这些边界的路径。
-细节（每一层各自的不变量、踩过的坑）在 [`../AGENTS.md`](../AGENTS.md)；本文件只放判断标准。
+执行规则在 [`../AGENTS.md`](../AGENTS.md)，层次与代码所有权在
+[`../docs/project/architecture-map.md`](../docs/project/architecture-map.md)，常见改动路线在
+[`../docs/project/change-guide.md`](../docs/project/change-guide.md)；本文件只放判断标准。
 
 ## 核心保持小，能力在边缘扩展
 

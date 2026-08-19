@@ -12,8 +12,7 @@
 - **契约类型从 `nucleamind.contracts` 导入，本模块不转发**。`ToolSpec`、`ModelRequest`
   这些是插件与 Kernel 共享的数据契约，`R4` 明确允许插件直接依赖 `contracts/`；
   再转发一份只会制造「同一个类型有两个进口」的歧义，还会让本模块的快照跟着契约层漂移。
-  `SecretStr` 在 `D11` 按这条规则从这里移出——它下沉到了 `contracts/errors.py`，
-  因为 `kernel/config/secrets.py` 要产出它而 `R2` 禁止 `kernel/` import `sdk/`。
+  `SecretStr` 也属于共享契约：配置层需要创建它，而 Kernel 不允许依赖 SDK。
 
 `nucleamind.sdk.testing` 是给插件作者的验收工具（Fake 与契约测试基类），**刻意不在这里
 导入**：它只在测试期需要，让 `import nucleamind.sdk` 顺带拉起一堆夹具没有道理

@@ -2,12 +2,12 @@
 
 职责：把 `PluginManifest` 翻译成 kernel 认识的 `LoadRequest`，驱动
 `kernel.plugins.load_into`，再解析覆盖并冻结 registry；产出 `Wiring`。
-不负责：读配置、取实例锁、构造生产级 `PluginContext`（`D26`）、装 `OrchestratorDeps`、
-启动长生命周期服务、决定失败后果——那些全在 `D23` 的 bootstrap。
+不负责：读配置、取实例锁、构造生产级 `PluginContext`、装 `OrchestratorDeps`、启动
+长生命周期服务或决定失败后果；这些都在 bootstrap。
 
 **这是 `R5` 的落点**：全项目只有 `runtime/` 可以同时 import `kernel/` 与 `sdk/`
 （外加 `builtins/`），因此 manifest 到 `LoadRequest` 的翻译只能在这里。这不是权宜——
-`kernel/` 里不出现第二套 manifest 校验，正是 `D06` 就定下的约定。
+`kernel/` 里不出现第二套 Manifest 校验，保证声明语义只有一个来源。
 
 **顺带地，这里是「Host 真的满足 `NucleaAPI`」的唯一证明地**。`pyproject.toml` 的
 basedpyright 配置是 `include = ["src/nucleamind"]` + `exclude = ["**/tests"]`，所以测试
@@ -16,7 +16,7 @@ basedpyright 配置是 `include = ["src/nucleamind"]` + `exclude = ["**/tests"]`
 `host: NucleaAPI = ...` 的类型标注就是全部证明——它一旦不成立，严格模式当场报错。
 
 **内建与外部插件走同一个函数**：`wire_capabilities()` 只是默认 `manifests=BUILTIN_MANIFESTS`
-且默认「一切都是 `Builtin()`」。`D27` 传外部 manifest 与 `Plugin(PluginId(...))` 进来，
+且默认“一切都是 `Builtin()`”。外部 Manifest 与 `Plugin(PluginId(...))` 也传入同一函数，
 不需要第二条注册路径（`SDK-007`）。
 """
 
@@ -65,7 +65,7 @@ class Wiring:
     """一次装配的产物：冻结的能力表、覆盖解析报告与逐提供方的加载结果。
 
     **不在这里 `raise_if_failed()`**：失败后果（`critical`、`on_override_failure`、
-    CLI 入口强制回落）是 `D23` 的策略，装配只负责如实交出发生了什么。
+    CLI 入口强制回落）是 bootstrap 的策略，装配只负责如实交出发生了什么。
     """
 
     registry: CapabilityRegistry
@@ -109,14 +109,14 @@ def to_load_request(
     `RegisteredContextProvider`——`kernel/` 不认识 manifest，而 `CTX-005`/`PLG-004`
     的分叉必须在 kernel 里判。
 
-    **`keep` 是 `TOL-006` 的落点**（`D20`）。`CapabilityHost` 要求 manifest 声明的每一项
+    **`keep` 是 `TOL-006` 的落点**。`CapabilityHost` 要求 manifest 声明的每一项
     都真的被注册，而「按名字单独禁用一个工具」要求被禁用的那项从 registry 里消失——静态
     manifest 无法按配置少声明一项，于是由这里裁掉。裁剪与 `setup()` 的注册决定必须**同源
     于同一份配置**（`builtins/tools_fs` 导出 `enabled_tool_names()` 正是为此），否则
     `finish()` 会以 `PLUGIN_LOAD_FAILED` 报「声明了却没注册」——那个报错是对的。
 
     刻意**不**在这里读配置：装配根才知道每个提供方的配置块长什么样，而 `runtime/wiring.py`
-    的职责是翻译而不是决策。`keep` 为 `None` 时行为与 `D16` 完全一致。
+    的职责是翻译而不是决策。`keep` 为 `None` 时保留全部声明。
     """
     declarations = manifest.capabilities
     if keep is not None:
@@ -142,24 +142,22 @@ async def wire_capabilities(
 ) -> Wiring:
     """注册全部 manifest 声明的能力 → 解析覆盖 → 冻结，返回装配产物。
 
-    `manifests` 默认取 `BUILTIN_MANIFESTS`。`context_for` 必填：`D16` 时还没有生产级
-    `PluginContext`，给一个默认值等于邀请别人把无权限的桩子带进生产；`D23` 之后它是
-    `runtime/plugin_context.py` 的那一个。
+    `manifests` 默认取 `BUILTIN_MANIFESTS`。`context_for` 必填；给它一个无权限的默认桩会
+    让测试对象悄悄进入生产路径。生产实现位于 `runtime/plugin_context.py`。
 
-    **`context_for` 按 manifest 而不是按 `ProviderId` 索引**（`D23` 改）：全部内建共用
+    **`context_for` 按 manifest 而不是按 `ProviderId` 索引**：全部内建共用
     一个 `Builtin()`，按提供方索引会让七份内建拿到同一个配置块与同一个状态目录——
     `session-jsonl` 会读到 `model-openai` 的配置。manifest 才是「这是谁」的唯一答案。
 
     `keep` 按配置裁掉本次不生效的能力声明（`TOL-006`，见 `to_load_request()`）。它对
-    每一份 manifest 一视同仁——`D21` 的 `tools_shell` 与第三方工具插件走同一条路，不存在
-    「tools_fs 专用」的裁剪。
+    每一份 Manifest 一视同仁，不存在某个内建工具专用的裁剪路径。
 
-    `suppressed` 按**能力**抑制（`D30` 的 `on_disable=leave_missing`，见
+    `suppressed` 按**能力**抑制（`on_disable=leave_missing`，见
     `runtime/plugin_disable.py`）。与 `keep` 的区别是它作用在解析而不是注册上：那项能力
     照常注册、照常出现在报告里，只是标着「被禁用」而不生效。这是刻意的——`nm capabilities`
     要答得出「它为什么不在」，而一项从未注册过的能力在报告里连一行都没有。
 
-    `halt_on_critical=False` 把每一份请求都当作非关键（`D29` 的只读诊断路径用）：
+    `halt_on_critical=False` 把每一份请求都当作非关键，供只读诊断路径使用：
     `nm capabilities` 要在**凭据还没导出**时也答得出「哪项能力由谁提供」，而
     `model-openai` 是 `critical=True` 且它的 `setup()` 会去取密钥——照常抛出会让最需要
     看一眼能力表的那一刻恰好看不到。失败照样进 `Wiring.outcomes`，由调用方印出来。
@@ -172,7 +170,7 @@ async def wire_capabilities(
     """
     registry = CapabilityRegistry()
     requests: list[LoadRequest] = []
-    # `LoadRequest` 不带 manifest（`kernel/` 不认识 manifest，`D06` 的约定），因此这里
+    # `LoadRequest` 不带 manifest（Kernel 不认识 SDK Manifest），因此这里
     # 自己记一张回查表。按对象身份索引：同一份 manifest 出现两次是调用方的错，不该在
     # 这里被静默合并成一个。
     origin: dict[int, PluginManifest] = {}

@@ -3,16 +3,12 @@
 职责：声明 `NucleaAPI`（恰好 10 个注册方法 + `ctx`）、受限的 `PluginContext` 及其四个
 资源访问器 Protocol（`fs` / `net` / `shell` / `secret`），以及配套的 `HttpResponse`、
 `ShellResult`。
-不负责：实现注册与冲突判定（`kernel/registry/`，`D06`）、构造 `PluginContext` 与执行
-权限判定（`kernel/plugins/`，`D26`）、决定谁被加载（`D27`）。本模块只有签名与两个纯数据
-类型，函数体一律是 docstring + `...`。
+不负责：实现注册与冲突判定、构造 `PluginContext`、执行权限判定或决定插件加载结果。
+这些分别属于 Kernel 与 Runtime；本模块只有公开签名和纯数据类型。
 
-`SecretStr` 在 `D11` 迁到了 `contracts/errors.py`（`kernel/config/secrets.py` 要产出它，
-而 `R2` 禁止 `kernel/` import `sdk/`），因此它不在 `sdk.__all__` 里：契约类型不从 `sdk`
-转发，插件按 `R4` 直接 `from nucleamind.contracts import SecretStr`。
-`D22` 的 `InstanceView` / `TurnControl` 同理——它们是 `ctx.instance` / `ctx.turns` 的类型，
-落在 `contracts/protocols.py`（kernel 侧的实现要结构化满足它们），因此 `sdk.__all__`
-一个字都没变。
+`SecretStr`、`InstanceView` 与 `TurnControl` 位于 `contracts`，因为 Kernel 也需要创建或实现
+它们，而 Kernel 不能依赖 SDK。插件应直接从 `nucleamind.contracts` 导入共享契约；SDK 不做
+重复转发。
 
 三件必须在这一层说清楚的事：
 
@@ -70,22 +66,8 @@ __all__ = [
     "ShellResult",
 ]
 
-#: 事件订阅的回调形状。**同步与协程都接受**，两者都没有可被采纳的返回值——订阅者是
-#: 观察者。
-#:
-#: **`D41` 把同步那一半补了进来。** 原来这里只写 `Awaitable[None]`，而
-#: `EventBus` 的订阅面本来就是同步的（`Subscriber = Callable[[RuntimeEvent], None]`，
-#: `publish()` 绝不 await 订阅者）；桥接层 `runtime/plugin_context.PluginEventBridge`
-#: 无条件把 `handler(event)` 的返回值喂给 `create_task`。于是一个同步 handler 会：
-#: 先被正常调用（副作用照常发生），随后 `await None` 在一条无人认领的 Task 里抛
-#: `TypeError`，只留下一句 "Task exception was never retrieved"。
-#:
-#: 官方插件 `feishu`（工具提示）与 `openai-api`（用量统计）注册的都是同步 handler，
-#: 因此两处一直在每个事件上多产一条异常 Task——**在插件进入类型检查范围之前，
-#: 没有任何东西会指出这件事**。这与 `D39` 漏掉 `handle(invocation, cancel)` 是同一类。
-#:
-#: 放宽返回类型而不是收紧调用方：既有的协程 handler 一个字都不用改，
-#: 而同步 handler 本来就是 bus 的原生形状。判定「要不要 await」在桥接层做一次。
+#: 事件订阅者可以同步返回，也可以返回 awaitable。桥接层负责判断是否需要 await；调用方
+#: 不应自行创建无人管理的 Task。两种 handler 都是观察者，返回值不参与事件处理。
 EventHandler = Callable[[RuntimeEvent], Awaitable[None] | None]
 
 
@@ -99,8 +81,8 @@ class HttpResponse:
     status: int
     headers: Mapping[str, str]
     body: bytes
-    #: `body` 是否因为 `request(max_bytes=...)` 被截断（`D42`）。
-    #: **必须有这一位**：没有它，「正好等于上界」与「被截断了」长得一模一样，
+    #: `body` 是否因为 `request(max_bytes=...)` 被截断。没有这一位，「正好等于上界」
+    #: 与「被截断了」长得一模一样，
     #: 而调用方对这两件事的处理完全不同（后者要告诉模型内容不完整）。
     truncated: bool = False
 
@@ -151,10 +133,8 @@ class FileAccess(Protocol):
         `errors="replace"` 解码，因此它对一个 PNG 也「成功」，只是交回一串替换字符——
         要原字节就必须走这条。
 
-        `D42` 补的。在那之前 `FileAccess` 只有文本面，于是**要发二进制的插件只能绕过门面**：
-        `image` 如实声明 `fs:write` 之后直接用 `pathlib`（写在它的 README 里），
-        `discord` 干脆发不出 workspace 里的附件。一个「绕过它才能干活」的权限门面，
-        挡住的只是守规矩的人。
+        二进制必须有独立方法：文本读取会以 replacement character 处理解码错误，既不能
+        保真，也会迫使图片、音频等插件绕过受控文件门面。
         """
         ...
 
@@ -191,12 +171,11 @@ class HttpAccess(Protocol):
         拒绝。这是插件唯一的出网路径：直接用 httpx 当然也能连出去，但那样就绕过了守卫，
         评审时能一眼看见（这正是应用级权限的意义）。
 
-        `max_bytes` 给响应体一个**下载上界**（`D42` 补的）：到量即停止读取并断开，
+        `max_bytes` 给响应体一个**下载上界**：到量即停止读取并断开，
         `HttpResponse.truncated` 标着。不给就整份读完。
 
-        在此之前门面只有「读完再说」一种行为，于是 `web.fetch` 对着一个几百 MB 的 URL
-        会先把它整个装进内存、再截断到几 KB——它的 `max_bytes` 配置项名字对了、
-        施加的位置晚了一步。**上界必须落在读取上，不是落在读完之后。**
+        **上界必须在读取过程中执行，而不是读完整个响应后再截断**，否则大响应仍会占满
+        内存和网络带宽。
 
         **刻意没有做完整的流式接口。** 那需要把响应对象的生命周期交给调用方（异步上下文
         管理器），而守卫的重定向重校验正发生在响应头与响应体之间；今天没有任何一个消费者
@@ -331,8 +310,8 @@ class PluginContext(Protocol):
     def instance(self) -> InstanceView:
         """实例的只读视图：已注册命令、能力解析报告、插件状态、完整配置、会话快照。
 
-        `D22` 加入。存在的理由是 `/help`、`/capabilities`、`/plugins`、`/config`、
-        `/session` 要回答的都是「这个实例现在是什么样」，而那些数据在 `kernel/` 里，
+        `/help`、`/capabilities`、`/plugins`、`/config`、`/session` 要回答的都是
+        「这个实例现在是什么样」，而那些数据在 `kernel/` 里，
         `R4` 禁止 `builtins/` 与 `plugins/` 够到它。没有这条通道，`commands_core` 就只能
         由 `runtime/` 特权注册——`BAS-005`「内建能力不享受特权」当场破例，而第三方也就
         永远写不了 `/status` 这类命令。**这类命令本来就该是插件能写的东西。**
@@ -340,7 +319,7 @@ class PluginContext(Protocol):
         它**不是**资源访问器，因此不需要权限声明也不会抛 `PERMISSION_DENIED`：事件流与
         诊断是只读的可观测性，与 `events` 同一档（见 `EventSubscriber` 的说明）。
         `config_document()` 是唯一越过 `CFG-002` 的成员，但明文凭据结构性地不在那份文档里
-        （`D11`：配置树自始至终持有 `${VAR}` 字面量）。
+        （配置树自始至终持有 `${VAR}` 字面量）。
         """
         ...
 
@@ -348,8 +327,8 @@ class PluginContext(Protocol):
     def turns(self) -> TurnControl:
         """在跑 turn 的观测与取消（`/cancel` 的落点，技术方案 §10.3）。
 
-        与 `instance` 分开而不是合成一个门面：一个是只读可观测性，一个是**控制动作**。
-        `D26` 落地权限模型后，「能看」与「能取消别人的 turn」应当可以分别授予。
+        与 `instance` 分开而不是合成一个门面：一个是只读可观测性，一个是**控制动作**；
+        两者分开后才能独立授予、替换与测试。
         """
         ...
 
@@ -421,8 +400,8 @@ class NucleaAPI(Protocol):
     def register_channel(self, name: str, channel: Channel) -> None:
         """注册一个外部平台接入（`CapabilityKind.CHANNEL`，MULTI_UNIQUE）。
 
-        Channel 是长生命周期服务：注册只是登记，`start()` 由 Runtime 在阶段 D 按拓扑序
-        调用，插件不应在 `setup` 里自己连线。
+        Channel 是长生命周期服务：注册只是登记，`start()` 由 Runtime 在激活阶段按拓扑序
+        调用；插件不应在 `setup` 里自行建立连接。
 
         **异常约定**：同 `register_tool()`。
         """

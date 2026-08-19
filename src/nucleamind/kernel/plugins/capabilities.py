@@ -1,9 +1,8 @@
-"""六个单值能力的注册载荷与取回函数（技术方案 §6.1，`D15` 暴露的缺口）。
+"""六个单值能力的注册载荷与取回函数（技术方案 §6.1）。
 
 职责：为 `MODEL` / `SESSION_STORE` / `CHANNEL` / `MEMORY` / `CLI_ENTRY` / `COMPACTOR`
-六个 kind 定下
-注册载荷形状（`Registered*`）与从冻结 registry 取回生效实现的函数（`*_from`），并在取回时
-当场核对载荷形状。
+六个 kind 定义注册载荷（`Registered*`）和从冻结 Registry 取回生效实现的函数（`*_from`），
+并在取回时核对载荷形状。
 不负责：注册（`host.py`）、判定谁生效（`kernel/registry/resolution.py`）、使用这些实现
 （`runtime/` 与 `kernel/turn/`）。本模块不做 IO、不认识 manifest。
 
@@ -16,14 +15,11 @@ ModelProvider)` 当分支条件正是它禁止的用法（Protocol 的 `isinstan
 不必改动 registry 契约。这与已有四个（`RegisteredTool` / `RegisteredHook` /
 `RegisteredContextProvider` / `RegisteredCommand`）完全同构。
 
-**为什么在 `kernel/plugins/` 而不是 `kernel/turn/`**：这五个 kind 都不归 turn 管
-（`D14` 没有落地它们不是疏漏）。技术方案 §6.1 要求「载荷形状必须在建立注册分派的同一处
-定下」，而注册分派就是隔壁的 `host.py`——生产者与形状定义放在一个包里，留到装配时各自
-`isinstance` 一遍就等于把「谁定义形状」分散到每个消费点上。
+**为什么在 `kernel/plugins/` 而不是 `kernel/turn/`**：这些 kind 不都属于 Turn，载荷形状
+应与注册分派 `host.py` 放在同一个包里。否则每个消费点都要自行定义和检查 payload 形状。
 
-**两个 SINGLETON 的取回函数返回 `| None` 而不是抛错**：`D16` 的 `BUILTIN_MANIFESTS` 是空
-元组，非可选的 `cli_entry_from` 会让每一条装配路径当场炸掉。`BAS-009`/`EDG-108`
-「CLI 入口必须始终存在」是 `D23` 在装配根上的判定，本层只如实回答「有没有」。
+**两个 SINGLETON 的取回函数返回 `| None` 而不是抛错**：Registry 查询只回答是否存在；
+`BAS-009`/`EDG-108` 的“CLI 入口必须存在”由知道启动语义的组装根判定。
 """
 
 from __future__ import annotations
@@ -275,7 +271,7 @@ def cli_entry_from(registry: CapabilityRegistry) -> CliEntryBinding | None:
     """取回唯一生效的 CLI 入口（SINGLETON）；没有实现时返回 `None`。
 
     返回 `None` 不代表这是可接受的终局：`BAS-009`/`EDG-108` 要求 CLI 入口始终存在，
-    但那条判定（以及覆盖失败时回落内建）属于 `D23` 的装配根。本层只如实回答有没有。
+    但那条判定（以及覆盖失败时回落内建）属于组装根。本层只如实回答有没有。
 
     **异常约定**同 `session_store_from()`。
     """
