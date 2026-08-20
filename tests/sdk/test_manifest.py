@@ -25,7 +25,7 @@ from nucleamind.sdk.version import SDK_VERSION
 VALID: Final[dict[str, object]] = {
     "id": "memory-sqlite",
     "version": "0.1.0",
-    "sdk_range": ">=2.0,<3.0",
+    "sdk_range": ">=3.0,<4.0",
     "setup": "nucleamind_plugin_memory_sqlite.plugin:setup",
     "capabilities": [{"kind": "memory", "name": "sqlite"}],
 }
@@ -129,6 +129,7 @@ def test_invalid_manifest_reports_the_offending_field(patch: dict[str, object], 
 STRUCTURAL_CASES: Final[list[tuple[dict[str, object], str]]] = [
     ({"unknown_field": 1}, "unknown_field"),
     ({"permissions": []}, "permissions"),
+    ({"runtime_requires": ["node>=20"]}, "runtime_requires"),
     ({"capabilities": [{"kind": "not-a-kind", "name": "a.b"}]}, "capabilities.0.kind"),
     ({"capabilities": [{"name": "a.b"}]}, "capabilities.0.kind"),
     ({"state_version": "one"}, "state_version"),

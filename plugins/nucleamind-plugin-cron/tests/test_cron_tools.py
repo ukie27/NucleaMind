@@ -69,8 +69,8 @@ def test_specs_are_named_as_declared() -> None:
     )
 
 
-def test_list_is_read_only_and_needs_no_permission() -> None:
-    """任务表已经在内存里，列出来不碰任何文件。一条用不上的 `fs:read` 只会稀释权限清单。"""
+def test_list_is_read_only_and_touches_no_file() -> None:
+    """任务表已经在内存里，列出来不碰任何文件。"""
     spec = list_spec()
     assert spec.read_only is True
 

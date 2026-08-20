@@ -84,7 +84,7 @@ class TestWorkspaceImageStore:
         class Refusing(FakeWorkspace):
             async def write_bytes(self, path: str, data: bytes) -> None:
                 del path, data
-                raise NucleaError(ErrorCode.PERMISSION_DENIED, "没有 fs:write。")
+                raise NucleaError(ErrorCode.PERMISSION_DENIED, "Workspace 拒绝写入。")
 
         with pytest.raises(NucleaError) as caught:
             await WorkspaceImageStore(Refusing(tmp_path), IMAGE_DIR_NAME).save(

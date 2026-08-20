@@ -76,7 +76,6 @@ EXPECTED_ARITY: dict[CapabilityKind, CapabilityArity] = {
 EXPECTED_HOOK_KINDS: dict[HookName, HookKind] = {
     HookName.INSTANCE_READY: HookKind.OBSERVER,
     HookName.INSTANCE_SHUTDOWN: HookKind.OBSERVER,
-    HookName.SESSION_START: HookKind.OBSERVER,
     HookName.TURN_START: HookKind.INTERCEPTOR,
     HookName.CONTEXT_ASSEMBLE: HookKind.INTERCEPTOR,
     HookName.BEFORE_MODEL_REQUEST: HookKind.INTERCEPTOR,
@@ -227,8 +226,8 @@ def test_nuclea_error_carries_capability() -> None:
 # ------------------------------------------------------------------------------ Hook
 
 
-def test_hook_names_are_frozen_at_ten() -> None:
-    assert len(HookName) == 10
+def test_hook_names_are_frozen_at_nine() -> None:
+    assert len(HookName) == 9
     assert set(HOOK_KINDS) == set(HookName)
     assert set(HOOK_REQUIRED_SLOTS) == set(HookName)
 
@@ -241,9 +240,11 @@ def test_hook_kind_table_matches_technical_design(hook: HookName, kind: HookKind
     assert hook.kind is kind
 
 
-def test_five_observers_and_five_interceptors() -> None:
+def test_four_observers_and_five_interceptors() -> None:
     observers = [hook for hook in HookName if hook.kind is HookKind.OBSERVER]
-    assert len(observers) == 5
+    interceptors = [hook for hook in HookName if hook.kind is HookKind.INTERCEPTOR]
+    assert len(observers) == 4
+    assert len(interceptors) == 5
 
 
 def test_hook_context_requires_its_slots() -> None:
@@ -262,7 +263,6 @@ def test_hook_context_reports_every_missing_slot() -> None:
 def test_instance_hooks_need_no_correlation() -> None:
     """实例启动与停止时还没有会话与 turn（`OBS-001` 允许实例级事件无关联标识）。"""
     assert HookContext(HookName.INSTANCE_READY).correlation is None
-    assert HookContext(HookName.SESSION_START).kind is HookKind.OBSERVER
 
 
 @pytest.mark.parametrize(

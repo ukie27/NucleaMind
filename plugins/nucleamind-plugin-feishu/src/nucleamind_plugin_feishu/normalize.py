@@ -190,7 +190,7 @@ def _attachment(message_id: str, msg_type: str, file_key: str) -> AttachmentRef:
 
     **飞书的资源没有公开 URL**——只能用 `message_id + file_key` 经 SDK 换取，而这正是
     `AttachmentSource.OPAQUE` 的定义（契约原文：「平台侧不透明标识，需 Channel 用自己的
-    凭据换取」）。因此本插件**不下载、不落盘、一条 `fs:*` 权限都不要**。
+    凭据换取」）。因此本插件在归一化阶段**不下载、不落盘**。
     """
     return AttachmentRef(
         source=AttachmentSource.OPAQUE,

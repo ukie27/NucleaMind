@@ -142,7 +142,7 @@ __all__ = [
 MANIFEST: Final = PluginManifest(
     id="cron",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_cron:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CHANNEL_NAME),

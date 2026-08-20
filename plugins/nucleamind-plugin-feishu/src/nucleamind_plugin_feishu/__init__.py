@@ -22,15 +22,12 @@
 
 **三条如实记着的边界**，写在这里而不是留给用户发现：
 
-- **五种权限里没有「连接一个聊天平台」这一种**（`fs:read` / `fs:write` / `net` / `shell` /
-  `secret`，其中 `net` 判的是经 `ctx.net` 门面的出站请求）。`lark-oapi` 自己开 WebSocket
-  与 HTTPS，一个字节都不过门面，因此本插件除两条 `secret` 外声明不出任何权限，
-  而它确实会连出去。`D52` 已明确这是受信任插件模型的刻意边界：启用插件就是信任其代码，
-  权限账本不是完整行为监控。
+- **插件自己拥有平台连接**。`lark-oapi` 直接建立 WebSocket 与 HTTPS 连接；
+  `PluginContext` 的资源服务不是强制网络代理。启用插件就是信任其代码。
 - **出站 workspace 附件传不出去**：`sdk.api.FileAccess` 只有 `read_text` / `write_text` /
-  `list_dir`，没有 `read_bytes`；绕过 `ctx.fs` 直接 `open()` 会让权限声明变成谎话。
+  `list_dir`，没有 `read_bytes`。
   今天新层也没有任何地方产出带附件的 `OutboundMessage`，因此这是一条没有生产者的死路径。
-- **应用级权限不是进程隔离**（`sdk/api.py` 的原话）。能在允许的会话里说话的人就能驱动
+- **Channel 准入不是进程隔离**。能在允许的会话里说话的人就能驱动
   实例上的全部工具，包括 `shell.exec`。`allow_from` 与 `allow_chats` 是唯一的闸门。
 """
 
@@ -153,7 +150,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="feishu",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_feishu:setup",
     # **不写 `overrides`**（它不取代任何内建）、**不写 `priority`**（默认值 100 会被原样
     # 采纳，而内建基准是 0——`D16` 记的坑）。
@@ -173,8 +170,8 @@ def setup(api: NucleaAPI) -> None:
     """注册 Channel。配置与凭据在这里各解析一次，不拖到第一条消息（`D18` 的先例）。
 
     **顺带订阅 `tool.call_started`**：工具提示的唯一数据源（`channel.py` 的 docstring 说明
-    了为什么不能从出站流里拿）。订阅不需要权限声明——事件流是只读可观测性，与 `ctx.events`
-    同一档；它的生命周期就是插件的生命周期，由 Kernel 在禁用时统一取消（`EDG-105`）。
+    了为什么不能从出站流里拿）。事件订阅的生命周期就是插件的生命周期，由 Kernel 在
+    禁用时统一取消（`EDG-105`）。
     """
     settings = resolve_settings(api.ctx)
     channel = FeishuChannel(
@@ -191,7 +188,7 @@ def _required_secret(ctx: PluginContext, name: str) -> SecretStr:
     """取一条必填凭据。**没配就是配置错误**——一个没有凭据的飞书 Channel 连不上任何东西，
     让它「起来了但什么都不做」比直接说清楚更糟。
 
-    未授权的 `PERMISSION_DENIED` 原样抛出：那与「没配」是两件事，补救动作也不同。
+    `ctx.secret()` 的其他错误原样抛出；这里只把缺失凭据改写成带配置路径的错误。
     """
     try:
         return ctx.secret(name)

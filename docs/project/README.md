@@ -27,7 +27,7 @@ NucleaMind 已经具备一套可运行、受架构守卫约束的 Agent Kernel �
   Transcript 和 Orchestrator。
 - `kernel/config/`：实例布局、四层配置、schema、Secret 引用和实例锁；自身不写文件。
 - `kernel/routing/`：去重、Session 单写者调度、分流和 Channel fanout。
-- `kernel/plugins/`：发现、两阶段加载、事务注册、权限记录和生命周期。
+- `kernel/plugins/`：发现、两阶段加载、事务注册、依赖排序和生命周期。
 - `kernel/observability/`：同步事件总线、脱敏、健康状态和 sinks。
 - `runtime/`：唯一组装根、插件装配策略、启动资源事务、生产 `PluginContext`、资源门面、
   配置写入、诊断与 CLI。
@@ -44,7 +44,7 @@ NucleaMind 已经具备一套可运行、受架构守卫约束的 Agent Kernel �
 ### 对外表面
 
 - 包版本：`0.3.0`（alpha）。
-- SDK 版本：`2.0.0`；2.x 移除了旧插件权限契约。
+- SDK 版本：`3.0.0`；3.x 移除了无效的 `runtime_requires` 与死 `session_start` Hook。
 - `NucleaAPI` 与 `CapabilityKind` 当前一一覆盖十类能力。
 - `nm init`、`nm run`、`nm serve`、`nm config show`、`nm session`、
   `nm plugins`、`nm capabilities` 已可用。
@@ -79,7 +79,7 @@ Loader、Turn、Routing、Config 和 Observability 都是宿主机制；删除�
 - 配置优先级和 Secret 引用不落明文；
 - Turn 的取消检查点、预算、单终态和工具副作用边界；
 - 同 Session 单写者与去重优先的准入顺序；
-- SDK 1.x 已发布的名字、签名和 Manifest 语义；
+- SDK 3.x 已发布的名字、签名和 Manifest 语义；
 - 插件依赖方向与 Runtime 作为唯一组装根。
 
 它们可以演进，但需要显式版本或迁移，而不能在普通重构里顺手改变。完整分类见
@@ -103,7 +103,7 @@ Loader、Turn、Routing、Config 和 Observability 都是宿主机制；删除�
 ### 插件组合与子 Turn
 
 插件目前可以注册能力、观察实例和取消 Turn，但没有公开的宿主执行门面来安全发起一个新的
-Turn。未来若 Multi-Agent、Workflow 或 Automation 真的需要它，应设计受取消、预算、权限、
+Turn。未来若 Multi-Agent、Workflow 或 Automation 真的需要它，应设计受取消、预算、
 递归深度和关联 ID 约束的 `TurnGateway`/`AgentExecutor` 类门面，而不是把
 `TurnOrchestrator` 暴露给插件。
 

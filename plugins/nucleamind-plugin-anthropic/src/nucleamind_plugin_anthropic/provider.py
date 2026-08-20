@@ -13,10 +13,9 @@
   一句承诺。顺带地，宿主发行版因此不必再依赖 `anthropic`。
 - **凭据只从 `ctx.secret("api_key")` 来。** 明文只在拼认证头的那一行经 `reveal()` 取出，
   不进配置、不进 `detail`、不进事件（`MOD-002`、`CFG-003`）。
-- **直接用 httpx 而不是 `ctx.net`，并如实声明 `net` 权限。** `HttpAccess` 的 SSRF 守卫会
-  拒绝私有网段，而中转与本地 relay 正是本插件的交付要点。这与内建 `model_openai`、
-  `session_jsonl` 是同一条先例：门面能力不足时，诚实声明比绕道更符合「应用级权限的价值
-  是让越界意图可审计」。
+- **直接用 httpx 而不是 `ctx.net`。** `HttpAccess` 的 SSRF 守卫会拒绝私有网段，而中转与
+  本地 relay 正是本插件的交付要点。资源门面是插件可以复用的受约束实现，不是可信插件
+  必须经过的授权代理。
 - **流式中途失败必须先 `yield DONE(ERROR)` 再抛**（`protocols.py` 写死、`EDG-304`）。
   `kernel/turn/folding.py` 据此把已收到的文本按 `interrupted=True` 落库，而不是把半截
   输出当成完整答案。
@@ -347,8 +346,7 @@ def read_credential(ctx: PluginContext, settings: AnthropicSettings) -> SecretSt
     """取凭据。`auth="none"` 时**不碰** `ctx.secret()`——本地 relay 没有密钥，
     去要一个必然缺失的凭据只会让插件加载失败。
 
-    **异常约定**：未授权 `PERMISSION_DENIED`、已授权但没配 `CONFIG_SECRET_MISSING`，
-    两者必须可区分（`sdk/api.py` 写死的约定）。这里不吞任何一个。
+    **异常约定**：凭据未配置时原样抛 `CONFIG_SECRET_MISSING`。
     """
     if not settings.requires_credential:
         return None

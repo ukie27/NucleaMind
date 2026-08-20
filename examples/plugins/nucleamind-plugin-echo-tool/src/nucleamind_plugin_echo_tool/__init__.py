@@ -1,8 +1,7 @@
 """示例插件 `echo-tool`：一个插件最少要写的东西（开发方案 `D30`）。
 
 职责：声明一份 `PluginManifest`，在 `setup(api)` 里注册一个工具能力 `echo.say`。
-不负责：任何持久化、出网与子进程——本插件一个权限都不声明，因此 `ctx.fs` / `ctx.net` /
-`ctx.shell` 的属性访问会直接抛 `PERMISSION_DENIED`，那正是要演示的东西。
+不负责：任何持久化、出网与子进程——本插件只使用 `ctx.config`，不调用其他宿主资源服务。
 
 **只 import `nucleamind.contracts` 与 `nucleamind.sdk`**（依赖规则 `R4`）。插件够不着
 `nucleamind.kernel.*`，`tests/architecture/test_import_boundaries.py` 会拦下任何尝试。
@@ -44,11 +43,9 @@ MANIFEST: Final = PluginManifest(
     version="0.1.0",
     # SDK 兼容区间由**插件**声明，宿主据此判断要不要加载（`SDK-005`）。落在区间外时
     # 拒绝加载并报 `PLUGIN_SDK_INCOMPATIBLE`，不带病运行。
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_echo_tool:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name=TOOL_NAME),),
-    # 一个权限也不声明：本插件纯内存。声明一条用不到的权限就是把「越界意图可审计」
-    # 这件事变得不可审计（内建 `context_basic` 的同一条理由）。
     config_schema={
         "type": "object",
         "properties": {

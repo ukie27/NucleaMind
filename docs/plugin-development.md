@@ -41,7 +41,7 @@ MANIFEST = PluginManifest(
     version="0.1.0",
     # 你支持的 SDK 区间。宿主落在区间外时拒绝加载并报 PLUGIN_SDK_INCOMPATIBLE，
     # 不带病运行。
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_my_plugin:setup",
     # 有约束力的全集：setup 里注册的每一项都必须在这里声明，反之亦然。
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="my.tool"),),
@@ -60,7 +60,7 @@ MANIFEST = PluginManifest(
   「内建排在插件前」会静默失效。
 - **`capabilities` 是有约束力的**。声明了却没注册、注册了却没声明，都是
   `PLUGIN_LOAD_FAILED`。这不是形式主义——`overrides` 只能从声明来，`nm capabilities`
-  与权限校验都建立在「声明即全集」上。
+  与启动诊断都建立在「声明即全集」上。
 - **`critical=True` 意味着你坏了实例就起不来**。只有「没有它就没有 Agent」的能力才配得上
   它，第三方插件一般不该写。
 
@@ -234,7 +234,7 @@ registry 在解析之后只读，没有第二个注册时机。
    能声明命名空间。SINGLETON 的槽位只有一个，给它开前缀等于让「唯一」失去判定对象。
 
 冲突语义一个字没变：registry 仍按精确 `(kind, name)` 判，`nm capabilities` 印的是**实际
-注册的**名字。权限也一样——命名空间不放宽任何权限，manifest 的 `permissions` 照常是全集。
+注册的**名字。命名空间只影响 manifest 与动态注册项的对应方式，不改变资源服务或信任边界。
 
 ## 8. 测试：继承契约测试基类
 

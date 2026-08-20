@@ -1,7 +1,7 @@
 """能力契约：能力标识、arity 表与 Hook 表面（技术方案 §6.1、§6.6、需求 §9.3）。
 
 职责：定义 `CapabilityKind` 的 10 个取值与每个 kind 的 arity 常量表、结构化的
-`ProviderId`（`Builtin` | `Plugin`）与 `CapabilityRef`，以及冻结的 10 个 `HookName`、
+`ProviderId`（`Builtin` | `Plugin`）与 `CapabilityRef`，以及冻结的 9 个 `HookName`、
 其观察者/拦截器分类和 Hook 的输入输出 `HookContext` / `HookOutcome`。
 不负责：注册、冲突解析、覆盖判定、Hook 的调度与超时——那些在 `kernel/registry/`、
 `kernel/observability/` 与 `kernel/turn/`；本模块不含任何 IO。
@@ -262,11 +262,10 @@ class HookKind(StrEnum):
 
 
 class HookName(StrEnum):
-    """首版冻结的 10 个 Hook（技术方案 §6.6）。新增须按 `NFR-104` 论证。"""
+    """冻结的 9 个 Hook（技术方案 §6.6）。新增须按 `NFR-104` 论证。"""
 
     INSTANCE_READY = "instance_ready"
     INSTANCE_SHUTDOWN = "instance_shutdown"
-    SESSION_START = "session_start"
     TURN_START = "turn_start"
     CONTEXT_ASSEMBLE = "context_assemble"
     BEFORE_MODEL_REQUEST = "before_model_request"
@@ -286,7 +285,6 @@ HOOK_KINDS: Final[Mapping[HookName, HookKind]] = MappingProxyType(
     {
         HookName.INSTANCE_READY: HookKind.OBSERVER,
         HookName.INSTANCE_SHUTDOWN: HookKind.OBSERVER,
-        HookName.SESSION_START: HookKind.OBSERVER,
         HookName.TURN_START: HookKind.INTERCEPTOR,
         HookName.CONTEXT_ASSEMBLE: HookKind.INTERCEPTOR,
         HookName.BEFORE_MODEL_REQUEST: HookKind.INTERCEPTOR,
@@ -304,7 +302,6 @@ HOOK_REQUIRED_SLOTS: Final[Mapping[HookName, frozenset[str]]] = MappingProxyType
     {
         HookName.INSTANCE_READY: frozenset(),
         HookName.INSTANCE_SHUTDOWN: frozenset(),
-        HookName.SESSION_START: frozenset(),
         HookName.TURN_START: frozenset({"correlation", "message"}),
         HookName.CONTEXT_ASSEMBLE: frozenset({"correlation", "fragments"}),
         HookName.BEFORE_MODEL_REQUEST: frozenset({"correlation", "request"}),
@@ -320,14 +317,13 @@ HOOK_REQUIRED_SLOTS: Final[Mapping[HookName, frozenset[str]]] = MappingProxyType
 class HookContext:
     """交给 handler 的只读上下文。
 
-    用「一个类型 + 若干可选强类型槽 + 必填表」而不是 10 个专用类型：Hook 集合已经冻结，
-    专用类型只会让 `HookHandler` 变成 10 个 Protocol，与 `NFR-104` 正面冲突；而用
+    用「一个类型 + 若干可选强类型槽 + 必填表」而不是 9 个专用类型：Hook 集合已经冻结，
+    专用类型只会让 `HookHandler` 变成 9 个 Protocol，与 `NFR-104` 正面冲突；而用
     `Mapping[str, JsonValue]` 装载荷则会把 `ModelRequest` 这类结构化对象拍平成字典，
     handler 想改写请求就只能自己拼回去。
 
     实例级 Hook（`instance_ready` / `instance_shutdown`）没有 `correlation`：那时还没有
-    会话与 turn；`session_start` 同理——`Correlation` 必须带 `turn_id`，而会话开始时
-    尚未分配。
+    会话与 turn。
     """
 
     hook: HookName

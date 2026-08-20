@@ -16,7 +16,7 @@
 test_field_traceability.py` 要求每个契约类型对上需求 §10 的某一节，而这些事件是 §6.2 那次
 两层拆分的产物，是实现结构而不是需求资产。其二，进 `contracts.__all__` 就会被字面量快照
 变成永久公开表面（`NFR-104`），等于承诺 engine 的循环结构今后不变；插件观察 turn 的正规路径
-是 `RuntimeEvent` 与 10 个 Hook。其三，`TurnCancelled.checkpoint` 与 `TurnStoppedByLimit.breach`
+是 `RuntimeEvent` 与 9 个 Hook。其三，`TurnCancelled.checkpoint` 与 `TurnStoppedByLimit.breach`
 引用的是 kernel 的 `Checkpoint` 与 `LimitBreach`，搬进零依赖的 contracts 就得把那两个也搬，
 而它们是 Kernel 机制，不是跨层契约。
 

@@ -74,16 +74,14 @@ MCP 协议不报告副作用：一个写文件的远端工具与一个只读的�
 发起之后失败（超时、传输中断）标 `UNKNOWN`。谎报 `NONE` 会让编排层以为可以安全重试一次
 可能已经生效的写操作。
 
-### 2. 权限模型对它基本失效
-
-本插件如实声明 `shell` 与 `net`，但那两条**挡不住任何东西**：
+### 2. 插件自己拥有 MCP 连接
 
 - `stdio` 要长驻子进程与管道，而 `ctx.shell` 是一次性 exec、拿不到 stdin 管道；
 - HTTP 传输由 `mcp` SDK 自己开连接，一个字节都不过 `ctx.net` 的 SSRF 守卫。
 
 **真正的边界是「你配了哪些 server」。** 一台 MCP server 能做什么，取决于它自己——
-接一台 filesystem server 就等于把那个目录交给了模型。这与 `discord` 那条「五种权限里没有
-『连接一个聊天平台』」并列，是权限模型当前的空档。
+接一台 filesystem server 就等于把那个目录交给了模型。宿主资源门面是便利服务，
+不是可信插件必须经过的代理。
 
 ### 3. 启动路径上多一次往返
 
@@ -107,7 +105,7 @@ server 都会给冷启动加上它自己的连接时间，`connect_timeout_ms` �
 | --- | --- |
 | resources / prompts 桥接 | 新层没有对应的能力种类；伪装成工具会让模型拿到一堆语义不明的调用 |
 | 热重载（旧实现的 `RUNTIME_CONTROL_MCP_RELOAD`） | registry 解析后只读、首版不热更新；只在自己这一层成立的「重载」会让 `nm capabilities` 说谎 |
-| sampling（server 反向调模型） | 那是一条绕过 `TurnLimits` 与权限的模型调用通道 |
+| sampling（server 反向调模型） | 那是一条绕过主 Turn、`TurnLimits` 与取消链的模型调用通道 |
 | OAuth 流程 | 目前只支持静态 header 鉴权 |
 
 ## 测试

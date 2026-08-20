@@ -24,11 +24,11 @@
   交出 `artifacts`（后续工具用）与 `attachments`（出站用），Kernel 把后者挂在本轮终帧上。
   内建 CLI 印路径、`discord` 真的上传；其余 Channel 各自决定，做不到的**如实印一行说明**
   而不是静默丢弃。
-- **用 `ctx.fs` 写进 workspace，如实声明 `fs:write`。** `D47` 之前落在插件自己的
+- **用 `ctx.fs` 写进 workspace。** `D47` 之前落在插件自己的
   state_dir，理由记着「那是两个目录树」——那句话当时没错，但生成的图是**用户的交付物**，
   属于用户的工作区。落进 workspace 之后 `AttachmentRef` 才拿得到它要求的**相对**路径。
   运维仍可把 `dir` 配成绝对路径（那时走 `pathlib`），代价是那样存的图发不出去。
-- **不用 `ctx.net`，如实声明 `net` 并直接用 httpx。** 图像端点由运维配置（要能指到本地
+- **不用 `ctx.net`，直接用 httpx。** 图像端点由运维配置（要能指到本地
   ollama 与自建网关），而 SSRF 守卫按设计拒绝私有地址。**模型在这里决定不了任何地址**，
   它只给 prompt——这与 `web.fetch` 恰好相反，那一条必须走守卫。
 
@@ -165,7 +165,7 @@ MANIFEST: Final = PluginManifest(
     version="0.1.0",
     # `>=1.2`：`D47` 的 `ToolResult.attachments` 是本插件产出附件的唯一通道，
     # 宿主没有它时那些图发不出去，而**静默发不出去**正是这一版要消除的东西。
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_image:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name=GENERATE_TOOL),),
     config_schema=CONFIG_SCHEMA,

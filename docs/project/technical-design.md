@@ -135,7 +135,7 @@
 | 状态机 | turn 生命周期、插件生命周期、session 并发 | 具体压缩算法、具体记忆整合策略 |
 | 注册表 | 能力标识、冲突判定、覆盖解析、查找 | 具体工具、具体渠道 |
 | 编排 | 输入分流、context 组装调度、tool-call 循环、取消传播 | Workflow 引擎、Multi-Agent 调度 |
-| 边界 | 配置校验、权限授予、Workspace 解析、错误分类、事件发布 | WebUI 传输细节、平台私有字段处理 |
+| 边界 | 配置校验、Workspace 解析、错误分类、事件发布 | WebUI 传输细节、平台私有字段处理 |
 
 判定式（新增能力时使用）：**禁用该能力后 `BAS-001` 基线是否仍然成立？成立则必须是插件。**
 
@@ -209,7 +209,7 @@ src/nucleamind/
 │   │   ├── translation.py     # 引擎事件 → EventName / TurnOutcome 的唯一翻译表（D14）
 │   │   ├── context_builder.py # context 组装：优先级 / 预算 / trust / 裁剪
 │   │   ├── hooks.py           # Observer 与 Interceptor 派发
-│   │   ├── invoker.py         # 工具执行：schema/权限校验、宽限期、孤儿任务表（D14）
+│   │   ├── invoker.py         # 工具执行：schema 校验、宽限期、孤儿任务表（D14）
 │   │   ├── cancel.py          # CancelToken + 检查点
 │   │   └── limits.py          # TurnLimits 预算
 │   ├── routing/               # 输入分流与并发
@@ -268,7 +268,7 @@ src/nucleamind/
 ├── runtime/                   # 第 5 层：组装根。唯一可同时 import kernel 与 builtins
 │   ├── wiring.py              # 依赖装配：registry ← builtins + plugins
 │   ├── introspection.py       # InstanceView / TurnControl 的生产实现（D22）
-│   ├── plugin_context.py      # 生产级 PluginContext（D23；授权判定接账本 D26）
+│   ├── plugin_context.py      # 生产级 PluginContext（D23）
 │   ├── inventory.py           # manifest 翻译与判定（D25）
 │   ├── access/                # ctx.fs / ctx.net / ctx.shell 的受守卫实现（D26）
 │   │   ├── paths.py           # 第三份 workspace 双重校验
@@ -276,13 +276,13 @@ src/nucleamind/
 │   │   ├── shell.py           # 受限子进程（exec，不经 shell）
 │   │   └── net.py             # SSRF 守卫 + 手动跟随重定向
 │   ├── bootstrap.py           # 唯一启动序列（§10.1 的 10 步）
-│   ├── plugin_bootstrap.py    # Manifest 配置、权限、规划与统一注册策略
+│   ├── plugin_bootstrap.py    # Manifest 配置、规划与统一注册策略
 │   ├── startup.py             # 实例构造成功前的资源所有权事务
 │   ├── first_run.py           # 首次运行落盘 config.json + config.schema.json（D24）
 │   ├── instance.py            # AgentInstance：就绪 / 运行 / 停止
 │   └── cli/                   # nm 可执行程序
 │       ├── main.py            # argv 解析与进程入口
-│       └── commands/          # nm init / run / config / session / permissions
+│       └── commands/          # nm init / run / config / session / plugins / capabilities
 │                              # （plugins / capabilities 见 D29）
 │
 ├── embed/                     # 第 5 层：嵌入式 Python SDK，runtime 的薄门面
@@ -594,8 +594,8 @@ class ResolutionReport:
 都必须通过同一个 Host `NucleaAPI` 实现和 `RegistrationBatch` 注册能力，不存在内建专用
 注册 API。两者仅在“来源发现、依赖解析、可卸载性”上不同：内建清单是静态可信来源，
 外部插件还需经过 §7.3 的发现、校验和生命周期流程。
-Host 的注册分派与 `PluginContext` 的资源门面是两个职责：前者在 D16 建立并接收注入的
-Context，后者在 D26 补齐生产级权限实现，禁止为外部插件复制第二套注册分派。
+Host 的注册分派与 `PluginContext` 的资源门面是两个职责：前者接收注入的 Context，后者
+由 Runtime 提供生产实现；禁止为外部插件复制第二套注册分派。
 
 **Host 与 `NucleaAPI` 的层间张力，`D16` 的结论是「结构化实现 + 在 `runtime/` 静态证明」**：
 `R2` 禁止 `kernel/` import `sdk/`，因此 `kernel/plugins/host.py` 的 `CapabilityHost` 不继承
@@ -638,7 +638,7 @@ bootstrap」的字面表述有出入，取其意不取其形）：`R2` 只允许
 @dataclass(frozen=True, slots=True)
 class EngineDeps:
     model: ModelProvider          # Protocol
-    tools: ToolInvoker            # Protocol，已含权限与预算校验
+    tools: ToolInvoker            # Protocol，已含 schema、超时与副作用边界
     hooks: HookDispatcher         # Protocol
     limits: TurnLimits
 
@@ -699,8 +699,8 @@ engine 的不变量（写进 docstring 并由测试守护）：
 - **合批口径从「只读」换成 `ToolSpec.concurrency`**。旧实现按 `concurrency_safe`（≈ 只读
   且非独占）合批；新层按 `concurrency is PARALLEL`。而 `concurrency` 的默认值是
   `PARALLEL`、`risk` 的默认值是 `MUTATING`——**一个会写的工具忘了声明 `EXCLUSIVE` 就会被
-  并发执行**。写内建/插件工具时，声明 `FS_WRITE` 或 `SHELL` 权限的一律要显式给出
-  `concurrency`。
+  并发执行**。任何会修改外部状态或要求独占资源的工具都必须显式给出
+  `concurrency=EXCLUSIVE`。
 - **截断按 UTF-8 字节、不追加后缀**。旧实现按字符截断并追加 `"\n... (truncated)"`；
   新层按 `tool_result_max_bytes` 字节截断，标记由 `ToolResult.truncated` 承载——截断后缀
   会让结果反过来超出上限。
@@ -868,13 +868,12 @@ return_exceptions=True)`，整体超时 `observer_timeout_ms`（默认 2000）�
 `(priority, plugin_id)` 字典序，确定且可测（`CTX-002`）。每个 handler 独立超时
 `interceptor_timeout_ms`（默认 5000）。
 
-首版 Hook 集合固定为 10 个，新增需按 `NFR-104` 论证：
+当前 Hook 集合固定为 9 个，新增需按 `NFR-104` 论证：
 
 | Hook | 类型 | 返回语义 |
 | --- | --- | --- |
 | `instance_ready` | Observer | — |
 | `instance_shutdown` | Observer | — |
-| `session_start` | Observer | — |
 | `turn_start` | Interceptor | 可返回 `reject`，终止本 turn |
 | `context_assemble` | Interceptor | 追加/过滤 `ContextFragment`（累积式） |
 | `before_model_request` | Interceptor | 可改写请求参数（累积式） |
@@ -1067,7 +1066,7 @@ class PluginManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: str                            # 小写、`[a-z0-9-]`，全局唯一
     version: str                       # PEP 440
-    sdk_range: str                     # PEP 440 specifier，如 ">=2.0,<3.0"
+    sdk_range: str                     # PEP 440 specifier，如 ">=3.0,<4.0"
     setup: str                         # "pkg.module:setup"，仅在阶段 B 导入
     capabilities: tuple[CapabilityDecl, ...]
     dependencies: tuple[str, ...] = ()          # 其他 plugin id
@@ -1075,7 +1074,6 @@ class PluginManifest(BaseModel):
     state_version: int = 1
     critical: bool = False
     platforms: tuple[str, ...] = ()             # 空 = 全平台
-    runtime_requires: tuple[str, ...] = ()      # 如 "node>=20"
 ```
 
 `D05` 落地时补齐的三处细节：
@@ -1107,13 +1105,12 @@ class PluginManifest(BaseModel):
   A3 校验 sdk_range 与 SDK_VERSION 兼容        -> 不兼容即拒绝，不带病加载
   A4 校验 dependencies 存在且无环（拓扑排序）  -> 缺失/成环即错误
   A5 用 config_schema 校验插件配置块
-  A6 校验 permissions 已被配置授权
-  A7 校验 state_version 与磁盘状态一致
+  A6 校验 state_version 与磁盘状态一致
   产出：有序加载计划 + 阶段 A 失败清单
 
 阶段 B  加载（按拓扑序）
   B1 import setup 模块
-  B2 创建该插件的受限 PluginContext（含 Grant、配置块、状态目录、logger）
+  B2 创建该插件的 PluginContext（含配置块、状态目录、logger 与宿主资源服务）
   B3 开启 RegistrationBatch
   B4 await setup(api)
   B5 成功 -> batch.commit()   失败 -> batch.rollback() 并记录失败阶段
@@ -1179,13 +1176,11 @@ DISCOVERED -> VALIDATED -> LOADED -> STARTED -> STOPPING -> STOPPED
   与 `DISCOVERED` 同投影成 `discovered`，`STOPPING` 仍投影成 `activated`——停到一半的插件
   还没停下。
 
-### 7.5 Host API 与权限
+### 7.5 Host API 与信任边界
 
-回答 §17.2 第 2 项。**权限定位是「受信任插件 + 声明审计 + 可选应用级门面约束」，
-明确不承诺进程隔离或完整行为监控。**
-
-强制点在 Host API 门面：`PluginContext` 上的资源访问器只有在 manifest 声明且配置授权后
-才会被构造，否则属性访问抛 `PERMISSION_DENIED`。
+插件是受信任的同进程 Python 代码：安装并启用即完全信任。Kernel 不维护插件权限声明、
+授权账本或资源访问审批，也不承诺进程隔离。`PluginContext` 提供统一、可测试的宿主服务，
+插件仍可直接调用 Python/OS API；不可信代码必须放在进程外隔离。
 
 ```python
 class PluginContext(Protocol):
@@ -1196,12 +1191,12 @@ class PluginContext(Protocol):
     events: EventSubscriber
     def spawn_task(self, coro: Awaitable[None], *, name: str) -> None: ...
     @property
-    def fs(self) -> FileAccess: ...      # 需要 permission "fs:read" / "fs:write"
+    def fs(self) -> FileAccess: ...      # Workspace 边界内的文件服务
     @property
-    def net(self) -> HttpAccess: ...     # 需要 "net"，内部走 SSRF 守卫
+    def net(self) -> HttpAccess: ...     # 带 SSRF 守卫的 HTTP 服务
     @property
-    def shell(self) -> ShellAccess: ...  # 需要 "shell"，内部走 Workspace + 沙箱
-    def secret(self, name: str) -> SecretStr: ...   # 需要 "secret:<name>"
+    def shell(self) -> ShellAccess: ...  # 带 cwd、环境与超时约束的子进程服务
+    def secret(self, name: str) -> SecretStr: ...   # 解析本插件配置的 Secret 引用
 ```
 
 `NucleaAPI` 是注册面，形态直接对应 Pi 的 `ExtensionAPI`；D51 后共有 10 个方法：
@@ -1254,7 +1249,8 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 回答 §17.2 第 10 项。
 
 - `sdk/version.py` 导出 `SDK_VERSION`，语义化版本，与主程序版本独立演进。
-  **当前为 `2.0.0`**；2.x 不再包含插件权限声明与授权上下文。
+  **当前为 `3.0.0`**；3.x 不再包含无消费者的 `runtime_requires`，也不暴露从未分发且与
+  `session.started` 事件重叠的 `session_start` Hook。
 - 插件用 `sdk_range` 声明兼容范围，不满足即拒绝加载（`SDK-005`）。
 - minor 版本只允许新增；移除或语义变更必须 major，且提前一个 minor 打运行期
   `DeprecationWarning` 并在 `ResolutionReport` 中标注。
@@ -1291,7 +1287,7 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
   `/plugins`、`/capabilities` 这类命令本来就该是第三方插件能写的东西，特权注册会让
   `BAS-005` 在这一项上破例，`/help` 还列不出自己。
 - **两个 Protocol 而不是一个七成员门面**：`InstanceView` 是只读可观测性，`TurnControl` 是
-  控制动作，`D26` 落地权限模型后应当可以分别授予。两者都进 `SUPPORT_PROTOCOLS`
+  控制动作；分开后职责和测试边界都更清楚。两者都进 `SUPPORT_PROTOCOLS`
   （与 `CancelSignal` 同档）。D51 新增 `ContextCompactor` 后，
   **`CapabilityKind` 与 `CAPABILITY_PROTOCOLS` 当前均为 10**。
 - **`capabilities()` / `plugins()` 返回 JSON**：`ResolutionReport` 与 `PluginStatus` 在
@@ -1342,8 +1338,7 @@ JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式�
   代价是它落在历史之后的一条 user 消息里而不是 system 消息里，因此给它 `priority=0`
   （与内建基准同级、最晚被裁）。把配置文本升为 `SYSTEM` 等于取消 `CMD-005` 的分级，
   那不是一个内建能力该自行决定的事。只有基线指令与运行时事实是 `trust=SYSTEM`。
-- **零权限、零 IO**（技术方案 §14 的「Provider 只读不写」）。manifest 一条权限也不声明，
-  模块连 `os` / `pathlib` 都不 import，由
+- **零 IO**（技术方案 §14 的「Provider 只读不写」）。模块连 `os` / `pathlib` 都不 import，由
   `tests/architecture/test_builtin_no_privilege.py::test_read_only_builtins_have_no_syntactic_route_to_persistence`
   按「没有语法途径」而不是「看起来没写盘」来断言。因此它不可能因为缺少某个可选插件而
   失败，`CTX-006`/`EDG-307` 由此成立。
@@ -1356,14 +1351,13 @@ JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式�
 
 - **凭据走 `ctx.secret("api_key")` 而不是 `resolve_text()`**。`resolve_text()` 在
   `kernel/config/secrets.py`，`R4` 禁止 `builtins/` import `kernel/`，因此内建 Provider
-  够不着它。manifest 声明 `secret:api_key` + 实现调 `ctx.secret("api_key")` 是 SDK 认可的
-  唯一通道；接线（`ctx.secret()` 的实现接到 `resolve_text()` 上）在 `D23`/`D26` 由 ctx 那
+  够不着它。实现调用 `ctx.secret("api_key")` 是 SDK 认可的通道；接线
+  （`ctx.secret()` 的实现接到 `resolve_text()` 上）由 Runtime 在 ctx 那
   侧完成。`CFG-003`「明文不进配置文档」因此是结构性成立的——配置块里根本没有 `api_key`
   这个键。
-- **直接用 httpx 并如实声明 `net` 权限，不走 `ctx.net`**。`HttpAccess` 的 SSRF 守卫会拒绝
-  私有网段，而本内建的交付要点就包含本地 vLLM / Ollama / LM Studio。与 `session_jsonl`
-  用 `pathlib` 是同一条先例：门面能力不足时，诚实声明比绕道更符合「应用级权限的价值是让
-  越界意图可审计」。本地端点（`ipaddress` 判回环/私有网段）额外关 keepalive、关代理。
+- **直接用 httpx，不走 `ctx.net`**。`HttpAccess` 的 SSRF 守卫会拒绝私有网段，而本内建
+  明确支持本地 vLLM / Ollama / LM Studio。资源门面是便利服务而非强制代理；本地端点
+  （`ipaddress` 判回环/私有网段）额外关 keepalive、关代理。
 - **`describe()` 的模型窗口只能来自配置**。契约写死它在预算推导路径上、不得发网络请求，
   因此有 `models` / `default_context_window_tokens` 等配置键；`models` 非空即视为白名单。
   `max_tokens_field` / `supports_temperature` 也做成配置而不是按模型名 slug 猜的表——用户
@@ -1410,7 +1404,7 @@ fs.read   fs.write   fs.edit   fs.list   fs.grep   shell.exec
 ### 8.3 安全边界
 
 内建能力**不享受任何特权**（`BAS-005`）：`builtins/` 通过 `sdk/` 拿到的
-`PluginContext` 与外部插件同型，同样需要在 `BUILTIN_MANIFESTS` 里声明权限。
+`PluginContext` 与外部插件同型，并通过同一份 `BUILTIN_MANIFESTS` 声明能力。
 `tests/architecture/test_builtin_no_privilege.py` 断言 `builtins/` 不 import
 `nucleamind.kernel.*`。
 
@@ -1461,7 +1455,7 @@ lifecycle: start / stop / health
  3  组装 BUILTIN_MANIFESTS（跳过被禁用项，CLI_ENTRY 除外）
     -> 配置试图禁用 CLI 入口：拒绝配置并说明原因（EDG-108）
  4  发现候选插件（entry point + 显式路径），与 plugins.enabled 求交集
- 5  阶段 A 校验：id / sdk_range / 依赖拓扑 / 配置 / 权限 / 平台 / state_version
+ 5  阶段 A 校验：id / sdk_range / 依赖拓扑 / 配置 / 平台 / state_version
  6  阶段 B 按拓扑序加载，每个插件事务性注册
  7  阶段 C 解析覆盖，产出 ResolutionReport；冻结 registry
  8  校验必需能力：MODEL、SESSION_STORE、CLI_ENTRY 必须各有一个生效实现
@@ -1533,7 +1527,7 @@ Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中
       响应含 tool_call "shell.exec"
       【检查点 4】
       before_tool_call Interceptor（可 block / 改参）
-      ToolInvoker：schema 校验 -> 权限校验 -> 预算校验 -> 执行
+      ToolInvoker：schema 校验 -> 预算校验 -> 执行
       【检查点 5 / 6】
       after_tool_call Interceptor
       ToolResult 截断至 tool_result_max_bytes 后并入消息
@@ -1857,7 +1851,7 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 
 ### M4 Plugin Runtime 最小闭环（阶段二，P0）
 
-交付：`kernel/plugins/` 的外部发现、校验与生命周期、权限门面、示例插件和
+交付：`kernel/plugins/` 的外部发现、校验与生命周期、资源门面、示例插件和
 `nm plugins` 命令；复用 M3/D16 已建立的 Host `NucleaAPI` 与事务性注册通道。
 
 示例插件选择：**`nucleamind-plugin-echo-tool`（新增一个工具）+
@@ -1881,7 +1875,7 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 ```text
 1  额外 Model Provider   —— 止步：内建 model-openai + anthropic 插件已够（D32 交付）
 2  Memory                —— 仍要做，需 MemoryProvider 接口 + MEM-005 管理命令
-3  扩展 Tool（web、search、image、mcp）—— 仍要做，依赖 net/shell 权限
+3  扩展 Tool（web、search、image、mcp）—— 仍要做，可复用 net/shell 资源服务
 4  Channel               —— 只做 feishu（D34 交付）与 discord（D33 交付），其余 13 个放弃
 5  Cron / Automation     —— 仍要做，依赖后台任务与 Hook
 6  WebUI + Gateway       —— 不做，前端源码已随 D35 删除
@@ -1935,14 +1929,14 @@ a 步同样不再是「补基线测试」：`D32` 起就改成直接读旧实现
 | 遗留隔离区长期不清 | §4.3 | **已闭环**：债务棘轮压到 `D35` 清空，隔离区与棘轮一并删除 |
 | 重命名遗漏 | §4.5 | M-A 验收双防线：归一化后的测试结果逐项一致 + 新层旧名扫描无意外命中 |
 | 一次性重写失控 | `13.1` | M2 采用「基线测试 → 新实现 → 单点切换并删除旧实现」，每步有独立验收，回退使用 git |
-| SDK 表面膨胀 | `13.2` | `NucleaAPI` 冻结 9 方法、Hook 冻结 10 个、`__all__` 快照测试 |
+| SDK 表面膨胀 | `13.2` | `NucleaAPI` 冻结 10 个注册方法、Hook 冻结 9 个、`__all__` 快照测试 |
 | 内建能力获得特权 | `13.10` | `builtins/` 禁止 import `kernel/`，架构测试断言 |
 | 内建工具集扩张 | `13.10`、`BAS-008` | 6 工具冻结清单 + 三条准入判定 + 评审门槛 |
 | 异步资源泄漏 | `13.3` | 所有插件任务经 `api.ctx.spawn_task()`；停止超时 + 孤儿任务表 |
-| Session/Context/Memory 职责混淆 | `13.4` | Session 拥有历史；Context 只读不写；Memory 独立存储。契约测试断言 Context provider 无写权限 |
+| Session/Context/Memory 职责混淆 | `13.4` | Session 拥有历史；Context 只读不写；Memory 独立存储。架构测试断言 Context provider 没有写入路径 |
 | 配置迁移覆盖用户数据 | `13.5` | 迁移失败保留旧状态；配置损坏拒绝启动不改写原文件 |
 | `Any` 向核心扩散 | `13.6` | `Any` 需 `# boundary:` 注释 + CI 检查；basedpyright 严格模式 |
-| 虚假安全承诺 | `13.7` | 文档明确「启用插件即信任代码、应用级权限 ≠ 隔离」；强隔离由可选宿主或部署环境承担 |
+| 虚假安全承诺 | `13.7` | 文档明确「启用插件即信任代码」；强隔离由可选宿主或部署环境承担 |
 | 兼容层反向污染 | `13.8`、`13.9` | 兼容层为独立包插件，不进 Kernel 依赖 |
 | 声明式扩展越权 | `13.11` | `ContextFragment.trust` 由 Kernel 强制，插件无法自升级信任级别 |
 
@@ -1951,7 +1945,7 @@ a 步同样不再是「补基线测试」：`D32` 起就改成直接读旧实现
 | # | 问题 | 结论 | 主要依据 | 验证方式 |
 | --- | --- | --- | --- | --- |
 | 1 | 插件发现方式 | entry point 组 `nucleamind.plugins` + 配置显式路径；发现与启用分离 | 启动开销可控（`NFR-401`）；安装≠启用（`DST-002`） | 启动开销回归指标；`tests/plugins/test_discovery.py` |
-| 2 | 权限首版范围 | 受信任同进程插件；声明与账本负责审计，门面提供自愿约束；不新增监听或 Agent 专属权限 | `13.7` 不给虚假承诺；极简 Kernel、一切皆插件 | 权限拒绝路径测试；D52 文档防漂移断言 |
+| 2 | 插件信任边界 | 受信任同进程插件；安装并启用即完全信任；资源门面只提供可复用约束 | `13.7` 不给虚假承诺；极简 Kernel、一切皆插件 | 文档与架构守卫 |
 | 3 | Capability arity | 按 kind 固定 arity（见 §6.1 表）；内建 priority 基准 0；覆盖必须显式声明 | `SDK-003`、`EDG-102` 禁止顺序决定 | registry 冲突分支全覆盖单测 |
 | 4 | 内建能力发布方式 | 同仓库同 wheel 的独立子包 `builtins/`，受 `R4` 约束 | `DST-001`、`DST-003` | `test_builtin_no_privilege.py` |
 | 5 | 内建 Model 协议 | OpenAI 兼容 Chat Completions | 覆盖面最广，使 `BAS-001` 对最多用户成立 | `ModelProviderContract` + e2e |

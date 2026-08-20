@@ -205,8 +205,7 @@ class ShellAccess(Protocol):
         分别实现，但对外行为契约一致：同样的参数给出同样的退出码语义、同样的输出截断
         规则、同样的超时行为。
 
-        **异常约定**：未授权抛 `PERMISSION_DENIED`；cwd 越界抛
-        `PERMISSION_PATH_OUTSIDE_WORKSPACE`；**非零退出码不是异常**，它在
+        **异常约定**：cwd 越界抛 `PERMISSION_PATH_OUTSIDE_WORKSPACE`；**非零退出码不是异常**，它在
         `ShellResult.exit_code` 里。超时同样不抛，返回 `timed_out=True` 的结果——
         调用方需要拿到超时前已产生的输出。
         """
@@ -429,7 +428,7 @@ class NucleaAPI(Protocol):
     def on(self, hook: HookName, handler: HookHandler, *, priority: int = 100) -> None:
         """订阅一个 Hook（`CapabilityKind.HOOK`，MULTI）。
 
-        `hook` 是冻结的 10 个之一；它是 observer 还是 interceptor 由 `HOOK_KINDS` 决定，
+        `hook` 是冻结的 9 个之一；它是 observer 还是 interceptor 由 `HOOK_KINDS` 决定，
         不由注册方选择——同一个 Hook 对不同插件有不同语义，失败隔离规则就无法自洽。
 
         **异常约定**：批次已提交后再注册抛 `KERNEL_INVARIANT_VIOLATED`。

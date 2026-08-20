@@ -114,7 +114,7 @@ STORE_NAME: Final = "jsonl"
 MANIFEST: Final = PluginManifest(
     id="memory",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_memory:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.MEMORY, name=STORE_NAME),

@@ -111,7 +111,7 @@
                      |
 阶段 6  开箱可用     D24 首次运行体验与开箱可用验收 ★
                      |
-阶段 7  插件运行时   D25 Manifest 与发现 ── D26 权限门面与 PluginContext
+阶段 7  插件运行时   D25 Manifest 与发现 ── D26 资源门面与 PluginContext
                        ── D27 两阶段加载 ── D28 生命周期 ── D29 nm plugins 与诊断
                        ── D30 示例插件与 Plugin Runtime 验收 ★
                      |
@@ -654,7 +654,7 @@ tests/sdk/test_public_surface.py
 
 - 目标 **≤500 行**。负责 session 加载写入、context 组装调度、事件发布、出站消息生成。
 - Hook 分两类：Observer 并发只读失败隔离；Interceptor 顺序执行按
-  `(priority, plugin_id)`，可改流水线。10 个 Hook 全部接入。
+  `(priority, plugin_id)`，可改流水线。当前 9 个 Hook 全部接入。
 - Context 组装完整实现技术方案 §10.2 第 7 步的 a–e 五个子步骤，
   包括按 `trust` 决定放置位置、`UNTRUSTED` 包裹为带前缀的数据块。
 - 检查点 1、4 在此实现。
@@ -717,9 +717,9 @@ tests/architecture/test_kernel_runs_without_builtins.py
   都通过它把能力写入 `RegistrationBatch`；**不允许存在内建专用注册 API**
   （`SDK-007`）。
 - D16 的 `host.py` 只实现注册分派，并接收外部注入的 `PluginContext`；本阶段测试使用
-  `FakePluginContext`。生产级权限 Context 由 D26 补齐，D26 不得重写注册分派。
+  `FakePluginContext`。生产级 Context 由 D26 补齐，D26 不得重写注册分派。
 - 内建与外部插件可以有不同的来源发现和生命周期编排：内建来自静态可信清单，外部插件
-  还需 entry point、依赖、权限和版本校验。差异不得延伸到能力注册接口。
+  还需 entry point、依赖和版本校验。差异不得延伸到能力注册接口。
 - 契约测试基类：`ModelProviderContract`、`SessionStoreContract`、`ContextProviderContract`、
   `ToolContract`、`ChannelContract`。子类只需提供构造夹具即获得全部用例。
 - 契约测试放在公开 SDK 内，因为它同时是插件开发者的验收工具。
@@ -774,7 +774,7 @@ tests/architecture/test_kernel_runs_without_builtins.py
 
 - 通过 `ContextProviderContract` 全部用例。
 - 无 Memory 插件时组装正常完成，不产生缺失依赖错误（`EDG-307`）。
-- Provider 无写权限：架构测试断言其不 import 任何持久化模块。
+- Provider 没有写入路径：架构测试断言其不 import 任何持久化模块。
 - token 估算与实际裁剪结果一致性测试。
 
 **规模**：约 250 行 + 250 行测试。**风险**：低。
@@ -845,7 +845,7 @@ tests/architecture/test_kernel_runs_without_builtins.py
 - 取消测试：可取消进程正常终止；故意不响应的进程在 grace 后标记 `UNKNOWN`。
 - 敏感环境变量（含哨兵）不传入子进程。
 - 跨平台契约测试：退出码语义、输出截断、超时行为在两平台一致（`EDG-404`、`NFR-605`）。
-- 默认权限保守：未授予 `shell` 权限时工具不注册（`NFR-307`）。
+- 默认执行环境保守：子进程不继承敏感环境变量，扩大范围必须显式配置（`NFR-307`）。
 
 **规模**：约 400 行 + 450 行测试。**风险**：高，跨平台进程管理与取消是经典难点。
 
@@ -868,7 +868,7 @@ tests/architecture/test_kernel_runs_without_builtins.py
 - 6 个命令各有测试；`/capabilities` 在无插件时列出全部内建能力及提供方（§16.1 第 2 条）。
 - `/config` 输出哨兵扫描无泄漏。
 - 命令执行失败返回可诊断错误且会话可用（`CMD-003`）。
-- 命令声明的名称、参数形式、说明、权限需求可被 registry 统一列出（`CMD-001`）。
+- 命令声明的名称、参数形式、说明和操作员限制可被 registry 统一列出（`CMD-001`）。
 
 **规模**：约 400 行 + 350 行测试。**风险**：低。
 
@@ -979,29 +979,28 @@ tests/embed/test_embed.py
 
 **规模**：约 450 行 + 450 行测试。**风险**：中。
 
-### D26 权限门面与 PluginContext
+### D26 资源门面与 PluginContext
 
 **依赖**：D25、D11
 
-**交付**：`kernel/plugins/permissions.py`、`kernel/plugins/host.py`（PluginContext 部分）、
-`tests/plugins/test_permissions.py`
+**交付**：生产 `PluginContext`、`runtime/access/` 资源服务及其测试。
 
 **要点**（技术方案 §7.5）
 
-- 资源访问器（`fs` / `net` / `shell` / `secret`）只在 manifest 声明且配置授权后才构造，
-  否则属性访问抛 `PERMISSION_DENIED`。
+- 资源服务（`fs` / `net` / `shell` / `secret`）统一 Workspace 路径、SSRF 防护、
+  子进程超时与 Secret 包装，但不是插件安全沙箱。
 - `PluginContext.spawn_task()` 是插件创建后台任务的唯一途径；Host API 不暴露裸
   `asyncio.create_task`。
 - 在 D16 已有 `host.py` 上补齐生产级 `PluginContext`，不得另建第二套 Host API 或复制
   注册分派逻辑。
-- 文档中必须写明：**应用级权限 ≠ 进程隔离**，同进程插件可绕过（`13.7`）。
-  不写这句就是虚假安全承诺。
+- 文档中必须写明：插件是受信任的同进程代码，启用即完全信任；不可信代码必须在进程外
+  隔离（`13.7`）。
 
 **验收**
 
-- 未声明权限时访问对应访问器抛 `PERMISSION_DENIED`（4 个资源各一测试）。
+- 四个资源服务分别验证 Workspace、SSRF、超时和 Secret 缺失语义。
 - 插件只能读到自己的配置块（`CFG-002`），尝试读他人配置无对应 API。
-- 内建能力同样受权限约束，无特权路径（`BAS-005`，复用 D16 的架构测试）。
+- 内建能力使用同一 PluginContext 与注册路径，无特权路径（`BAS-005`）。
 - 文档中的隔离能力声明经评审确认。
 
 **规模**：约 450 行 + 400 行测试。**风险**：中。
@@ -1220,7 +1219,7 @@ docs/ 插件开发入门文档
 | D23 | cli_entry + runtime/embed + nm 入口 | 5 | D17–D22 D14 | 1300 | 中 |
 | D24 | 开箱可用验收 ★ | 6 | D17–D23 | 750 | 中 |
 | D25 | Manifest 与发现 | 7 | D24 | 900 | 中 |
-| D26 | 权限门面与 Context | 7 | D25 D11 | 850 | 中 |
+| D26 | 资源门面与 Context | 7 | D25 D11 | 850 | 中 |
 | D27 | 两阶段加载 | 7 | D26 D06 | 1200 | 高 |
 | D28 | 插件生命周期 | 7 | D27 | 850 | 中高 |
 | D29 | nm plugins 与诊断 | 7 | D28 D22 | 700 | 低 |
@@ -1272,7 +1271,7 @@ docs/ 插件开发入门文档
 | §7.1–§7.2 发现与 Manifest | D25 |
 | §7.3 两阶段加载 | D27 |
 | §7.4 生命周期 | D28 |
-| §7.5 Host API 与权限 | D26 |
+| §7.5 Host API 与信任边界 | D26 |
 | §7.6 SDK 版本策略 | D05 |
 | §8 内建默认能力 | D16–D23 |
 | §9 Message 与 Channel | D03 D23 |

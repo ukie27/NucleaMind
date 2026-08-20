@@ -55,7 +55,7 @@ def test_path_guard_matches_the_fs_workspace_guard(tmp_path: Path, raw: str) -> 
 
 
 def test_absolute_paths_are_rejected_unlike_the_tool_guard(tmp_path: Path) -> None:
-    """契约（`sdk/api.py`）就是这么写的：根由授权决定，不由调用方决定。
+    """契约（`sdk/api.py`）就是这么写的：根由实例 Workspace 决定，不由调用方决定。
 
     `tools_fs` 反过来接受绝对路径——它面对的是模型给的串，拒绝只会换来一串 `../`。
     """

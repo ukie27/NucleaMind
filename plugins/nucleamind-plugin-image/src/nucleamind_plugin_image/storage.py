@@ -6,8 +6,8 @@
 **默认落点是 workspace，因此走 `ctx.fs`**（`D47` 改的）。原来图落在插件自己的
 state_dir，理由记着「`ctx.fs` 的根是 workspace，那是两个目录树，不是缺个方法」——那句话
 当时是对的，但它回避了真正的问题：**生成的图是用户的交付物**，而交付物属于用户的工作区，
-不属于插件的私有状态。落在 workspace 里之后三件事同时成立：`ctx.fs.write_bytes()` 用得上
-（`fs:write` 早就如实声明着）、`fs.read` 这类内建工具能接着处理它、
+不属于插件的私有状态。落在 workspace 里之后三件事同时成立：`ctx.fs.write_bytes()` 用得上、
+`fs.read` 这类内建工具能接着处理它、
 `AttachmentRef(source=WORKSPACE)` 拿得到一个**相对**路径——契约禁止附件依赖绝对路径，
 那正是 `D47` 之前这些图发不出去的直接原因。
 
@@ -137,7 +137,7 @@ class WorkspaceImageStore:
     async def save(self, data: bytes, media_type: str) -> SavedImage:
         """写一张图。
 
-        **异常约定**：门面自己抛 `PERSISTENCE_WRITE_FAILED` / 越界与未授权的权限错误，
+        **异常约定**：门面自己抛 `PERSISTENCE_WRITE_FAILED` 或 Workspace 越界错误，
         这里**原样放行**——它们的 `detail` 比这里能补的更准确（哪个插件、哪条路径），
         再包一层只会把位置信息埋掉。
         """

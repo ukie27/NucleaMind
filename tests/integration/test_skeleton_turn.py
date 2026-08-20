@@ -97,7 +97,7 @@ async def test_a_turn_with_a_tool_call_runs_end_to_end() -> None:
     assert receipt.outcome.tool_calls == 1
     assert receipt.content == "notes.md 里有三条待办。"
 
-    # 工具真的被执行了，而且拿到的是它声明的权限（`ToolExecutor.prepare` 的产物）。
+    # 工具真的被执行了，而且拿到完整的调用上下文（`ToolExecutor.prepare` 的产物）。
     assert len(echo.calls) == 1
     assert echo.calls[0].call.name == "fs.read"
 

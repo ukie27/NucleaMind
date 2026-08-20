@@ -42,8 +42,7 @@ _KERNEL_ONLY_SYMBOLS = frozenset(
 
 #: 声明为**只读**的内建包（相对 `builtins/` 的目录名）。`D18` 的 `context_basic` 是第一个：
 #: 技术方案 §14 把「Context Provider 只读不写」列为职责划分风险项——一个顺手把检索结果
-#: 存下来的 Provider 会让「谁拥有持久化」这件事重新变得说不清，而它 manifest 里一条权限
-#: 也没声明，越界就不再可审计（`BAS-005`）。
+#: 存下来的 Provider 会让「谁拥有持久化」这件事重新变得说不清（`BAS-005`）。
 #:
 #: 判据是模块**根本没有 IO 的语法途径**，而不是「看起来没写盘」：不 import 这些模块，
 #: 也不出现裸 `open`。`session_jsonl` 那样确实要写盘的内建不在这张表里，它如实声明

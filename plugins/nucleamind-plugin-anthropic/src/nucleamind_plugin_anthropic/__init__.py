@@ -37,7 +37,7 @@ OpenAI 兼容层能连到 Anthropic 的中转，但 prompt caching 的断点、t
 - **不支持图像与文档输入。** `ModelMessage.content` 是纯字符串，契约层没有多模态位置，
   旧实现的 `_convert_image_block` 因此没有搬运源。
 - **不声明任何 server tool**（web_search / code_execution 等）。它们会绕过 `ToolExecutor`，
-  等于给模型开一条不受 `TurnLimits` 与权限约束的副作用通道。
+  等于给模型开一条不受主 Turn、`TurnLimits` 与取消链约束的副作用通道。
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="anthropic",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_anthropic:setup",
     # **不写 `overrides`**：本插件与内建 `openai` 并存而不是取代它，因此 `D30` 的
     # `on_disable` 表态要求不适用（那条只对声明过覆盖的插件生效）。

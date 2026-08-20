@@ -96,7 +96,6 @@ def test_binding_a_public_host_without_a_key_is_refused() -> None:
         FakePluginContext(
             plugin_id="openai-api",
             config={"host": "0.0.0.0"},
-            # 权限授予了但凭据没配——这正是「暴露到回环之外却没有鉴权」的形状。
         )
     )
     with pytest.raises(NucleaError) as caught:

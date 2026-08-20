@@ -139,7 +139,7 @@ class TestNormalization:
 
 class TestAttachments:
     def test_attachments_become_url_refs_and_body_notes(self) -> None:
-        """**不下载不落盘**：契约只存引用，因此本插件一条 `fs:*` 权限都不需要。"""
+        """**不下载不落盘**：契约只存引用，因此归一化阶段不需要 Workspace IO。"""
         message = normalize(raw(attachments=(attachment(filename="报告.pdf"),)), gate())
         assert message is not None
         ref = message.attachments[0]

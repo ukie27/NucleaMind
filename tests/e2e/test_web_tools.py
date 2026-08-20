@@ -5,8 +5,8 @@
 装配链内部结构（`tests/runtime/`）。
 
 **这里唯一的替身仍然是传输层**（`conftest.recorder`），与 `test_plugin_runtime.py` 同一条
-理由：模型供应商、注册路径、`ToolExecutor`、权限账本、`runtime/access/net.py` 的守卫
-全是生产实现。因此本文件要求 web 插件已经装进当前环境：
+理由：模型供应商、注册路径、`ToolExecutor`、`runtime/access/net.py` 的守卫全是生产实现。
+因此本文件要求 web 插件已经装进当前环境：
 
     pip install -e plugins/nucleamind-plugin-web
 

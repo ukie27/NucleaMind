@@ -7,14 +7,13 @@
 
 四条决定了本模块形状的规则：
 
-- **凭据只从 `ctx.secret("api_key")` 来。** manifest 声明 `secret:api_key`，
-  `SecretStr` 的明文只在拼 Authorization 头的那一行经 `reveal()` 取出，不进配置、不进
+- **凭据只从 `ctx.secret("api_key")` 来。** `SecretStr` 的明文只在拼 Authorization 头的
+  那一行经 `reveal()` 取出，不进配置、不进
   `detail`、不进事件（`MOD-002`、`CFG-003`）。`kernel/config/secrets.py::resolve_text`
-  够不着（`R4` 禁止 `builtins/` import `kernel/`），接线由 `D23`/`D26` 在 ctx 那侧完成。
-- **直接用 httpx 而不是 `ctx.net`，并如实声明 `net` 权限。** `HttpAccess` 的 SSRF 守卫会
-  拒绝私有网段，而本内建的交付要点就包含本地 vLLM / Ollama / LM Studio。这与 `D17` 的
-  `session_jsonl` 用 `pathlib`、如实声明 `fs:read`/`fs:write` 是同一条先例：门面能力不足
-  时，诚实声明比绕道更符合「应用级权限的价值是让越界意图可审计」。
+  够不着（`R4` 禁止 `builtins/` import `kernel/`），接线由 Runtime 在 ctx 那侧完成。
+- **直接用 httpx 而不是 `ctx.net`。** `HttpAccess` 的 SSRF 守卫会拒绝私有网段，而本内建
+  明确支持本地 vLLM / Ollama / LM Studio。资源门面是方便插件复用的受约束实现，不是
+  强制所有可信插件经过的授权代理。
 - **本地端点关 keepalive、关代理。** Ollama / llama.cpp / vLLM 会在客户端 keepalive 到期
   前关掉空闲连接，不关就是每轮第一次调用必失败；而 `HTTP_PROXY` / `ALL_PROXY` 会把
   localhost 流量送进一个够不着它的代理。这两条都是真实端点上验证过的，不是防御性代码。

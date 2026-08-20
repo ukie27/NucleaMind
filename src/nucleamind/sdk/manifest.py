@@ -296,7 +296,6 @@ class PluginManifest(BaseModel):
     state_version: int = 1
     critical: bool = False
     platforms: tuple[str, ...] = ()
-    runtime_requires: tuple[str, ...] = ()
 
     @field_validator("id")
     @classmethod
@@ -360,7 +359,7 @@ class PluginManifest(BaseModel):
             )
         return value
 
-    @field_validator("dependencies", "platforms", "runtime_requires")
+    @field_validator("dependencies", "platforms")
     @classmethod
     def _check_string_tuples(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if any(not item.strip() for item in value):

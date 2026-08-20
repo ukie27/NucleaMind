@@ -204,7 +204,7 @@ class TestFailuresHappenBeforeAnythingIsWritten:
         assert result.error is not None
         assert result.side_effect is SideEffect.NONE
 
-    async def test_an_ungranted_context_fails_the_call_not_the_process(
+    async def test_a_resource_service_failure_fails_the_call_not_the_process(
         self, tmp_path: Path
     ) -> None:
         ctx = ImageContext(tmp_path)

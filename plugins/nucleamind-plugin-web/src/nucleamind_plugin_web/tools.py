@@ -10,8 +10,8 @@
   SSRF 守卫（解析后逐地址判定 + 手动跟随重定向）正是为这种输入存在的（`EDG-406`）。
   本插件**不写第四份守卫**（另三份在 `runtime/access/paths.py` 一线之外的那几处）。
 - `web.search` 的端点**来自运维配置**，模型只控制 query。自托管 SearXNG 常在私有网段，
-  而 `ctx.net` 会按设计拒掉私有地址；因此这一条直接用 httpx 并如实声明 `net` 权限，
-  与内建 `model_openai` 要连本地 vLLM / Ollama 是同一条先例。
+  而 `ctx.net` 会按设计拒掉私有地址；因此这一条直接用 httpx，与内建 `model_openai`
+  要连本地 vLLM / Ollama 是同一条先例。
 
 **`execute()` 约定不抛**，两个类共用 `_Tool` 的那一个出口（`builtins/tools_fs/base.py`
 的同一种做法）。逸出的异常会被 Kernel 记成 `side_effect=UNKNOWN`——而这两个工具都是只读的，

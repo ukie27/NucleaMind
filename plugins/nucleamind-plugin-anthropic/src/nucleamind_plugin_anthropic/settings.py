@@ -83,8 +83,7 @@ CAPABILITY_NAME: Final = "anthropic"
 #: `PROVIDER_NAME` 在 `wire.py` 里定义（`D45` 起 `OpaqueBlock.provider` 也用它），
 #: 从这里原样再导出——本模块 import `wire`，反过来会成环。
 
-#: 凭据名，**固定不可配置**。manifest 里声明的是 `secret:api_key`，做成可配置会让那条
-#: 权限声明变成一句谎话——而权限声明的全部价值就是它如实（`D19` 的先例）。
+#: 凭据名，**固定不可配置**。配置块和 `ctx.secret()` 必须使用同一个稳定名字。
 SECRET_NAME: Final = "api_key"
 
 DEFAULT_BASE_URL: Final = "https://api.anthropic.com/v1"

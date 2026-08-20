@@ -13,7 +13,7 @@
   那之后。
 
 `ctx` 一律用 `FakePluginContext`：`D16` 的 Host 只持有并转交它、一个成员都不碰，
-因此这些用例不该也不需要碰权限语义（那是 `tests/sdk/` 与 `D26` 的事）。
+因此这些用例不该也不需要构造生产资源服务（那是 `tests/runtime/` 的事）。
 """
 
 from __future__ import annotations

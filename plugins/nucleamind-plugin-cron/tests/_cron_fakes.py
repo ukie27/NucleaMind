@@ -135,7 +135,7 @@ def fake_tz_resolver(name: str) -> tzinfo:
 
 
 class CronContext(FakePluginContext):
-    """带真实 `state_dir` 的上下文。默认授予 manifest 声明的两条权限。"""
+    """带真实 `state_dir` 的上下文。"""
 
     def __init__(
         self,

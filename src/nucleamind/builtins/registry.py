@@ -46,7 +46,7 @@ __all__ = [
 SESSION_JSONL: Final = PluginManifest(
     id="session-jsonl",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.session_jsonl:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.SESSION_STORE, name="jsonl"),),
     config_schema={
@@ -69,12 +69,11 @@ SESSION_JSONL: Final = PluginManifest(
 #: 模型将拿不到任何系统指令。一份写错的配置（`resolve_settings` 抛 `CONFIG_INVALID`）
 #: 应当让实例启动失败，而不是让一个「没人告诉它自己是谁」的 Agent 上线。
 #:
-#: **一个权限也不声明**：本内建纯内存、不读盘、不出网（技术方案 §14 的「Provider 只读
-#: 不写」）。声明一条用不到的权限就是把「越界意图可审计」这件事变得不可审计。
+#: 本内建纯内存、不读盘、不出网（技术方案 §14 的「Provider 只读不写」）。
 CONTEXT_BASIC: Final = PluginManifest(
     id="context-basic",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.context_basic:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.CONTEXT, name="basic"),),
     config_schema={
@@ -115,7 +114,7 @@ CONTEXT_BASIC: Final = PluginManifest(
 MODEL_OPENAI: Final = PluginManifest(
     id="model-openai",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.model_openai:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.MODEL, name="openai"),),
     config_schema={
@@ -224,7 +223,7 @@ MODEL_OPENAI: Final = PluginManifest(
 TOOLS_FS: Final = PluginManifest(
     id="tools-fs",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.tools_fs:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.read"),
@@ -282,11 +281,11 @@ TOOLS_FS: Final = PluginManifest(
 #: `critical=False`：没有 shell 工具的 Agent 仍然能对话，与 `tools_fs` 同一条理由。
 #:
 #: 子进程环境默认一个变量都不继承（`environ.py` 是白名单，不是黑名单）；这是真正影响
-#: 执行边界的机制，与插件授权状态无关。
+#: 执行边界的机制，与插件加载状态无关。
 TOOLS_SHELL: Final = PluginManifest(
     id="tools-shell",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.tools_shell:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="shell.exec"),),
     config_schema={
@@ -343,9 +342,8 @@ TOOLS_SHELL: Final = PluginManifest(
 #: 不是一回事。一份写错的 `disable` 应当让这一项加载失败并留下诊断，而不是把整个实例
 #: 拽下水。
 #:
-#: **一条权限也不声明**。六个命令的数据全部来自 `ctx.instance` / `ctx.turns`，而那两个
-#: 不是资源访问器：只读诊断与事件流是可观测性，与 `ctx.events` 同一档（`sdk/api.py`）。
-#: 本内建不读盘、不出网、不起子进程。
+#: 六个命令的数据全部来自 `ctx.instance` / `ctx.turns`。本内建不读盘、不出网、
+#: 不起子进程。
 #:
 #: **六条声明必须与 `commands_core.COMMAND_NAMES` 逐一对应**，由测试对照。被 `disable`
 #: 关掉的命令**不会**被注册，因此装配根必须用同一份配置过滤这里的声明
@@ -354,7 +352,7 @@ TOOLS_SHELL: Final = PluginManifest(
 COMMANDS_CORE: Final = PluginManifest(
     id="commands-core",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.commands_core:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.COMMAND, name="help"),
@@ -401,12 +399,11 @@ COMMANDS_CORE: Final = PluginManifest(
 #: `CHANNEL` 拥有消息路径（`MSG-007`：CLI 的输入输出与其它平台走同一条契约）。
 #: 拆成两份 manifest 会让它们可以各自被禁用，而它们共用一个控制台对象——那种组合无意义。
 #:
-#: **一条权限也不声明**：stdin/stdout 是进程自己的 IO，不是对实例资源的访问，
-#: 与 `commands_core` 读 `ctx.instance` 同一档。
+#: stdin/stdout 是进程自己的 IO，不经过 Workspace 资源门面。
 CLI_ENTRY: Final = PluginManifest(
     id="cli-entry",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind.builtins.cli_entry:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.CLI_ENTRY, name="stdio"),

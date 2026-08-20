@@ -195,7 +195,7 @@ class TestAttachmentUpload:
         assert "无法上传" in platform.sent[-1][1]
 
     async def test_without_a_reader_the_attachment_is_reported_not_dropped(self) -> None:
-        """没注入 reader（没授 `fs:read`）时也要说一句——静默丢掉才是最坏的那一种。"""
+        """没注入 reader 时也要说一句——静默丢掉才是最坏的那一种。"""
         platform, clock = FakePlatform(), FakeClock()
         stream = relay(platform, clock)
         await stream.handle(outbound("给你", attachments=(self._png(),)))

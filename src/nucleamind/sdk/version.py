@@ -3,8 +3,9 @@
 职责：导出 `SDK_VERSION`，并按 PEP 440 判定插件声明的 `sdk_range` 是否兼容当前 SDK。
 不负责：决定不兼容插件的处置方式，也不负责主程序版本；SDK 与发行包独立演进。
 
-SDK 已进入 2.x：minor 版本只做兼容新增，移除或改变既有语义必须提升 major。2.0 删除了
-不符合可信插件模型的旧授权状态机；插件应声明 `>=2.0,<3.0`。
+SDK 已进入 3.x：minor 版本只做兼容新增，移除或改变既有语义必须提升 major。3.0 删除了
+没有消费者的 `runtime_requires` 字段，以及从未分发又被事件覆盖的 `session_start` Hook；
+插件应声明 `>=3.0,<4.0`。
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from nucleamind.contracts import ErrorCode, NucleaError
 __all__ = ["SDK_VERSION", "is_compatible", "parse_sdk_range"]
 
 #: 当前 SDK 版本（语义化版本，PEP 440 可解析）。插件用 `sdk_range` 声明兼容范围。
-SDK_VERSION: Final = "2.0.0"
+SDK_VERSION: Final = "3.0.0"
 
 #: 预解析当前版本；插件校验会重复调用 `is_compatible()`，无需每次解析同一字面量。
 _CURRENT: Final = Version(SDK_VERSION)

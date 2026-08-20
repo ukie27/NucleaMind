@@ -96,7 +96,7 @@ async def test_a_failed_channel_start_rolls_back_the_whole_instance(tmp_path: Pa
     failing = PluginManifest(
         id="failing-channel",
         version="0.1.0",
-        sdk_range=">=2.0.0,<3.0.0",
+        sdk_range=">=3.0.0,<4.0.0",
         setup="tests.runtime.test_instance:setup_failing_channel",
         capabilities=(
             CapabilityDecl(kind=CapabilityKind.CHANNEL, name=MULTI_CHANNEL_ID),

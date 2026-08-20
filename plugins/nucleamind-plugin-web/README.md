@@ -73,7 +73,7 @@ nm plugins enable web
 - **`web.fetch` 走 `ctx.net`**。URL 整个来自模型，正是 SSRF 守卫存在的理由（`EDG-406`）：
   解析后逐地址判定、私有网段与云元数据地址一律拒绝、重定向手动跟随且每跳重新校验。
   本插件**不写第二份守卫**。
-- **`web.search` 直接用 httpx**，并如实声明 `net` 权限。端点来自运维配置，模型只控制
+- **`web.search` 直接用 httpx**。端点来自运维配置，模型只控制
   query；而自托管 SearXNG 常在私有网段，`ctx.net` 会按设计拒掉它。这与内建 `model-openai`
   要连本地 vLLM / Ollama 是同一条先例。
 

@@ -1,6 +1,6 @@
 # examples/plugins/ — 教学用最小示例插件
 
-这里放**最小可运行**的示例插件：演示 manifest、能力声明、权限申请与生命周期
+这里放**最小可运行**的示例插件：演示 manifest、能力声明、宿主服务与生命周期
 钩子各自最少需要写什么，供插件开发者对照。
 
 与 `plugins/` 的区别：`plugins/` 是要发行的官方能力，这里的示例只用于阅读和
@@ -8,7 +8,7 @@
 
 | 目录 | 演示 |
 | --- | --- |
-| [`nucleamind-plugin-echo-tool`](./nucleamind-plugin-echo-tool) | 新增一项能力（TOOL），不声明任何权限 |
+| [`nucleamind-plugin-echo-tool`](./nucleamind-plugin-echo-tool) | 新增一项纯内存能力（TOOL） |
 | [`nucleamind-plugin-session-memory`](./nucleamind-plugin-session-memory) | 覆盖一项内建能力（SINGLETON 的 SESSION_STORE），以及 `on_disable` 语义 |
 
 两者都是完整独立发行包（`pyproject.toml` + `src/` + `tests/`），经 entry point 组

@@ -4,7 +4,7 @@
 不负责：线格式与落盘细节（`plugins/nucleamind-plugin-image/tests/`）。
 
 **这里唯一的替身仍然是传输层**（`conftest.recorder`）：模型供应商、注册路径、
-`ToolExecutor`、权限账本、插件的状态目录分配全是生产实现。因此本文件要求 image 插件
+`ToolExecutor`、资源服务、插件的状态目录分配全是生产实现。因此本文件要求 image 插件
 已经装进当前环境：
 
     pip install -e plugins/nucleamind-plugin-image

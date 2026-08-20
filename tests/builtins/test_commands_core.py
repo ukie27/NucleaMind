@@ -6,7 +6,7 @@
 | `/capabilities` 无插件时列出全部内建能力及提供方（§16.1 第 2 条） | `TestCapabilities` |
 | `/config` 输出哨兵扫描无泄漏 | `TestConfigRedaction` |
 | 命令失败返回可诊断错误且会话可用（`CMD-003`） | `TestFailureIsDiagnostic` |
-| 声明的名称/参数/说明/权限可被 registry 统一列出（`CMD-001`） | `TestRegistration` |
+| 声明的名称/参数/说明/操作员限制可被 registry 统一列出（`CMD-001`） | `TestRegistration` |
 | 单命令禁用后 `/help` 与 registry 同步消失（`TOL-006`） | `TestSingleCommandDisable` |
 
 三条写这些用例时的取舍：

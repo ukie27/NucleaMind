@@ -24,8 +24,8 @@
 - **`web.fetch` 走 `ctx.net`，`web.search` 直接用 httpx**，判据是那个 URL 由谁决定：
   前者整个来自模型（正是 SSRF 守卫存在的理由，`EDG-406`），后者的端点来自运维配置而
   模型只控制 query——自托管 SearXNG 常在私有网段，`ctx.net` 会按设计拒掉它。后一条与内建
-  `model_openai` 要连本地 vLLM / Ollama 是同一条先例：门面能力不足时，**如实声明 `net`
-  权限**比绕道更符合「应用级权限的价值是让越界意图可审计」。
+  `model_openai` 要连本地 vLLM / Ollama 是同一条先例：资源门面不适合该端点时，可信插件
+  直接使用与自身协议匹配的客户端。
 - **抓回来的正文是不可信数据，`D42` 起真的被隔离了。** 那次给 `ToolResult` 加了 `trust`
   字段，`fold_tool_result` 因此把 `UNTRUSTED` 的结果包成带来源标注的数据块——与
   `ContextFragment` 共用 `contracts.context.wrap_untrusted`，内容里自带的闭合标记会被中和。
@@ -212,7 +212,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="web",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_web:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.TOOL, name=FETCH_TOOL),

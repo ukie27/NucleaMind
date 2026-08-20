@@ -22,11 +22,9 @@ Channel 拿得到**——`AgentInstance.submit()` 要等整条 turn 跑完才返
   串行（`EDG-202`），lane 之间互不阻塞。因此**并发客户端只在打同一个 `conversation` 时才
   排队**。`D31`–`D32` 期间它是完全串行的，那条能力回退已经消除。
   同 conversation 内的串行正是下面 `SessionHub` 那套「最老等待者」关联仍然成立的前提。
-- **五种权限里没有「监听端口」这一种**（`fs:read` / `fs:write` / `net` / `shell` /
-  `secret`，其中 `net` 判的是**出站**）。因此本插件除 `secret` 外一条权限都声明不出来，
-  而它确实会绑一个端口。`D52` 已明确这是受信任插件模型的刻意边界：启用插件就是信任其
-  代码，不为监听行为扩一条无法完整强制的权限枚举。
-- **应用级权限不是进程隔离**（`sdk/api.py` 的原话）。能连上这个端点的调用方就能驱动
+- **插件自己拥有监听端口**。宿主的 `ctx.net` 是出站 HTTP 服务，不负责监听；启用插件
+  就是信任它建立本地服务。
+- **端点鉴权不是进程隔离**。能连上这个端点的调用方就能驱动
   实例上的全部工具，包括 `shell.exec`。默认只绑回环，且绑非回环地址时**必须**配
   `api_key`，否则 `setup()` 直接以 `CONFIG_INVALID` 拒绝。
 """
@@ -74,7 +72,7 @@ SECRET_NAME: Final = "api_key"
 MANIFEST: Final = PluginManifest(
     id="openai-api",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_openai_api:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
     config_schema={
@@ -119,9 +117,8 @@ def setup(api: NucleaAPI) -> None:
 def _optional_secret(ctx: PluginContext) -> str | None:
     """取 Bearer 凭据。**没配不是错误**——回环上的本地实例不强制鉴权。
 
-    `ctx.secret()` 在「授权了但没配」时抛 `CONFIG_SECRET_MISSING`（`D23` 定的语义），
-    那正是「用户没打算开鉴权」的形状，因此折成 `None`。其余错误（例如
-    `PERMISSION_DENIED`）原样抛出——那是真的配错了。
+    `ctx.secret()` 在没配置引用时抛 `CONFIG_SECRET_MISSING`，那正是「用户没打算开鉴权」
+    的形状，因此折成 `None`。其他错误原样抛出。
     """
     try:
         return ctx.secret(SECRET_NAME).reveal()

@@ -13,9 +13,8 @@
 「silently treating a parse error as an empty store would overwrite the recoverable data」。
 一个装了二十条提醒的用户宁愿看到实例起不来，也不愿意开机后发现提醒全没了。
 
-**不用 `ctx.fs`**：`sdk.api.FileAccess` 没有 `fsync`、没有原子替换、也没有改名。manifest
-里如实声明 `fs:read` / `fs:write`，实现直接用 `pathlib`——与 `builtins/session_jsonl` 和
-`plugins/…-memory` 是同一条先例。
+**不用 `ctx.fs`**：`sdk.api.FileAccess` 没有 `fsync`、没有原子替换、也没有改名，因此实现
+直接用 `pathlib`——与 `builtins/session_jsonl` 和 `plugins/…-memory` 是同一条先例。
 
 **IO 全部经 `asyncio.to_thread`**：保存发生在调度循环与工具调用路径上，在事件循环里同步
 写盘会卡住同一实例的其他 turn。

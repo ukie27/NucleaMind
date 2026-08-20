@@ -26,10 +26,9 @@
   只读的在线格式上长得一模一样。因此本插件的每一次调用都对编排层说「不知道外部世界变了
   没有」，`read_only` 恒为 `False`、`risk` 恒为 `MUTATING`。远端的 `readOnlyHint` 是**它
   自己说的**，而它正是那个不可信的一方。
-- **权限模型对它基本失效。** stdio 传输要长驻子进程与管道，而 `ctx.shell` 是一次性 exec、
-  拿不到 stdin 管道；HTTP 传输由 `mcp` SDK 自己开连接。因此本插件如实声明 `shell` 与
-  `net` 两条权限，但那两条**挡不住任何东西**——真正的边界是「你配了哪些 server」。
-  这与 `discord` 那条「五种权限里没有『连接一个聊天平台』」并列。
+- **插件自己拥有 MCP 连接。** stdio 传输需要长驻子进程与管道，HTTP 传输由 `mcp` SDK
+  自己建立；一次性 `ctx.shell` 和带 SSRF 守卫的 `ctx.net` 都不适合这两种连接。
+  真正的边界是「你配置了哪些 server」。
 - **启动路径上多一次往返。** 连接发生在 `setup()` 里（registry 冻结后只读，没有第二个
   注册时机），因此每台 server 都会给冷启动加上它自己的连接时间。`connect_timeout_ms`
   是上界，超时即跳过那台 server。
@@ -159,7 +158,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="mcp",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_mcp:setup",
     capabilities=(
         # **一条命名空间声明**（`D38-A`）：远端工具名要连上 server 才知道，而 manifest

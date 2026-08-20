@@ -128,7 +128,7 @@ def schedule_spec() -> ToolSpec:
             "required": ["message"],
             "additionalProperties": False,
         },
-        # 排期会把任务表整份写回磁盘（`store.py`），因此如实声明 `fs:write`。
+        # 排期会把任务表整份写回磁盘（`store.py`），因此不是只读操作。
         read_only=False,
         risk=RiskLevel.MUTATING,
     )
@@ -140,8 +140,7 @@ def list_spec() -> ToolSpec:
         name=LIST_TOOL,
         description="列出当前会话里已排期的定时任务（含标识、调度与下一次运行时刻）。",
         parameters={"type": "object", "properties": {}, "additionalProperties": False},
-        # **一条权限都不要**：任务表已经在内存里（`CronScheduler` 是它的唯一持有者），
-        # 列出来不碰任何文件。声明一条用不上的 `fs:read` 会让权限清单失去信息量。
+        # 任务表已经在内存里（`CronScheduler` 是它的唯一持有者），列出来不碰任何文件。
         read_only=True,
         risk=RiskLevel.SAFE,
     )

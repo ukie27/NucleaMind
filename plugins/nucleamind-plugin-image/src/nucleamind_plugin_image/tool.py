@@ -6,7 +6,7 @@
 **直接用 httpx 而不是 `ctx.net`**：图像端点由**运维配置**（`base_url` 要能指到本地
 ollama、自建网关或代理），而 `ctx.net` 的 SSRF 守卫按设计拒绝私有地址与回环。
 与内建 `model_openai` 要连本地 vLLM / Ollama 是同一条先例：门面能力不足时，如实声明
-`net` 权限比绕道更符合权限模型的意义。模型在这里**决定不了任何地址**，它只给 prompt。
+直接使用适合该端点的客户端。模型在这里**决定不了任何地址**，它只给 prompt。
 
 **`side_effect` 三档判定只在 `execute()` 一处**（`builtins/tools_shell/executor.py::_fold`
 的同一条判据）：落盘**之前**失败（参数非法 / 凭据缺失 / 请求失败 / 响应读不懂）→ `NONE`；

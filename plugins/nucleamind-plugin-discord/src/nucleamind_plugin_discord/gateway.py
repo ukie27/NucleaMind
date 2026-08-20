@@ -178,8 +178,8 @@ class DiscordGateway:
     ) -> None:
         """上传附件（`D47`）。一条消息带多个文件，不是每个文件一条消息。
 
-        **字节由调用方读好**（`channel.py` 经 `ctx.fs.read_bytes`）：本模块是 SDK 边界，
-        让它去读盘等于把两个边界叠在一起，而权限门面在另一边。
+        **字节由调用方读好**（`channel.py` 经 `ctx.fs.read_bytes`）：本模块只负责平台 API，
+        不同时承担 Workspace 文件读取。
         `discord.File` 收一个类文件对象，因此这里包一层 `BytesIO`——`discord.py` 会自己
         读完它，不需要我们关。
         """

@@ -96,8 +96,7 @@ API_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
         {"plugin_id", "config", "state_dir", "logger", "events", "spawn_task", "fs", "net",
          "shell", "secret", "instance", "turns"}
     ),
-    # `D42` 补上二进制读写：在那之前要发二进制的插件只能绕过门面直接用 `pathlib`
-    # （`image` 就是这么做的），一个绕过它才能干活的权限门面挡不住任何人。
+    # `D42` 补上二进制读写：否则需要二进制的插件无法复用 Workspace 路径与错误语义。
     FileAccess: frozenset(
         {"read_text", "write_text", "read_bytes", "write_bytes", "list_dir"}
     ),
@@ -208,8 +207,7 @@ def test_every_api_method_documents_its_exception_contract() -> None:
         "PluginContext.fs",
         "PluginContext.net",
         "PluginContext.shell",
-        # `D22`：只读诊断视图与 turn 控制面。它们不是资源访问器，属性访问不做权限判定，
-        # 因此连 `PERMISSION_DENIED` 都没有——异常约定写在各自方法上（`contracts/protocols.py`）。
+        # `D22`：只读诊断视图与 turn 控制面也必须列入只读属性快照。
         "PluginContext.instance",
         "PluginContext.turns",
     }

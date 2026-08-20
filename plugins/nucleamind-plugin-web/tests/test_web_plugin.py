@@ -172,7 +172,7 @@ class TestFetch:
         assert result.ok is False
         assert result.error is not None
 
-    async def test_an_ungranted_context_fails_the_call_not_the_process(self) -> None:
+    async def test_a_resource_service_failure_fails_the_call_not_the_process(self) -> None:
         ctx = WebContext(StubNet())
         tool = WebFetchTool(ctx, resolve_settings({}))
         result = await tool.execute(invocation(FETCH_TOOL, {"url": "https://e.com"}), ManualCancel())
@@ -237,7 +237,7 @@ class TestSearch:
 
     async def test_a_credentialless_backend_never_asks_for_a_secret(self) -> None:
         """默认后端不需要 `api_key`，因此连 `ctx.secret()` 都不该被调到——上下文里
-        `secret` 权限都没给，调了就会 `PERMISSION_DENIED`。"""
+        资源服务拒绝请求时，工具应返回失败结果而不是让异常逃出。"""
         def handle(request: httpx.Request) -> httpx.Response:
             del request
             return httpx.Response(200, text="<html></html>")

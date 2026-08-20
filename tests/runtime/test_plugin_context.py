@@ -84,7 +84,7 @@ def test_context_hands_back_a_guarded_network_facade(tmp_path: Path) -> None:
 
 def test_a_facade_without_a_workspace_is_honest_about_it(tmp_path: Path) -> None:
     """没有 workspace 时 `fs` / `shell` 无处落地——报 `CAPABILITY_MISSING` 而不是
-    悄悄拿一个临时目录当根。授权判定在此之前已经过了。"""
+    悄悄拿一个临时目录当根。"""
     ctx = make_ctx(tmp_path, workspace=None)
     with pytest.raises(NucleaError) as caught:
         _ = ctx.fs

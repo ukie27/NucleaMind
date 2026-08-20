@@ -117,7 +117,7 @@ class StreamRelay:
 
     platform: Platform
     now_ms: Callable[[], int]
-    #: 读一个附件的字节。`None` 表示本 Channel 拿不到（没有 `fs:read`、或读失败），
+    #: 读一个附件的字节。`None` 表示本 Channel 拿不到 workspace、或读取失败，
     #: 那时如实印一行而不是静默丢掉。默认恒 `None`：注入才有上传能力。
     read_attachment: AttachmentReader | None = None
     edit_interval_ms: int = DEFAULT_EDIT_INTERVAL_MS

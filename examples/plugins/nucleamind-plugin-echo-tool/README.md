@@ -35,8 +35,8 @@ pip install -e examples/plugins/nucleamind-plugin-echo-tool
 
 - **只 import `nucleamind.contracts` 与 `nucleamind.sdk`**（依赖规则 `R4`）。够到
   `nucleamind.kernel.*` 会被架构守卫拦下。
-- **一个权限都不声明**。本插件纯内存，因此 `ctx.fs` / `ctx.net` / `ctx.shell` 的属性访问
-  会抛 `PERMISSION_DENIED`——那是设计如此，不是缺陷。
+- **不使用资源服务**。本插件纯内存，因此只读取 `ctx.config`，不需要访问
+  `ctx.fs` / `ctx.net` / `ctx.shell`。
 - **失败是一等结果**：参数非法时返回 `ok=False` 的 `ToolResult` 而不是抛异常。逸出的异常
   会让 Kernel 只能把副作用标成 `UNKNOWN`。
 

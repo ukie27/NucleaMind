@@ -21,8 +21,8 @@
 id。因此不需要 legacy 那个自造的 `f"{name}:{parent}:thread:{id}"` session key——
 `SessionKey(channel_id, conversation_id)` 已经把它表达完了，父频道只作为元数据留着。
 
-**附件不下载**：契约层只存引用不存字节，而 Discord CDN 直接给 URL。这比 legacy 的
-「下载到 media_dir」少一整套 `fs:write` 权限。
+**附件不下载**：契约层只存引用不存字节，而 Discord CDN 直接给 URL，因此不需要维护
+legacy 的全局 media 目录。
 """
 
 from __future__ import annotations

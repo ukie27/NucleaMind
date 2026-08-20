@@ -9,8 +9,8 @@ Channel 泵）、信号处理（进程归 `runtime/`）。
 `Channel` 拥有消息路径（`MSG-007`：输入输出不得绕过 `InboundMessage` / `OutboundMessage`）。
 合成一条就得让其中一件事走近路。两者共用同一个 `CliConsole`，那是它们唯一的耦合点。
 
-**一条权限也不声明**：stdin/stdout 是进程自己的 IO，不是对实例资源的访问——与
-`commands_core` 用 `ctx.instance` 同一档。要读写文件请用 `tools_fs`，那里有路径守卫。
+stdin/stdout 是进程自己的 IO，不经过 Workspace 资源服务。要读写文件请用 `tools_fs`，
+那里有路径守卫。
 
 **`instance_id` 经配置块交下来**（`D17` 的 `dir`、`D20` 的 `workspace` 是同一条先例）：
 `R4` 禁止 `builtins/` 够到 `kernel/`，内建不可能自己知道实例标识。装配根不填时退回

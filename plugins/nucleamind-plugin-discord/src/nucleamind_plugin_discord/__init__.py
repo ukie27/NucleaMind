@@ -22,16 +22,13 @@
 
 **三条如实记着的边界**，写在这里而不是留给用户发现：
 
-- **五种权限里没有「连接一个聊天平台」这一种**（`fs:read` / `fs:write` / `net` / `shell` /
-  `secret`，其中 `net` 判的是经 `ctx.net` 门面的出站请求）。`discord.py` 自己开 WebSocket
-  与 HTTPS，一个字节都不过门面，因此本插件除 `secret` 外一条权限都声明不出来，而它确实
-  会连出去。`D52` 已明确这是受信任插件模型的刻意边界：启用插件就是信任其代码，权限账本
-  不是完整行为监控。
+- **插件自己拥有平台连接**。`discord.py` 直接建立 WebSocket 与 HTTPS 连接；
+  `PluginContext` 的资源服务不是强制网络代理。启用插件就是信任其代码。
 - **出站 workspace 附件走真上传**（`D47` 起）：`ctx.fs.read_bytes()` 读字节、`send_files`
-  一条消息带多个文件。**读不出来就印一行说明**（没授 `fs:read`、文件被删、locator 越界都
+  一条消息带多个文件。**读不出来就印一行说明**（workspace 不可用、文件被删、locator 越界都
   算），不静默丢掉、也不假装发过。`INLINE` / `OPAQUE` 来源仍然发不出去——那要平台自己的
   凭据去换，本插件拿不到那些字节。
-- **应用级权限不是进程隔离**（`sdk/api.py` 的原话）。能在允许的频道里说话的人就能驱动
+- **Channel 准入不是进程隔离**。能在允许的频道里说话的人就能驱动
   实例上的全部工具，包括 `shell.exec`。`allow_from` 与 `allow_channels` 是唯一的闸门。
 """
 
@@ -134,7 +131,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="discord",
     version="0.1.0",
-    sdk_range=">=2.0.0,<3.0.0",
+    sdk_range=">=3.0.0,<4.0.0",
     setup="nucleamind_plugin_discord:setup",
     # **不写 `overrides`**（它不取代任何内建）、**不写 `priority`**（默认值 100 会被原样
     # 采纳，而内建基准是 0——`D16` 记的坑）。
@@ -166,9 +163,8 @@ def setup(api: NucleaAPI) -> None:
 def _file_reader(ctx: PluginContext) -> FileReader | None:
     """取 `ctx.fs`，用来读要上传的附件字节（`D47`）。
 
-    **属性访问本身就可能抛 `PERMISSION_DENIED`**（未授权时），因此在这里取一次而不是
-    每条附件取一遍。**取不到就退回 `None`**：一个没有 `fs:read` 的 Discord bot 仍然该
-    正常收发消息，只是发不出附件——而那时 relay 会如实印一行，不静默丢掉。
+    **没有 workspace 时退回 `None`**：Discord bot 仍然可以正常收发文字，只是发不出
+    workspace 附件——relay 会如实印一行，不静默丢掉。
     """
     try:
         return ctx.fs
@@ -180,7 +176,7 @@ def _required_secret(ctx: PluginContext) -> SecretStr:
     """取 bot token。**没配就是配置错误**——一个没有 token 的 Discord Channel 连不上任何
     东西，让它「起来了但什么都不做」比直接说清楚更糟。
 
-    未授权的 `PERMISSION_DENIED` 原样抛出：那与「没配」是两件事，补救动作也不同。
+    `ctx.secret()` 的其他错误原样抛出；这里只把缺失凭据改写成带配置路径的错误。
     """
     try:
         return ctx.secret(SECRET_TOKEN)

@@ -369,8 +369,7 @@ class FakePluginContext:
         self._state_dir = state_dir or Path(".")
         self._secrets = dict(secrets or {})
         self._events = RecordingEventSubscriber()
-        #: `D22`：诊断视图与 turn 控制面。**不需要权限**（与 `events` 同一档：只读的
-        #: 可观测性不是资源访问），因此默认就给一个空的而不是留 `None` 让属性访问炸掉。
+        #: `D22`：诊断视图与 turn 控制面默认给空实现，而不是留 `None` 让属性访问炸掉。
         self._instance = instance if instance is not None else FakeInstanceView()
         self._turns = turns if turns is not None else FakeTurnControl()
         #: 经 `spawn_task()` 登记过的任务名，按顺序。不真的起协程——「谁的任务」可判定
