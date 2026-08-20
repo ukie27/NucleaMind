@@ -45,7 +45,7 @@ __all__ = [
 #: 本插件的能力名，同时是 `channel_id` 的默认值。
 CAPABILITY_NAME: Final = "feishu"
 
-#: 凭据名，**固定不可配置**：manifest 的 `PermissionDecl.target` 写的就是这两个名字。
+#: 凭据名固定不可配置，使配置路径与 `ctx.secret()` 调用保持同源。
 #: **两条都走 secrets**（包括看起来不敏感的 `app_id`）：`ctx.config` 不解析 `${VAR}`，
 #: 把 `app_id` 放 config 会让写 `${FEISHU_APP_ID}` 的人拿到字面串并在连接时得到一个
 #: 无法诊断的 401。凭据是一对，就一起走凭据通道。

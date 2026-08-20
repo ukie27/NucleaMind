@@ -35,7 +35,6 @@ SDK_PUBLIC_NAMES: Final[tuple[str, ...]] = (
     # 而插件写 `CONFIG_SCHEMA` 时需要一个有兼容承诺的名字可标注。
     "ManifestJsonSchema",
     "NucleaAPI",
-    "PermissionDecl",
     "PluginContext",
     "PluginManifest",
     "ShellAccess",

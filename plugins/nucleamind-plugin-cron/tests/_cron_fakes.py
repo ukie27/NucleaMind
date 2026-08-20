@@ -30,7 +30,6 @@ from nucleamind.contracts import (
     InboundMessage,
     InstanceId,
     JsonValue,
-    PermissionKind,
     Sender,
     SessionKey,
     ToolCall,
@@ -148,7 +147,6 @@ class CronContext(FakePluginContext):
             "cron",
             config=config,
             state_dir=state_dir,
-            granted=frozenset({PermissionKind.FS_READ, PermissionKind.FS_WRITE}),
         )
 
 
@@ -240,7 +238,6 @@ def make_invocation(
         call=ToolCall(call_id="call-1", name=name, arguments=arguments),
         correlation=make_correlation(key),
         timeout_ms=5_000,
-        granted=frozenset({PermissionKind.FS_READ, PermissionKind.FS_WRITE}),
     )
 
 

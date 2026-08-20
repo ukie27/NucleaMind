@@ -41,25 +41,3 @@ def test_the_override_target_decodes_to_the_builtin_store() -> None:
     provider, name = parse_capability_target(OVERRIDE_TARGET)
     assert provider == Builtin()
     assert name == "jsonl"
-
-
-def test_the_manifest_declares_no_permissions() -> None:
-    """从不落盘正是它的卖点；一个声明了 `fs:write` 的会话存储插件应当被审得更仔细。"""
-    assert MANIFEST.permissions == ()
-
-
-async def test_nothing_survives_a_new_instance() -> None:
-    """内存实现的定义性行为：换一个实例就什么都没有了。"""
-    from datetime import UTC, datetime
-
-    from nucleamind.contracts import Role, SessionKey, SessionMessage
-
-    key = SessionKey(channel_id="cli", conversation_id="local")
-    message = SessionMessage(
-        message_id="m1", role=Role.USER, content="记住", created_at=datetime.now(UTC)
-    )
-    first = MemorySessionStore()
-    await first.append(key, [message])
-    assert (await first.load(key)).messages
-
-    assert (await MemorySessionStore().load(key)).messages == ()

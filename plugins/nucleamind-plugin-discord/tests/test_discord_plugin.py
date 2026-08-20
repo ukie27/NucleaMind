@@ -28,7 +28,6 @@ from nucleamind_plugin_discord import (
     CONFIG_SCHEMA,
     DEFAULT_INTENTS,
     MANIFEST,
-    SECRET_PROXY_PASSWORD,
     SECRET_TOKEN,
     DiscordChannel,
     resolve_settings,
@@ -42,7 +41,6 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
     StreamState,
 )
 from nucleamind.sdk.testing import ChannelContract, FakePluginContext
@@ -102,7 +100,6 @@ def make_context(**config: Any) -> FakePluginContext:  # boundary: 同上
     return FakePluginContext(
         plugin_id=MANIFEST.id,
         config=config,
-        granted=frozenset({PermissionKind.SECRET}),
         secrets={SECRET_TOKEN: "discord-token-0123456789"},
     )
 
@@ -136,17 +133,6 @@ class TestManifest:
     def test_priority_is_not_declared(self) -> None:
         """写了默认值 100 会被原样采纳，而内建基准是 0（`D16` 记的坑）。"""
         assert "priority" not in MANIFEST.capabilities[0].model_fields_set
-
-    def test_permissions_are_the_two_secrets_plus_fs_read(self) -> None:
-        """**不声明 `net`**：`discord.py` 自己开连接，一个字节都不过 `ctx.net` 门面。
-
-        **`fs:read` 反过来是真的经门面**（`D47` 的附件上传），因此如实声明。
-        """
-        assert {(item.kind, item.target) for item in MANIFEST.permissions} == {
-            (PermissionKind.SECRET, SECRET_TOKEN),
-            (PermissionKind.SECRET, SECRET_PROXY_PASSWORD),
-            (PermissionKind.FS_READ, ""),
-        }
 
     def test_a_platform_outage_must_not_take_the_instance_down(self) -> None:
         """`critical=False`：token 过期不该让 CLI 与其它 Channel 一起下线（`PLG-004`）。"""
@@ -239,7 +225,7 @@ class TestSetup:
     def test_a_missing_token_is_a_config_error_pointing_at_the_key(self) -> None:
         """一个没有 token 的 Discord Channel 连不上任何东西——「起来了但什么都不做」更糟。"""
         ctx = FakePluginContext(
-            plugin_id=MANIFEST.id, config={}, granted=frozenset({PermissionKind.SECRET})
+            plugin_id=MANIFEST.id, config={}
         )
         with pytest.raises(NucleaError) as excinfo:
             setup(_Recorder(ctx))  # type: ignore[arg-type]

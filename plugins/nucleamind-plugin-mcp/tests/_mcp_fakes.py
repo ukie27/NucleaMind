@@ -23,7 +23,6 @@ from nucleamind_plugin_mcp import RemoteResult, RemoteTool, ServerSettings
 
 from nucleamind.contracts import (
     JsonValue,
-    PermissionKind,
     ToolCall,
     ToolHandler,
     ToolInvocation,
@@ -145,13 +144,10 @@ class McpContext(FakePluginContext):
         *,
         config: Mapping[str, JsonValue] | None = None,
         secrets: Mapping[str, str] | None = None,
-        granted: frozenset[PermissionKind] = frozenset(
-            {PermissionKind.SHELL, PermissionKind.NET, PermissionKind.SECRET}
-        ),
         state_dir: Path | None = None,
     ) -> None:
         super().__init__(
-            "mcp", config=config, granted=granted, secrets=secrets, state_dir=state_dir
+            "mcp", config=config, secrets=secrets, state_dir=state_dir
         )
         self.spawned: list[asyncio.Task[None]] = []
 

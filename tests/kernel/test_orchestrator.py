@@ -35,6 +35,7 @@ from nucleamind.contracts import (
     NucleaError,
     Role,
     SessionKey,
+    SessionMessage,
     SideEffect,
     StreamState,
     ToolResult,
@@ -104,8 +105,6 @@ def compaction_policy(compactor: ScriptedCompactor) -> CompactionPolicy:
 
 
 def old_message(index: int, role: Role, content: str) -> SessionMessage:
-    from nucleamind.contracts import SessionMessage
-
     return SessionMessage(
         message_id=f"old-{index}",
         role=role,

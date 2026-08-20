@@ -306,7 +306,6 @@ class ToolContract(_ContractBase):
             call=ToolCall(call_id="call-1", name=spec.name, arguments=arguments),
             correlation=make_correlation(),
             timeout_ms=5_000,
-            granted=spec.permissions,
         )
 
     def test_spec_declares_an_object_parameter_schema(self) -> None:

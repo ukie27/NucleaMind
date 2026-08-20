@@ -35,8 +35,7 @@ __all__ = [
     "resolve_settings",
 ]
 
-#: 凭据名。固定常量而不是可配置项——manifest 的 `PermissionDecl(SECRET, "api_key")` 声明的
-#: 就是这个名字，做成可配置会让那条声明变成一句谎话（`D19` 的同一条理由）。
+#: 凭据名固定不可配置，使配置路径与 `ctx.secret()` 调用保持同源。
 SECRET_NAME: Final = "api_key"
 
 #: 支持的搜索后端。`custom` 是可配置的通用 JSON 后端——它的存在正是为了**不**再长出一张

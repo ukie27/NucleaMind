@@ -2,8 +2,8 @@
 
 职责：`WorkspaceGuard`——解析、双重校验（逻辑 + realpath）、渲染回相对显示路径，以及
 越界与形状非法两类拒绝。
-不负责：读写文件（`readers.py` / `writers.py`）、判断权限是否被授予（那在 `D26` 的
-`PluginContext`）、决定 workspace 根在哪（配置交下来，见 `settings.py`）。
+不负责：读写文件（`readers.py` / `writers.py`）、决定 workspace 根在哪（配置交下来，
+见 `settings.py`）。
 
 **判据是双重校验，缺一不可**（`EDG-405`、`NFR-302`）：
 

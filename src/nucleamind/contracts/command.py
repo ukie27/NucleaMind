@@ -26,7 +26,6 @@ from .errors import ErrorCode, NucleaError
 from .ids import Correlation, validate_identifier
 from .message import InboundMessage
 from .metadata import EMPTY_METADATA, normalize_metadata
-from .tool import PermissionKind
 
 if TYPE_CHECKING:  # pragma: no cover - 仅为注解，运行时不导入，避免与包根成环。
     from . import JsonValue
@@ -78,17 +77,11 @@ class CommandParam:
 
 @dataclass(frozen=True, slots=True)
 class CommandSpec:
-    """命令声明（`CMD-001`）：名称、参数形式、说明和权限需求，可被 Registry 统一列出。
-
-    `operator_only` 与 `permissions` 各管一件事：前者是「谁能敲」（由
-    `Sender.is_operator` 判定），后者是「敲了之后会碰什么」。把两者合并成一个字段，
-    就没法表达「所有人都能执行、但它要读文件」这种最常见的组合。
-    """
+    """命令声明（`CMD-001`）：名称、参数形式、说明和操作者要求。"""
 
     name: str
     description: str
     parameters: tuple[CommandParam, ...] = ()
-    permissions: frozenset[PermissionKind] = frozenset()
     operator_only: bool = False
     aliases: tuple[str, ...] = ()
 

@@ -32,7 +32,6 @@ from nucleamind.contracts import (
     Disposition,
     ErrorCode,
     NucleaError,
-    PermissionKind,
     SessionKey,
 )
 
@@ -80,7 +79,6 @@ def cron_spec() -> CommandSpec:
             ),
             CommandParam(name="rest", description="子命令的参数。", required=False, repeated=True),
         ),
-        permissions=frozenset({PermissionKind.FS_WRITE}),
         operator_only=False,
     )
 

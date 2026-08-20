@@ -144,7 +144,6 @@ from .session import (  # noqa: E402
 from .tool import (  # noqa: E402
     ArtifactRef,
     Concurrency,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolCall,
@@ -214,7 +213,6 @@ __all__ = [
     "OpaqueBlock",
     "NucleaError",
     "OutboundMessage",
-    "PermissionKind",
     "Plugin",
     "PluginId",
     "ProviderId",

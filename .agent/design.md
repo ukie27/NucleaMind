@@ -18,7 +18,7 @@ Browser、MCP、Automation、Multi-Agent 都在这一侧。
 
 `kernel/turn/engine.py` 是核心路径，有 ≤400 行的硬上限和 import 白名单，各有测试盯着。
 **内建与插件同等身份**（`BAS-005`）：它们共用一个 `NucleaAPI` 实现、同一条加载路径、
-同一套权限模型。写内建时不要另开注册通道——`tests/architecture/test_builtin_no_privilege.py`
+同一套资源与生命周期边界。写内建时不要另开注册通道——`tests/architecture/test_builtin_no_privilege.py`
 的符号扫描就是为此存在的。
 
 ## 少结构，多智能

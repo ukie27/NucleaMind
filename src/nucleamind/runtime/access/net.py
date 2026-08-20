@@ -80,20 +80,16 @@ def address_is_blocked(address: str) -> str:
 class GuardedHttpAccess:
     """`HttpAccess` 的生产实现。结构化满足契约，不继承任何宿主基类。"""
 
-    __slots__ = ("_allowed_hosts", "_plugin_id", "_resolver", "_transport")
+    __slots__ = ("_plugin_id", "_resolver", "_transport")
 
     def __init__(
         self,
         *,
         plugin_id: str,
-        allowed_hosts: Sequence[str] = (),
         resolver: Resolver | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._plugin_id = plugin_id
-        #: `net` 权限的 `target`（主机名）。非空即视为白名单——运维一旦点名了插件该连哪里，
-        #: 一个连别处的请求就该当场被拒而不是「反正目标是公网地址」。
-        self._allowed_hosts = tuple(host.lower() for host in allowed_hosts if host)
         self._resolver = resolver if resolver is not None else _resolve
         #: 测试用的替身传输。生产路径上是 `None`。
         self._transport = transport
@@ -215,8 +211,6 @@ class GuardedHttpAccess:
         host = parts.hostname
         if not host:
             raise self._denied(url, "URL 里没有主机名")
-        if self._allowed_hosts and host.lower() not in self._allowed_hosts:
-            raise self._denied(url, "主机不在被授予的名单里")
 
         port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
         for address in await self._addresses(host, port):

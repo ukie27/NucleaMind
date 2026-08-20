@@ -28,7 +28,7 @@
 ## 2. 新增一个普通插件
 
 1. 在 `plugins/nucleamind-plugin-<id>/` 或 `examples/plugins/` 建独立发行包。
-2. Manifest 声明 id、版本、SDK 范围、setup、依赖、权限和能力全集。
+2. Manifest 声明 id、版本、SDK 范围、setup、依赖和能力全集。
 3. 实现只导入 `nucleamind.sdk` 与 `nucleamind.contracts`。
 4. 在 `setup(ctx, api)` 中通过对应 `register_*` 注册；声明与实际注册必须完全一致。
 5. 后台任务只通过 `ctx.spawn_task()` 创建，停止行为由生命周期管理器接管。
@@ -37,7 +37,7 @@
 6. 继承匹配的 `sdk.testing` 契约基类，并复制官方插件的 `inspect.signature` 守卫。
 7. 加入根 `pyproject.toml` 的 basedpyright include、CI editable 安装清单及清单防漂移测试所需
    的规范位置。
-8. 写插件 README：配置、权限、能力名、失败边界和安装命令。
+8. 写插件 README：配置、信任边界、能力名、失败边界和安装命令。
 9. 跑插件单测、SDK/架构守卫、basedpyright 和至少一个发现/加载 E2E。
 
 不要在根依赖中加入仅该插件需要的包；依赖由插件自己的 `pyproject.toml` 声明。
@@ -57,7 +57,7 @@
 | Session Store | `register_session_store` | Orchestrator/Runtime instance |
 | CLI Entry | `register_cli_entry` | Runtime CLI bootstrap |
 
-每个能力至少检查：名字/namespace、arity、override 目标、critical 传播、权限意图、加载失败
+每个能力至少检查：名字/namespace、arity、override 目标、critical 传播、加载失败
 回滚和停机行为。能力对象应通过 Registry 取回，不能由列表直接塞进 Orchestrator。
 
 ## 4. 新增一种 CapabilityKind
@@ -110,12 +110,12 @@
 只有插件确实需要宿主资源且现有门面无法表达时才扩展：
 
 1. 在 `contracts` 定义最窄 Protocol 和跨层值对象，避免返回 Runtime/Kernel 类型。
-2. 在 `sdk.PluginContext` 增加只读属性；判断是否需要新的 `PermissionKind`。
+2. 在 `sdk.PluginContext` 增加只读属性，并明确它提供的宿主约束与失败语义。
 3. 在 `runtime/access/` 实现生产门面，在 `runtime/plugin_context.py` 连接。
 4. 为 denied、timeout、size limit、路径边界和脱敏写测试。
 5. 更新 `tests/contracts/test_protocols.py` 的 Protocol 快照。
 6. 更新 `tests/sdk/test_public_surface.py` 的 API Protocol/只读属性快照。
-7. 更新插件开发与权限文档，并给 `sdk.testing` 或测试 Fake 提供可用替身。
+7. 更新插件开发文档，并给 `sdk.testing` 或测试 Fake 提供可用替身。
 
 观察实例状态与取消 Turn 目前分别通过 `InstanceView` 和 `TurnControl`；不要把两者重新合成
 万能宿主对象。
@@ -155,7 +155,7 @@
 
 ## 9. 修改持久化契约
 
-Session JSONL、权限账本或未来插件状态变更时：
+Session JSONL 或未来插件状态变更时：
 
 1. 先写旧格式 fixture 和当前读写 round-trip 测试。
 2. 定义 schema/state version 与支持区间。

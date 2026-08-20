@@ -27,7 +27,7 @@ from nucleamind_plugin_cron import (
     setup,
 )
 
-from nucleamind.contracts import CapabilityKind, ErrorCode, NucleaError, PermissionKind
+from nucleamind.contracts import CapabilityKind, ErrorCode, NucleaError
 
 SOURCE_DIR = Path(__file__).resolve().parents[1] / "src" / "nucleamind_plugin_cron"
 
@@ -58,21 +58,6 @@ def test_manifest_is_not_critical() -> None:
 def test_manifest_declares_no_priority() -> None:
     """manifest 里写 `priority` 会被原样采纳（默认 100），而内建基准是 0。"""
     assert all("priority" not in decl.model_fields_set for decl in MANIFEST.capabilities)
-
-
-def test_manifest_declares_the_permissions_it_uses() -> None:
-    kinds = {decl.kind for decl in MANIFEST.permissions}
-    assert kinds == {PermissionKind.FS_READ, PermissionKind.FS_WRITE}
-
-
-def test_manifest_declares_no_net_or_shell() -> None:
-    """本插件不出网、不起子进程——声明用不上的权限会让权限清单失去信息量。"""
-    kinds = {decl.kind for decl in MANIFEST.permissions}
-    assert PermissionKind.NET not in kinds
-    assert PermissionKind.SHELL not in kinds
-
-
-# ------------------------------------------------------------------------------ 注册
 
 
 def test_register_covers_exactly_the_declaration(tmp_path: Path) -> None:

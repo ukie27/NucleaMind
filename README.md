@@ -94,7 +94,6 @@ nm serve
 # Diagnostics
 nm capabilities        # which capabilities actually took effect, and from where
 nm plugins list
-nm permissions
 ```
 
 ## Documentation

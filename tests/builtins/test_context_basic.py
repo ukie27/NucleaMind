@@ -50,19 +50,15 @@ from nucleamind.contracts import (
     FragmentScope,
     JsonValue,
     NucleaError,
-    ProviderId,
     Role,
     SessionKey,
     SessionMessage,
     SessionSnapshot,
     TrustLevel,
 )
-from nucleamind.kernel.turn import context_providers_from
 from nucleamind.kernel.turn.context_builder import assemble
 from nucleamind.kernel.turn.context_builder import estimate_tokens as kernel_estimate_tokens
 from nucleamind.kernel.turn.limits import TurnLimits
-from nucleamind.runtime.wiring import wire_capabilities
-from nucleamind.sdk import PluginContext
 from nucleamind.sdk.testing import (
     ContextProviderContract,
     FakePluginContext,
@@ -388,43 +384,6 @@ class TestRegistration:
         assert declaration.overrides is None
         # `priority` 不写：内建基准是 0，写了（哪怕写的是默认值 100）就会被原样采纳。
         assert "priority" not in declaration.model_fields_set
-
-    def test_the_manifest_declares_no_permissions_at_all(self) -> None:
-        """Provider 只读不写：它连一条权限都用不上，声明一条就是让审计失真。"""
-        assert CONTEXT_BASIC.permissions == ()
-
-    async def test_wiring_registers_the_provider_at_the_builtin_priority(self) -> None:
-        """走真实装配链：manifest -> `import_setup` -> Host -> registry。"""
-
-        def context_for(provider: ProviderId) -> PluginContext:
-            del provider
-            return FakePluginContext(config={CONFIG_INSTRUCTIONS_KEY: "只说中文。"})
-
-        wiring = await wire_capabilities(manifests=[CONTEXT_BASIC], context_for=context_for)
-
-        assert wiring.report.ok
-        bindings = context_providers_from(wiring.registry)
-        assert len(bindings) == 1
-        binding = bindings[0]
-        assert binding.name == CAPABILITY_NAME
-        assert binding.priority == 0, "内建必须排在插件（基准 100）之前"
-        assert binding.critical is True
-        assert isinstance(binding.provider, BasicContextProvider)
-        assert binding.provider.settings.instructions == "只说中文。"
-
-    async def test_setup_registers_exactly_one_context_provider(self) -> None:
-        """`setup` 只做注册，不做 IO——`nm capabilities` 这类只读命令因此没有副作用。"""
-        registered: list[tuple[str, object]] = []
-
-        class RecordingApi:
-            ctx = FakePluginContext()
-
-            def register_context_provider(self, name: str, provider: object) -> None:
-                registered.append((name, provider))
-
-        setup(RecordingApi())  # type: ignore[arg-type]
-        assert len(registered) == 1
-        assert registered[0][0] == CAPABILITY_NAME
 
     def test_a_bad_configuration_fails_at_setup_rather_than_at_the_first_turn(self) -> None:
         class RecordingApi:

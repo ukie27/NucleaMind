@@ -1,9 +1,7 @@
-"""插件路径守卫：把插件给的路径串判成一个被授权子树内的绝对路径（技术方案 §7.5、§8.3）。
+"""插件路径守卫：把插件给的路径串判成 workspace 内的绝对路径。
 
-职责：`PathGuard`——解析、双重校验（逻辑 + realpath）、按授权 target 收窄到子树、渲染回
-相对显示路径。
-不负责：读写文件（`files.py`）、判断权限是否被授予（`RuntimePluginContext._require`）、
-决定根在哪（装配根按 `InstanceLayout.workspace_dir` 交下来）。
+职责：`PathGuard`——解析、双重校验（逻辑 + realpath）并渲染回相对显示路径。
+不负责：读写文件（`files.py`）或决定根在哪（装配根交下来）。
 
 **这是第三份 workspace 双重校验**。前两份是 `builtins/tools_fs/paths.py::WorkspaceGuard`
 与 `builtins/tools_shell/paths.py::CwdGuard`——`R2` 禁止 `runtime/` 之外的层互相够到，而这
@@ -15,9 +13,6 @@
 写的，理由也不同——`tools_fs` 面对的是模型给的路径串，拒绝绝对路径只会换来一串 `../`；
 而这里面对的是插件作者写的代码，一条绝对路径几乎总是「我以为自己在宿主机上随便读写」。
 
-**授权 target 是根内的相对前缀**（`PermissionDecl.target` 的语义）。授予里含空串即整个根。
-收窄发生在双重校验**之后**：先确认在根内，再确认在被授权的那棵子树内。
-
 **这是应用级守卫，不是 OS 沙箱**：校验与随后的 `open()` 之间存在 TOCTOU 窗口，目标可以在
 这期间被换成一个指向根外的符号链接。挡住它需要 `openat` + `O_NOFOLLOW` 一类原语，那在
 Windows 上没有对等物。这里如实写明，不假装挡得住（§13.7）。
@@ -26,7 +21,6 @@ Windows 上没有对等物。这里如实写明，不假装挡得住（§13.7）
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
@@ -62,29 +56,22 @@ def _within(candidate: Path, root: Path) -> bool:
 
 
 class PathGuard:
-    """一个根、一组被授权的子树，以及「这个路径串算不算数」的全部判定。"""
+    """一个根，以及「这个路径串算不算数」的全部判定。"""
 
-    __slots__ = ("_root", "_subtrees")
+    __slots__ = ("_root",)
 
-    def __init__(self, root: Path, *, allowed: Sequence[str] = ()) -> None:
+    def __init__(self, root: Path) -> None:
         self._root = Path(root).resolve()
-        #: 已解析的授权子树。空元组表示整个根——`allowed` 为空或含空串时就是这种情形。
-        self._subtrees: tuple[Path, ...] = _resolve_subtrees(self._root, allowed)
 
     @property
     def root(self) -> Path:
         return self._root
 
-    @property
-    def subtrees(self) -> tuple[Path, ...]:
-        """被授权的子树。空元组 = 整个根未被收窄。"""
-        return self._subtrees
-
     def resolve(self, raw: str) -> Path:
-        """把一个路径串判成被授权子树内的绝对路径。
+        """把一个路径串判成 workspace 内的绝对路径。
 
         **异常约定**：空串、NUL 字节、保留设备名、绝对路径抛 `INPUT_MALFORMED`；
-        越出根或越出授权子树抛 `PERMISSION_PATH_OUTSIDE_WORKSPACE`，`detail` 里**只放原始
+        越出根抛 `PERMISSION_PATH_OUTSIDE_WORKSPACE`，`detail` 里**只放原始
         串不放解析结果**——把宿主机的绝对路径写进错误是另一种泄漏（`D20` 的同一条判据）。
         """
         if not raw or not raw.strip():
@@ -97,7 +84,7 @@ class PathGuard:
         if candidate.is_absolute():
             raise NucleaError(
                 ErrorCode.INPUT_MALFORMED,
-                "ctx.fs 只接受相对路径，根由授权决定而不是由调用方决定。",
+                "ctx.fs 只接受相对路径，根由实例 workspace 决定。",
                 detail={"path": raw},
             )
         self._reject_reserved_names(raw)
@@ -107,8 +94,6 @@ class PathGuard:
             raise self._outside(raw)
         real = logical.resolve()
         if not _within(real, self._root):
-            raise self._outside(raw)
-        if self._subtrees and not any(_within(real, subtree) for subtree in self._subtrees):
             raise self._outside(raw)
         return real
 
@@ -138,22 +123,6 @@ class PathGuard:
     def _outside(self, raw: str) -> NucleaError:
         return NucleaError(
             ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE,
-            "路径越出了被授予的边界。",
+            "路径越出了 workspace 边界。",
             detail={"path": raw},
         )
-
-
-def _resolve_subtrees(root: Path, allowed: Sequence[str]) -> tuple[Path, ...]:
-    """把授权 target 解析成根内的绝对子树。
-
-    **认不出的 target 一律收窄成「什么都不许」而不是「整个根」**：一条写错的 `target`
-    应当让插件读不到东西，而不是悄悄拿到全部访问权。做法是把它解析成一个根内、名字不可能
-    存在的路径——它仍然过 containment，但不会包含任何真实文件。
-    """
-    if not allowed or any(target == "" for target in allowed):
-        return ()
-    subtrees: list[Path] = []
-    for target in allowed:
-        logical = Path(os.path.normpath(root / target))
-        subtrees.append(logical if _within(logical, root) else root / ".__denied__")
-    return tuple(subtrees)

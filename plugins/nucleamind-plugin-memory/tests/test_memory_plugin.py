@@ -24,7 +24,7 @@ from nucleamind_plugin_memory.commands import COMMAND_NAME, MemoryCommand
 from nucleamind_plugin_memory.settings import MEMORY_DIR_NAME
 from nucleamind_plugin_memory.tools import TOOL_NAMES
 
-from nucleamind.contracts import CapabilityKind, PermissionKind
+from nucleamind.contracts import CapabilityKind
 from nucleamind.sdk import PluginManifest
 from nucleamind.sdk.manifest import parse_manifest
 
@@ -71,24 +71,6 @@ def test_the_manifest_declares_no_overrides() -> None:
 def test_the_manifest_is_not_critical() -> None:
     """`MEM-003`「Memory 不可用时降级为无长期记忆模式」的落地形态。"""
     assert MANIFEST.critical is False
-
-
-def test_permissions_are_exactly_the_two_file_ones_with_reasons() -> None:
-    """`reason` 会直接展示给授权的用户（`NFR-301`）。"""
-    assert {decl.kind for decl in MANIFEST.permissions} == {
-        PermissionKind.FS_READ,
-        PermissionKind.FS_WRITE,
-    }
-    assert all(decl.reason.strip() for decl in MANIFEST.permissions)
-
-
-def test_no_network_or_shell_or_secret_permission_is_requested() -> None:
-    """本插件不出网、不起进程、不读凭据——声明多余的权限只会让用户看不清它要什么。"""
-    unwanted = {PermissionKind.NET, PermissionKind.SHELL, PermissionKind.SECRET}
-    assert not unwanted & {decl.kind for decl in MANIFEST.permissions}
-
-
-# ---------------------------------------------------------------------------- 注册
 
 
 def test_register_registers_exactly_what_the_manifest_declares(tmp_path: Path) -> None:

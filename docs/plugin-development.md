@@ -31,8 +31,8 @@ import 兄弟模块，依赖规则就成了空话。
 import 它取这一个对象，此时不该发生任何 IO。
 
 ```python
-from nucleamind.contracts import CapabilityKind, PermissionKind
-from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
+from nucleamind.contracts import CapabilityKind
+from nucleamind.sdk import CapabilityDecl, PluginManifest
 
 MANIFEST = PluginManifest(
     # 小写字母、数字与中划线。它同时是包名 nucleamind-plugin-<id> 的后半段、
@@ -41,14 +41,10 @@ MANIFEST = PluginManifest(
     version="0.1.0",
     # 你支持的 SDK 区间。宿主落在区间外时拒绝加载并报 PLUGIN_SDK_INCOMPATIBLE，
     # 不带病运行。
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_my_plugin:setup",
     # 有约束力的全集：setup 里注册的每一项都必须在这里声明，反之亦然。
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="my.tool"),),
-    # reason 必填——它会展示给批准权限的用户，"因为需要" 在评审阶段就该被打回。
-    permissions=(
-        PermissionDecl(kind=PermissionKind.NET, reason="调用 example.com 的公开接口。"),
-    ),
     # 用户能在 plugins.my-plugin.config 里写什么。宿主在加载前按它校验。
     config_schema={
         "type": "object",
@@ -147,28 +143,12 @@ nm run                                       # 下次启动生效（首版不热
 - `secrets` 的值只能是 `${VAR}` 引用，明文由 `ctx.secret("api_key")` 在调用时从环境变量
   取。配置树里自始至终只有那个字面量，因此 `/config` 的脱敏是结构性成立的。
 
-## 6. 权限：声明式 + 应用级强制
+## 6. 资源服务与信任边界
 
-`ctx` 上的四个资源访问器需要 manifest 里声明过、且用户批准过，否则**属性访问**就抛
-`PERMISSION_DENIED`——你拿不到一个「看起来能用、调用才失败」的对象。
-
-| 访问器 | 权限 | 说明 |
-| --- | --- | --- |
-| `ctx.fs` | `fs:read` / `fs:write` | 路径相对授予的根，`realpath` 之后重新校验 |
-| `ctx.net` | `net` | 走 SSRF 守卫，私有网段与云元数据地址一律拒绝，手动跟随重定向 |
-| `ctx.shell` | `shell` | 参数是列表不是命令行，因此没有注入面；非零退出码不是异常 |
-| `ctx.secret(name)` | `secret:<name>` | `secret` 必须带 target——不带等于申请全部凭据 |
-
-`ctx.events`（事件订阅）、`ctx.instance`（只读诊断视图）与 `ctx.turns`（取消在跑的 turn）
-**不需要权限声明**：只读可观测性不是资源访问。
-
-批准模型是 TOFU + 扩权需显式：首次见到时按声明整份授予并记进 `permissions.json`；此后
-声明**扩大**时，新增的那几项默认落 `pending`（即拒绝），要用户显式批准。
-
-> **应用级权限不是进程隔离。** 同进程的 Python 插件可以绕过全部门面直接 `import os`。
-> 安装并启用插件就是信任其 Python 代码；这些门面的价值是让主动声明的资源意图**可审计**，
-> 并为自愿使用门面的插件提供误用防护。需要隔离时使用独立宿主、容器或 OS 策略。
-> 这句话写在 `sdk/api.py` 与 `docs/permissions.md` 里，是一条必须保留的诚实声明。
+插件是同进程运行的可信 Python 代码：安装并启用即授予完整信任，Kernel 不声明、审批或
+拦截插件权限。`ctx.fs`、`ctx.net`、`ctx.shell` 与 `ctx.secret(name)` 是稳定的宿主服务，
+用于统一工作区路径、SSRF 防护、进程超时和密钥包装，并不是安全沙箱。插件也可以直接使用
+Python/OS API；需要隔离不可信代码时，应在进程外使用容器或操作系统策略。
 
 ## 7. 覆盖一项已有能力
 
@@ -282,7 +262,6 @@ class TestMyStore(SessionStoreContract):
 | --- | --- | --- |
 | 插件没被加载 | `nm plugins list` | 列出候选、跳过原因与两个阶段的失败 |
 | 不知道谁提供了某项能力 | `nm capabilities` | 生效 / 被覆盖 / 已禁用 / 冲突四段，各带提供方 |
-| 权限被拒 | `nm permissions` | 已授予、待批准与已撤销的记录 |
 
 三类失败有各自稳定的错误码，别混着读：
 

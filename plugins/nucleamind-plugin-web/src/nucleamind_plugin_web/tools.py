@@ -29,7 +29,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolInvocation,
@@ -78,7 +77,6 @@ def fetch_spec() -> ToolSpec:
             "required": ["url"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.NET}),
         read_only=True,
         risk=RiskLevel.SAFE,
     )
@@ -102,7 +100,6 @@ def search_spec() -> ToolSpec:
             "required": ["query"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.NET}),
         read_only=True,
         risk=RiskLevel.SAFE,
     )

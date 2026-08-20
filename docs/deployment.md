@@ -140,10 +140,8 @@ journalctl -u nucleamind -f
 
 ## 监听端口这件事，如实说
 
-**权限模型刻意不增加「监听端口」这一种**——`net` 权限只描述经 `ctx.net` 发起的出站
-请求。安装并启用插件就是信任它在当前进程执行代码；`nm permissions list` 是声明与审计
-视图，不是完整行为监控。监听型插件的启用闸门是 `plugins.enabled` / `plugins.disable`
-及插件自身配置。
+安装并启用插件就是信任它在当前进程执行代码，Kernel 不监控或审批其网络行为。监听型插件
+的启用闸门是 `plugins.enabled` / `plugins.disable` 及插件自身配置。
 
 具体到 HTTP 接口插件，它自己做了两件事来兜底：
 
@@ -163,10 +161,8 @@ journalctl -u nucleamind -f
 }
 ```
 
-同样如实说的另一句：**应用级权限不是进程隔离**。同进程的插件可以绕过全部门面直接
-`import os`。要更严格的控制就使用独立插件宿主、容器、用户、seccomp 等外部隔离——
-上面 Docker 与 systemd 两节写的就是部署侧方案。完整说明见
-[`permissions.md`](./permissions.md)。
+同进程插件是完全可信代码，可以直接 `import os`。要运行不可信代码，应使用独立插件宿主、
+容器、用户、seccomp 等外部隔离；上面 Docker 与 systemd 两节写的就是部署侧方案。
 
 ## 升级
 

@@ -30,7 +30,6 @@ from nucleamind.contracts import (
     ModelChunk,
     ModelMessage,
     ModelRequest,
-    PermissionKind,
     Role,
     SamplingParams,
     SecretStr,
@@ -44,20 +43,16 @@ BASE_URL: Final = "https://api.anthropic.test/v1"
 #: 形状必须匹配 `_SECRET_VALUE_PATTERNS` 里的 `sk-[A-Za-z0-9_-]{16,}`。
 SENTINEL_KEY: Final = "sk-ant-ThisMustNeverLeak0123456789"
 
-_GRANTED: Final = frozenset({PermissionKind.NET, PermissionKind.SECRET})
-
-
 # ------------------------------------------------------------------------------ 夹具
 
 
 def make_context(**config: JsonValue) -> FakePluginContext:
-    """一个已授权、带哨兵凭据的 ctx。默认端点是可控的测试域名。"""
+    """一个带哨兵凭据的 ctx。默认端点是可控的测试域名。"""
     payload: dict[str, JsonValue] = {CONFIG_BASE_URL_KEY: BASE_URL}
     payload.update(config)
     return FakePluginContext(
         plugin_id=MANIFEST.id,
         config=payload,
-        granted=_GRANTED,
         secrets={SECRET_NAME: SENTINEL_KEY},
     )
 
@@ -156,5 +151,4 @@ def sample_tool(name: str = "fs.read") -> ToolSpec:
         description="读一个文件",
         parameters={"type": "object", "properties": {"path": {"type": "string"}}},
     )
-
 

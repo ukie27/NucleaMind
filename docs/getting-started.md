@@ -158,19 +158,11 @@ nm capabilities          # 生效 / 被覆盖 / 已禁用 / 冲突，四段都�
 每个插件自己带一份 README（配置表 + 已知边界 + 刻意不做的事），清单见
 [`plugins/README.md`](../plugins/README.md)。
 
-## 6. 权限
+## 6. 插件信任边界
 
-插件第一次被加载时，它 manifest 里声明的权限会被整份记进
-`~/.nucleamind/default/permissions.json`（首见即授予，TOFU）。此后插件**扩大**声明时，
-新增的那几项默认落在 `pending`（也就是拒绝），要你显式批准：
-
-```bash
-nm permissions list
-nm permissions grant web net "抓网页"
-```
-
-**应用级权限不是进程隔离**——同进程的插件可以绕过全部门面直接 `import os`。
-这句话在 [`permissions.md`](./permissions.md) 里写得更完整，装第三方插件之前读一下那篇。
+插件与 Kernel 在同一进程运行，安装并启用即表示完全信任其 Python 代码。项目不维护插件
+权限清单或授权账本；第三方插件必须像普通 Python 依赖一样审查。需要运行不可信插件时，
+请使用独立进程、容器或操作系统隔离。
 
 ## 7. 常驻跑一个 Channel
 
@@ -193,5 +185,5 @@ nm serve                      # 默认监听 127.0.0.1:8760
 | 查某条命令的参数与退出码 | [`cli.md`](./cli.md) |
 | 部署成常驻服务 | [`deployment.md`](./deployment.md) |
 | 写一个自己的插件 | [`plugin-development.md`](./plugin-development.md) |
-| 理解权限模型 | [`permissions.md`](./permissions.md) |
+| 理解插件信任边界 | [`plugin-development.md`](./plugin-development.md#6-资源服务与信任边界) |
 | 读或迁移会话存储 | [`session-storage.md`](./session-storage.md) |

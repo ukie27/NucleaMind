@@ -17,16 +17,15 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
 )
-from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest, parse_manifest
+from nucleamind.sdk import CapabilityDecl, PluginManifest, parse_manifest
 from nucleamind.sdk.version import SDK_VERSION
 
 #: 一份最小可用 manifest。各用例在它上面打补丁，只改一处，失败原因因此无歧义。
 VALID: Final[dict[str, object]] = {
     "id": "memory-sqlite",
     "version": "0.1.0",
-    "sdk_range": ">=1.0,<2.0",
+    "sdk_range": ">=2.0,<3.0",
     "setup": "nucleamind_plugin_memory_sqlite.plugin:setup",
     "capabilities": [{"kind": "memory", "name": "sqlite"}],
 }
@@ -84,12 +83,6 @@ def test_platforms_are_matched_exactly() -> None:
     assert manifest.matches_platform("win32") is False
 
 
-def test_permission_grant_key_separates_targets() -> None:
-    first = PermissionDecl(kind=PermissionKind.SECRET, reason="调用 API", target="openai_api_key")
-    second = PermissionDecl(kind=PermissionKind.SECRET, reason="调用 API", target="other_key")
-    assert first.grant_key != second.grant_key
-
-
 def test_capability_decl_slot_is_kind_plus_name() -> None:
     decl = CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.read")
     assert decl.slot == (CapabilityKind.TOOL, "fs.read")
@@ -117,8 +110,6 @@ INVALID_CASES: Final[list[tuple[dict[str, object], str]]] = [
     ({"dependencies": ["memory-sqlite"]}, "dependencies"),
     ({"dependencies": ["a", "a"]}, "value"),
     ({"state_version": 0}, "state_version"),
-    ({"permissions": [{"kind": "secret", "reason": "要用"}]}, "target"),
-    ({"permissions": [{"kind": "net", "reason": "   "}]}, "reason"),
 ]
 
 
@@ -137,6 +128,7 @@ def test_invalid_manifest_reports_the_offending_field(patch: dict[str, object], 
 #: `NucleaError`——`errors` 是 `[{"field": ..., "message": ...}]`。
 STRUCTURAL_CASES: Final[list[tuple[dict[str, object], str]]] = [
     ({"unknown_field": 1}, "unknown_field"),
+    ({"permissions": []}, "permissions"),
     ({"capabilities": [{"kind": "not-a-kind", "name": "a.b"}]}, "capabilities.0.kind"),
     ({"capabilities": [{"name": "a.b"}]}, "capabilities.0.kind"),
     ({"state_version": "one"}, "state_version"),

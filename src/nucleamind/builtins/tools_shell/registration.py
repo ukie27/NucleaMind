@@ -2,7 +2,7 @@
 
 职责：实现 manifest 声明的 `setup`——解析配置、构造 `ShellExecutor`、调 `api.register_tool`。
 不负责：构造 `PluginManifest`（那在 `builtins/registry.py`，是内建能力唯一的发现来源）、
-校验权限是否已授予（`D26` 的 `PluginContext`）、判定冲突（`kernel.registry`）。
+判定冲突（`kernel.registry`）。
 
 **内建不享受特权**（`BAS-005`）：这里的注册调用与外部插件写的那段代码是同一个形状——
 没有一个「只有内建能用」的 API，也没有一条「内建优先级默认为 0」的特殊分支。基准优先级

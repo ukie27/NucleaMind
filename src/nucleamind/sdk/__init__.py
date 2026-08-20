@@ -35,7 +35,6 @@ from .api import (
 from .manifest import (
     CapabilityDecl,
     ManifestJsonSchema,
-    PermissionDecl,
     PluginManifest,
     parse_manifest,
 )
@@ -51,7 +50,6 @@ __all__ = [
     "HttpResponse",
     "ManifestJsonSchema",
     "NucleaAPI",
-    "PermissionDecl",
     "PluginContext",
     "PluginManifest",
     "ShellAccess",

@@ -2,7 +2,7 @@
 
 职责：re-export `capability`（登记与冻结）与 `resolution`（覆盖解析与报告）两个模块的
 公开表面，使调用方只需要 `from nucleamind.kernel.registry import ...` 一条导入路径。
-不负责：决定谁被加载、构造 `PluginContext`、执行权限判定——那些在 `kernel/plugins/`
+不负责：决定谁被加载、构造 `PluginContext`——那些在 `kernel/plugins/`
 （`D25`–`D27`）；本包不读文件、不访问网络。
 
 两个模块的分工是单向的：`resolution` 依赖 `capability`，反过来不成立。注册表只管

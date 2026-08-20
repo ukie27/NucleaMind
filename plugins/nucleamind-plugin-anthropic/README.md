@@ -120,15 +120,14 @@ cache_read_input_tokens` 三项之和**——线格式里的 `input_tokens` 只�
 - **不做重试与故障转移。** 重试是编排层的策略，本插件只把 `retryable` 与 `retry_after_ms`
   如实标在 `NucleaError` 上。两处都做会叠成一个放大器。
 - **不声明任何 server tool**（web_search / code_execution 等）：它们会绕过 `ToolExecutor`，
-  等于给模型开一条不受 `TurnLimits` 与权限约束的副作用通道。
+  等于给模型开一条不受 `TurnLimits` 约束的副作用通道。
 - **不提供 Bedrock / Vertex / Foundry 接入**：它们各自要 SigV4 / ADC / Entra 认证，
   是三套机制而不是一个 `base_url`。
 
-## 权限
+## 信任边界
 
-声明两条：`net`（调用模型端点）与 `secret:api_key`（向端点认证）。`auth="none"` 时后者
-一次都不取用。首次加载按 TOFU 整份授予并记进 `permissions.json`，用 `nm permissions list`
-查看。**应用级权限不是进程隔离**——同进程插件可以绕过全部门面。
+插件作为受信任代码在宿主进程内运行。网络请求和密钥读取使用 `PluginContext` 的统一服务，
+但这些服务不是权限隔离；需要运行不可信代码时应使用进程外隔离。
 
 ## 开发
 

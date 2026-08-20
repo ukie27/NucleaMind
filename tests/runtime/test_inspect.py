@@ -1,6 +1,6 @@
 """只读诊断路径（`D29` 的 `runtime/inspect.py`）。
 
-职责：验三条承诺——**不取实例锁**、**不写 `permissions.json`**、**插件的问题只记不抛**，
+职责：验三条承诺——**不取实例锁**、**不装完整实例**、**插件的问题只记不抛**，
 以及「已发现 = 真的会被加载的那一批」在诊断路径上同样成立。
 不负责：验渲染（`tests/runtime/cli/test_plugins_cli.py`）、验启动路径
 （`tests/runtime/test_bootstrap.py`、`test_plugin_plan.py`）。
@@ -90,14 +90,6 @@ def test_the_queries_do_not_take_the_instance_lock(tmp_path: Path) -> None:
         assert inspect_plugins(instance_dir=tmp_path, manifests=TEST_MANIFESTS).statuses == ()
     finally:
         lock.release()
-
-
-async def test_capabilities_does_not_write_the_permission_ledger(tmp_path: Path) -> None:
-    """判定照做、但从头到尾没人 `save()`——否则一条不取锁的命令会与实例抢同一个文件。"""
-    _instance(tmp_path)
-    layout = InstanceLayout.resolve(instance_dir=tmp_path)
-    await inspect_capabilities(instance_dir=tmp_path, manifests=TEST_MANIFESTS)
-    assert not layout.permissions_path.exists()
 
 
 async def test_capabilities_reports_the_active_providers(tmp_path: Path) -> None:

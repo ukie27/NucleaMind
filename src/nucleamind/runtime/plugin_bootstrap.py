@@ -1,6 +1,6 @@
 """插件装配策略：把实例配置、Manifest 与 Runtime 上下文交给统一注册机制。
 
-职责：派生每个提供方的配置块、批准声明权限、规划外部插件、筛选内建 Manifest、驱动
+职责：派生每个提供方的配置块、规划外部插件、筛选内建 Manifest、驱动
 ``wire_capabilities()``，并把加载结果投影成生命周期。
 不负责：实例锁、配置文件错误落盘、事件 sink、必需能力选择和 ``AgentInstance`` 构造；
 这些属于顶层 ``bootstrap.py``。
@@ -28,15 +28,7 @@ from nucleamind.contracts import (
 )
 from nucleamind.kernel.config import InstanceLayout, NucleaConfig
 from nucleamind.kernel.observability import EventBus
-from nucleamind.kernel.plugins import (
-    Decision,
-    Grant,
-    LedgerDecision,
-    LoadOutcome,
-    PermissionLedger,
-    PluginLifecycle,
-    PluginPhase,
-)
+from nucleamind.kernel.plugins import LoadOutcome, PluginLifecycle, PluginPhase
 from nucleamind.kernel.registry import SuppressedCapabilities
 from nucleamind.sdk import CapabilityDecl, PluginContext, PluginManifest
 
@@ -51,12 +43,10 @@ from .plugin_plan import (
 from .wiring import Wiring, wire_capabilities
 
 __all__ = [
-    "approve",
     "build_lifecycles",
     "builtin_config_blocks",
     "capability_filter",
     "config_block_for",
-    "declared_grants",
     "plan_external",
     "select_manifests",
     "wire_all",
@@ -108,48 +98,6 @@ def capability_filter(
         return decl.name in enabled_names(config_block_for(manifest, config, derived))
 
     return keep
-
-
-def declared_grants(manifest: PluginManifest) -> tuple[Grant, ...]:
-    """把 SDK 权限声明翻译成 Kernel 账本使用的投影。"""
-    return tuple(
-        Grant(kind=decl.kind, target=decl.target, reason=decl.reason)
-        for decl in manifest.permissions
-    )
-
-
-def approve(
-    ledger: PermissionLedger, manifest: PluginManifest, bus: EventBus
-) -> LedgerDecision:
-    """判定一份权限声明，只为新增和当前拒绝发布诊断事件。"""
-    decision = ledger.decide(manifest.id, declared_grants(manifest))
-    for entry in decision.recorded:
-        bus.publish(
-            EventName.CAPABILITY_PERMISSION_GRANTED,
-            payload={
-                "plugin": manifest.id,
-                "permission": entry.name,
-                "decision": entry.decision.value,
-                "source": entry.source,
-                "reason": entry.reason,
-            },
-        )
-    for grant in (*decision.pending, *decision.revoked):
-        if any(entry.key == grant.key for entry in decision.recorded):
-            continue
-        bus.publish(
-            EventName.CAPABILITY_PERMISSION_GRANTED,
-            payload={
-                "plugin": manifest.id,
-                "permission": grant.name,
-                "decision": Decision.PENDING.value
-                if grant in decision.pending
-                else Decision.REVOKED.value,
-                "source": "ledger",
-                "reason": grant.reason,
-            },
-        )
-    return decision
 
 
 def plan_external(
@@ -222,7 +170,6 @@ async def wire_all(
     runtime: PluginRuntime,
     env: Mapping[str, str] | None,
     contexts: list[RuntimePluginContext],
-    ledger: PermissionLedger,
     *,
     builtin_cli_only: bool = False,
     external_ids: Collection[str] = (),
@@ -253,7 +200,6 @@ async def wire_all(
             config=config_block_for(manifest, config, derived),
             secrets=entry.secrets,
             state_dir=layout.plugins_dir / manifest.id,
-            grants=approve(ledger, manifest, bus).granted,
             bus=bus,
             runtime=runtime,
             env=env,

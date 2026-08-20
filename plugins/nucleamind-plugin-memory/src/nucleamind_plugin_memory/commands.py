@@ -38,7 +38,6 @@ from nucleamind.contracts import (
     FragmentKind,
     FragmentScope,
     NucleaError,
-    PermissionKind,
     SessionKey,
     TrustLevel,
 )
@@ -90,7 +89,6 @@ def memory_spec() -> CommandSpec:
             ),
             CommandParam(name="rest", description="子命令的参数。", required=False, repeated=True),
         ),
-        permissions=frozenset({PermissionKind.FS_READ, PermissionKind.FS_WRITE}),
         operator_only=False,
         aliases=("mem",),
     )

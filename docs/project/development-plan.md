@@ -405,7 +405,7 @@ pyproject.toml                                   # ruff 分层规则集
 ```text
 src/nucleamind/sdk/__init__.py       # __all__ 规范性清单
 src/nucleamind/sdk/api.py            # NucleaAPI Protocol（9 方法）
-src/nucleamind/sdk/manifest.py       # PluginManifest / CapabilityDecl / PermissionDecl
+src/nucleamind/sdk/manifest.py       # PluginManifest / CapabilityDecl
 src/nucleamind/sdk/version.py        # SDK_VERSION
 src/nucleamind/sdk/testing/fakes.py  # Fake 实现
 src/nucleamind/sdk/testing/contracts.py  # 5 个契约测试基类骨架
@@ -994,7 +994,6 @@ tests/embed/test_embed.py
   `asyncio.create_task`。
 - 在 D16 已有 `host.py` 上补齐生产级 `PluginContext`，不得另建第二套 Host API 或复制
   注册分派逻辑。
-- 授予结果写入 `permissions.json` 并发布事件（`NFR-301`）。
 - 文档中必须写明：**应用级权限 ≠ 进程隔离**，同进程插件可绕过（`13.7`）。
   不写这句就是虚假安全承诺。
 
@@ -1002,7 +1001,6 @@ tests/embed/test_embed.py
 
 - 未声明权限时访问对应访问器抛 `PERMISSION_DENIED`（4 个资源各一测试）。
 - 插件只能读到自己的配置块（`CFG-002`），尝试读他人配置无对应 API。
-- `permissions.json` 记录完整且变更发布事件。
 - 内建能力同样受权限约束，无特权路径（`BAS-005`，复用 D16 的架构测试）。
 - 文档中的隔离能力声明经评审确认。
 
@@ -1286,4 +1284,3 @@ docs/ 插件开发入门文档
 | §12.3 测试分层 | D01 D16 |
 | §13 M1–M4 | D01–D30 |
 | §13 M5–M6 | D32+（待立项） |
-

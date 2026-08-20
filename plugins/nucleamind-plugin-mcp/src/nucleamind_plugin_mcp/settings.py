@@ -34,7 +34,7 @@ __all__ = [
 
 #: 唯一的凭据名。远端 server 的鉴权 header 里写 `{api_key}` 即被替换（`web` 插件
 #: `custom` 后端的同一条约定）。做成固定常量是因为 manifest 的
-#: `PermissionDecl(SECRET, "api_key")` 声明的就是这个名字。
+#: 固定名字使配置路径与 `ctx.secret()` 调用保持同源。
 SECRET_NAME: Final = "api_key"
 
 #: header 值里被替换的占位符。让用户既能写 `Bearer {api_key}` 也能写裸 `{api_key}`，

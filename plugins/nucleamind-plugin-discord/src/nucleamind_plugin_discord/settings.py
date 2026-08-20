@@ -43,8 +43,7 @@ __all__ = [
 #: 本插件的能力名，同时是 `channel_id` 的默认值。
 CAPABILITY_NAME: Final = "discord"
 
-#: 凭据名，**固定不可配置**：manifest 的 `PermissionDecl.target` 写的就是这两个名字，
-#: 做成可配置会让那两条声明变成谎话（`D19` / `D32` 的先例）。
+#: 凭据名固定不可配置，使配置路径与 `ctx.secret()` 调用保持同源。
 SECRET_TOKEN: Final = "bot_token"
 SECRET_PROXY_PASSWORD: Final = "proxy_password"
 

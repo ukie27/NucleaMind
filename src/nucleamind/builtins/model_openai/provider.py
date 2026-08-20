@@ -324,8 +324,7 @@ def read_credential(ctx: PluginContext, settings: OpenAISettings) -> SecretStr |
     """取凭据。`auth="none"` 时**不碰** `ctx.secret()`——本地模型服务没有密钥，
     去要一个必然缺失的凭据只会让实例起不来。
 
-    **异常约定**：未授权 `PERMISSION_DENIED`、已授权但没配 `CONFIG_SECRET_MISSING`，
-    两者必须可区分（`sdk/api.py` 写死的约定）。这里不吞任何一个。
+    **异常约定**：凭据没配时保留 `ctx.secret()` 的 `CONFIG_SECRET_MISSING`，这里不吞异常。
     """
     if not settings.requires_credential:
         return None

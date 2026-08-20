@@ -343,30 +343,6 @@ async def test_one_broken_plugin_does_not_take_the_others_down(tmp_path: Path) -
         await instance.stop()
 
 
-# ------------------------------------------------------------------------------ 权限
-
-
-async def test_an_external_plugin_goes_through_the_same_permission_ledger(
-    tmp_path: Path,
-) -> None:
-    """`A6`：授权判定只有 `bootstrap.approve()` 一个调用点，外部插件走的就是它。
-
-    断言落在 `permissions.json` 上而不是 `ctx.fs` 上：TOFU 的可审计性（`NFR-301`）正是
-    「这条授予被记下来了」，而内建与插件共用同一份账本（`BAS-005`）。
-    """
-    permissions = 'permissions = [{ kind = "fs:read", reason = "读取索引文件", target = "" }]'
-    write_plugin(tmp_path / "ext", "alpha", extra=permissions)
-    instance = await boot(tmp_path, {"enabled": ["alpha"]})
-    try:
-        ledger = json.loads((tmp_path / "permissions.json").read_text(encoding="utf-8"))
-        (entry,) = ledger["providers"]["alpha"]["grants"]
-        assert entry["permission"] == "fs:read"
-        assert entry["decision"] == "granted"
-        assert entry["source"] == "first_use"
-    finally:
-        await instance.stop()
-
-
 # ------------------------------------------------------------------------------ 覆盖
 
 async def test_an_override_target_that_does_not_exist_fails_the_start(tmp_path: Path) -> None:

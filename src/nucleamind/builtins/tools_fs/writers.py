@@ -32,7 +32,6 @@ from nucleamind.contracts import (
     Concurrency,
     ErrorCode,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolInvocation,
@@ -67,7 +66,6 @@ WRITE_SPEC: Final = ToolSpec(
         "required": ["path", "content"],
         "additionalProperties": False,
     },
-    permissions=frozenset({PermissionKind.FS_WRITE}),
     read_only=False,
     # 覆盖既有文件是不可撤销的内容丢失，而 `DESTRUCTIVE` 正是确认策略要拦的那一档
     # （`TOL-004`）。「它只写一个文件」不构成把它降成 MUTATING 的理由。
@@ -98,7 +96,6 @@ EDIT_SPEC: Final = ToolSpec(
         "required": ["path", "old_text", "new_text"],
         "additionalProperties": False,
     },
-    permissions=frozenset({PermissionKind.FS_READ, PermissionKind.FS_WRITE}),
     read_only=False,
     risk=RiskLevel.DESTRUCTIVE,
     concurrency=Concurrency.EXCLUSIVE,

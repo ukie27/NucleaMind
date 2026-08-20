@@ -73,7 +73,6 @@ def tool_spec(local_name: str, server: str, remote: RemoteTool) -> ToolSpec:
         parameters=tool_parameters(remote.input_schema),
         # **不声明权限**：远端 server 用的是它自己的进程与网络，本插件的门面一个都不经过。
         # 声明一条 `net` 会暗示「它的出网受守卫约束」，而那是假的（README 里如实写着）。
-        permissions=frozenset(),
         read_only=False,
         risk=RiskLevel.MUTATING,
         # 远端 server 的并发安全性未知，逐个串行是唯一不用赌的选择。

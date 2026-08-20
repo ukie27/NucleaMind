@@ -1,7 +1,7 @@
-"""工具执行器：schema / 权限校验、超时、取消宽限期与孤儿任务表（技术方案 §10.2 第 10 步）。
+"""工具执行器：schema 校验、超时、取消宽限期与孤儿任务表（技术方案 §10.2 第 10 步）。
 
-职责：实现 `deps.ToolInvoker`——把一次 `ToolCall` 补齐成 `ToolInvocation`（授予的权限、
-幂等键），校验参数与权限，在 `timeout_ms + grace` 内交回一个 `ToolResult`，并把宽限期
+职责：实现 `deps.ToolInvoker`——把一次 `ToolCall` 补齐成带幂等键的 `ToolInvocation`，
+校验参数，在 `timeout_ms + grace` 内交回一个 `ToolResult`，并把宽限期
 用尽仍未返回的协程登记为孤儿任务（`EDG-407`、`EDG-104`）。
 不负责：决定调度顺序与批次（engine 的 `scheduling.py`）、截断结果（engine 的
 `folding.py`，且必须在 `after_tool_call` **之后**）、判定「这个工具存不存在」
@@ -9,11 +9,11 @@
 
 **三条不变量**：
 
-1. **约定不抛**。schema 不合、权限不足、超时、handler 逸出的异常一律折成
+1. **约定不抛**。schema 不合、超时、handler 逸出的异常一律折成
    `ToolResult(ok=False, error=...)`（`deps.ToolInvoker.invoke` 的 docstring 写死）。
    engine 兜得住逸出的异常，但那时只剩一个 `side_effect=UNKNOWN`，执行侧本来能给出的
    判断就丢了。
-2. **`side_effect` 如实标注**。执行**之前**失败（schema / 权限）一律 `NONE`——工具还没被
+2. **`side_effect` 如实标注**。执行**之前**失败（schema）一律 `NONE`——工具还没被
    碰过；宽限期用尽一律 `UNKNOWN`——Kernel 不知道那个还在跑的协程做了什么。谎报 `NONE`
    会让用户据此重试并造成重复副作用（`EDG-401`、`EDG-407`）。
 3. **必须在 `timeout_ms + grace` 内返回**。engine 不加第二层超时，因此这里是唯一的时间
@@ -41,7 +41,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     SideEffect,
     ToolCall,
     ToolHandler,
@@ -142,13 +141,11 @@ class ToolExecutor:
         self,
         tools: Iterable[RegisteredTool] = (),
         *,
-        granted: frozenset[PermissionKind] = frozenset(PermissionKind),
         grace_ms: int = DEFAULT_TOOL_CANCEL_GRACE_MS,
         max_orphans: int = DEFAULT_MAX_ORPHANS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._tools: dict[str, RegisteredTool] = {item.spec.name: item for item in tools}
-        self._granted = granted
         self._grace_ms = grace_ms
         self._max_orphans = max_orphans
         self._clock = clock
@@ -174,30 +171,26 @@ class ToolExecutor:
     def prepare(
         self, call: ToolCall, *, correlation: Correlation, timeout_ms: int
     ) -> ToolInvocation:
-        """补齐执行上下文：授予的权限与幂等键。
+        """补齐执行上下文中的幂等键。
 
-        **异常约定**：约定不抛。工具不存在时给一个空权限的调用上下文——`invoke()` 会把它
+        **异常约定**：约定不抛。工具不存在时仍返回调用上下文——`invoke()` 会把它
         折成 `CAPABILITY_MISSING` 结果，而在这里抛会让 engine 的 `before_tool_call` Hook
         永远拿不到 `invocation`（那是它的必填槽）。
         **取消语义**：纯策略查询，不涉及取消。
         """
         registered = self._tools.get(call.name)
-        required: frozenset[PermissionKind] = (
-            registered.spec.permissions if registered is not None else frozenset()
-        )
         read_only = registered is not None and registered.spec.read_only
         return ToolInvocation(
             call=call,
             correlation=correlation,
             timeout_ms=timeout_ms,
-            granted=frozenset(required & self._granted),
             # 只有只读工具默认带幂等键：重放一次只读调用永远安全，而写类工具的「重试是否
             # 安全」只有工具自己知道（`EDG-402` 因此默认禁止自动重试）。
             idempotency_key=f"{call.name}:{call.call_id}" if read_only else None,
         )
 
     async def invoke(self, invocation: ToolInvocation, cancel: CancelSignal) -> ToolResult:
-        """执行一次调用。顺序固定为 schema → 权限 → 执行。
+        """执行一次调用。顺序固定为 schema → 执行。
 
         **异常约定**：约定不抛。
         **取消语义**：`cancel` 是本次调用专属的子令牌；宽限期赛跑与孤儿登记在这里完成。
@@ -217,17 +210,6 @@ class ToolExecutor:
         invalid = self._validate(registered.spec, call)
         if invalid is not None:
             return self._failed(call, invalid)
-
-        missing = sorted(kind.value for kind in registered.spec.permissions - invocation.granted)
-        if missing:
-            return self._failed(
-                call,
-                NucleaError(
-                    ErrorCode.PERMISSION_DENIED,
-                    "工具所需的权限未被授予。",
-                    detail={"tool": call.name, "missing": missing},
-                ),
-            )
 
         return await self._execute(registered, invocation, cancel)
 

@@ -17,7 +17,7 @@
 **不用 `ctx.fs`**：`sdk.api.FileAccess` 只有 `read_text` / `write_text` / `list_dir`，
 没有追加、`fsync` 与原子替换。manifest 里如实声明 `fs:read` / `fs:write`，实现直接用
 `pathlib`——与 `builtins/session_jsonl` 是同一条先例：门面能力不足时，诚实声明比绕道更
-符合「应用级权限的价值是让越界意图可审计」。
+符合插件私有状态由插件负责持久化的所有权边界。
 
 **IO 全部经 `asyncio.to_thread`**：召回发生在每一轮 turn 的组装路径上，在事件循环里同步
 读几个文件会卡住同一实例的其他 turn。

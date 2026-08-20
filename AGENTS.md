@@ -66,9 +66,9 @@ tests/           # 按层镜像；integration/e2e 验证组装后的骨架
 - `NucleaError.category` 由错误码推导，调用方不能另传一份分类。
 - `contracts.errors.redact()` / `scrub()` 在数据构造时脱敏；不要把责任推给日志 sink。
 - `contracts.SecretStr` 是唯一密钥包装类型；明文只通过 `reveal()` 短暂取得。
-- SDK 已进入 1.x，当前为 `1.3.0`。`sdk.__all__`、`sdk.testing.__all__`、
+- SDK 当前为 `2.0.0`。`sdk.__all__`、`sdk.testing.__all__`、
   `CapabilityKind`、`NucleaAPI` 和 manifest schema 都受兼容承诺约束。
-- Session JSONL 格式和权限账本格式是持久化契约，修改必须先设计迁移。
+- Session JSONL 格式是持久化契约，修改必须先设计迁移。
 
 公开表面优先做纯新增。需要破坏性修改时，不要写长期双读兼容垫片；明确版本、迁移边界、
 失败方式和移除时间，再集中实施。流程见 [`change-guide.md`](./docs/project/change-guide.md)。
@@ -92,8 +92,9 @@ tests/           # 按层镜像；integration/e2e 验证组装后的骨架
 - `setup()` 的 Registry 写入由 `RegistrationBatch` 回滚，任务与事件订阅由 Runtime 的
   `StartupResources` 回滚；启动失败与二次装配都必须同时覆盖这两类副作用。
 
-插件是受信任的同进程 Python 代码。权限声明、账本和 `PluginContext` 资源门面用于意图审计、
-扩权记录和自愿约束，不是安全沙箱。不要声称它能阻止恶意插件直接调用 Python/OS API。
+插件是受信任的同进程 Python 代码，安装并启用即完全信任。`PluginContext` 资源门面用于提供
+统一的工作区、网络、进程与密钥服务，不是权限系统或安全沙箱。不要声称它能阻止插件直接
+调用 Python/OS API。
 
 插件应继承 `sdk.testing` 的契约测试基类，并同时加入 `inspect.signature` 守卫；Protocol 的
 运行时检查只验证属性存在，不能证明签名一致。官方插件还必须进入 basedpyright 和 CI 安装
@@ -171,10 +172,10 @@ tests/           # 按层镜像；integration/e2e 验证组装后的骨架
 冲突解析和生命周期，不得 import Kernel 私有实现获得特权。
 
 冻结的基础工具名是：`fs.read`、`fs.write`、`fs.edit`、`fs.list`、`fs.grep`、`shell.exec`。
-文件和 shell 能力必须经过 workspace 边界和权限门面；供应商选择、凭据解析和启用判定属于
+文件和 shell 能力必须经过 workspace 边界与资源服务；供应商选择、凭据解析和启用判定属于
 Runtime 配置与组装，不进入模型实现。
 
-`runtime/bootstrap.py` 是唯一组装根，只保留启动顺序与最终实例组装；Manifest 配置、权限、
+`runtime/bootstrap.py` 是唯一组装根，只保留启动顺序与最终实例组装；Manifest 配置、
 规划和统一注册策略在 `runtime/plugin_bootstrap.py`，启动期资源所有权在
 `runtime/startup.py`。某项逻辑若同时需要认识 SDK manifest、Kernel 实现和具体能力，它通常
 属于 Runtime；如果 Runtime 文件开始承担可复用机制，应先抽到所属 Kernel 模块。

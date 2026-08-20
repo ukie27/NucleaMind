@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 
-from nucleamind.contracts import JsonValue, PermissionKind, ToolCall, ToolInvocation
+from nucleamind.contracts import JsonValue, ToolCall, ToolInvocation
 from nucleamind.sdk.testing import FakePluginContext, make_correlation
 
 #: 一张真实的 1×1 PNG。用真图而不是 `b"fake"`：媒体类型与扩展名的判定要有意义。
@@ -30,7 +30,7 @@ PNG_DATA_URL = f"data:image/png;base64,{PNG_B64}"
 
 
 class ImageContext(FakePluginContext):
-    """带真实 `state_dir` 的上下文。默认授予本插件 manifest 声明的三条权限。"""
+    """带真实 `state_dir` 的上下文。"""
 
     def __init__(
         self,
@@ -38,15 +38,11 @@ class ImageContext(FakePluginContext):
         *,
         config: Mapping[str, JsonValue] | None = None,
         secrets: Mapping[str, str] | None = None,
-        granted: frozenset[PermissionKind] = frozenset(
-            {PermissionKind.NET, PermissionKind.FS_WRITE, PermissionKind.SECRET}
-        ),
     ) -> None:
         super().__init__(
             "image",
             config=config,
             state_dir=state_dir,
-            granted=granted,
             secrets=secrets if secrets is not None else {"api_key": "sk-image-test-key-1234"},
         )
 
@@ -129,5 +125,4 @@ def invocation(arguments: Mapping[str, JsonValue]) -> ToolInvocation:
         call=ToolCall(call_id="call-1", name="image.generate", arguments=dict(arguments)),
         correlation=make_correlation(),
         timeout_ms=5_000,
-        granted=frozenset({PermissionKind.NET, PermissionKind.FS_WRITE}),
     )

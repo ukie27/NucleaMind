@@ -1,6 +1,6 @@
 """`D23` 生产级 `PluginContext`：配置块、状态目录、凭据、事件桥与两个门面。
 
-职责：验权限判定（未声明即 `PERMISSION_DENIED`）、`ctx.secret()` 的三种结局、事件桥
+职责：验资源门面、`ctx.secret()` 的两种结局、事件桥
 把同步 bus 接到异步 handler 上的规则、`instance` / `turns` 在就绪之前不可用。
 不负责：验装配根怎么构造它（`test_bootstrap.py`）。
 
@@ -25,7 +25,6 @@ from nucleamind.contracts import (
 from nucleamind.kernel.observability import EventBus
 from nucleamind.runtime.access import GuardedHttpAccess
 from nucleamind.runtime.plugin_context import (
-    PluginGrants,
     PluginRuntime,
     RuntimePluginContext,
     build_plugin_context,
@@ -42,7 +41,6 @@ _UNSET: Path = Path("<unset>")
 def make_ctx(
     tmp_path: Path,
     *,
-    grants: PluginGrants | None = None,
     secrets: dict[str, str] | None = None,
     env: dict[str, str] | None = None,
     runtime: PluginRuntime | None = None,
@@ -53,7 +51,6 @@ def make_ctx(
         config={"a": 1},
         secrets=secrets or {},
         state_dir=tmp_path / "plugins" / "probe",
-        grants=grants or PluginGrants(),
         bus=EventBus(InstanceId("test")),
         runtime=runtime or PluginRuntime(),
         env=env,
@@ -77,27 +74,18 @@ def test_the_state_dir_is_created_on_first_access(tmp_path: Path) -> None:
     assert ctx.state_dir.is_dir()
 
 
-# ---------------------------------------------------------------------- 权限
+# ---------------------------------------------------------------------- 资源服务
 
 
-@pytest.mark.parametrize("accessor", ["fs", "net", "shell"])
-def test_an_undeclared_accessor_is_denied(tmp_path: Path, accessor: str) -> None:
-    """未授权时**属性访问**就抛，插件拿不到「看起来能用、调用才失败」的对象。"""
-    with pytest.raises(NucleaError) as caught:
-        getattr(make_ctx(tmp_path), accessor)
-    assert caught.value.code is ErrorCode.PERMISSION_DENIED
-
-
-def test_a_granted_accessor_hands_back_a_guarded_facade(tmp_path: Path) -> None:
-    """`D26` 起它是真身。授予 `net` 之后属性访问不再抛，交回的是带 SSRF 守卫的门面。"""
-    ctx = make_ctx(tmp_path, grants=PluginGrants.of("net"))
+def test_context_hands_back_a_guarded_network_facade(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
     assert isinstance(ctx.net, GuardedHttpAccess)
 
 
 def test_a_facade_without_a_workspace_is_honest_about_it(tmp_path: Path) -> None:
     """没有 workspace 时 `fs` / `shell` 无处落地——报 `CAPABILITY_MISSING` 而不是
     悄悄拿一个临时目录当根。授权判定在此之前已经过了。"""
-    ctx = make_ctx(tmp_path, grants=PluginGrants.of("fs:read"), workspace=None)
+    ctx = make_ctx(tmp_path, workspace=None)
     with pytest.raises(NucleaError) as caught:
         _ = ctx.fs
     assert caught.value.code is ErrorCode.CAPABILITY_MISSING
@@ -106,14 +94,9 @@ def test_a_facade_without_a_workspace_is_honest_about_it(tmp_path: Path) -> None
 # ---------------------------------------------------------------------- 凭据
 
 
-def _secret_grants() -> PluginGrants:
-    return PluginGrants.of("secret:api_key")
-
-
-def test_a_granted_secret_resolves_from_the_environment(tmp_path: Path) -> None:
+def test_a_secret_resolves_from_the_environment(tmp_path: Path) -> None:
     ctx = make_ctx(
         tmp_path,
-        grants=_secret_grants(),
         secrets={"api_key": "${NM_TOKEN}"},
         env={"NM_TOKEN": SENTINEL},
     )
@@ -124,21 +107,16 @@ def test_a_granted_secret_resolves_from_the_environment(tmp_path: Path) -> None:
     assert SENTINEL not in f"{secret!r} {secret}"
 
 
-def test_an_ungranted_secret_and_a_missing_one_are_distinguishable(tmp_path: Path) -> None:
-    """`D19` 的 `model_openai` 靠这个区分把「去改权限」和「去补配置」分开。"""
-    with pytest.raises(NucleaError) as denied:
-        make_ctx(tmp_path).secret("api_key")
-    assert denied.value.code is ErrorCode.PERMISSION_DENIED
-
+def test_a_missing_secret_reports_its_config_pointer(tmp_path: Path) -> None:
     with pytest.raises(NucleaError) as missing:
-        make_ctx(tmp_path, grants=_secret_grants()).secret("api_key")
+        make_ctx(tmp_path).secret("api_key")
     assert missing.value.code is ErrorCode.CONFIG_SECRET_MISSING
     assert missing.value.detail["pointer"] == "/plugins/probe/secrets/api_key"
 
 
 def test_an_unexported_variable_reports_only_its_name(tmp_path: Path) -> None:
     """`EDG-502`：错误里只有变量名与位置，没有任何值。"""
-    ctx = make_ctx(tmp_path, grants=_secret_grants(), secrets={"api_key": "${NOPE}"}, env={})
+    ctx = make_ctx(tmp_path, secrets={"api_key": "${NOPE}"}, env={})
     with pytest.raises(NucleaError) as caught:
         ctx.secret("api_key")
     assert caught.value.code is ErrorCode.CONFIG_SECRET_MISSING
@@ -147,7 +125,7 @@ def test_an_unexported_variable_reports_only_its_name(tmp_path: Path) -> None:
 
 def test_a_literal_secret_is_still_wrapped(tmp_path: Path) -> None:
     """按位置就是一个凭据——不含 `${VAR}` 也要包起来，免得它以明文进日志。"""
-    ctx = make_ctx(tmp_path, grants=_secret_grants(), secrets={"api_key": SENTINEL})
+    ctx = make_ctx(tmp_path, secrets={"api_key": SENTINEL})
     assert ctx.secret("api_key").reveal() == SENTINEL
     assert SENTINEL not in str(ctx.secret("api_key"))
 

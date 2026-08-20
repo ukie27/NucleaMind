@@ -25,7 +25,6 @@ from nucleamind.contracts import (
     InboundMessage,
     InstanceId,
     NucleaError,
-    PermissionKind,
     Sender,
     SessionKey,
     TrustLevel,
@@ -73,16 +72,13 @@ def test_spec_is_frozen() -> None:
         spec().name = "x"
 
 
-def test_spec_declares_the_four_required_things() -> None:
-    """`CMD-001`：名称、参数形式、说明和权限需求。"""
+def test_spec_declares_names_parameters_and_operator_requirement() -> None:
     command = spec(
         parameters=(param(required=True),),
-        permissions=frozenset({PermissionKind.FS_READ}),
         operator_only=True,
         aliases=("h", "man"),
     )
     assert command.all_names == ("help", "h", "man")
-    assert command.permissions == frozenset({PermissionKind.FS_READ})
     assert command.operator_only is True
 
 

@@ -26,15 +26,13 @@ nanobot 实现的文档一并删除——它们教人跑的是 `nanobot onboard`
 | 回顾 D00–D52 里程碑 | [`project/history.md`](./project/history.md) |
 | 参考项目的阅读规范 | [`references/README.md`](./references/README.md) |
 | 写一个插件 | [`plugin-development.md`](./plugin-development.md) |
-| 理解插件权限模型 | [`permissions.md`](./permissions.md) |
+| 理解插件信任边界 | [`plugin-development.md`](./plugin-development.md#6-资源服务与信任边界) |
 | 读或迁移内建会话存储格式 | [`session-storage.md`](./session-storage.md) |
 
 三篇能力文档各自的性质：
 
 - [`session-storage.md`](./session-storage.md) 是**已发布的兼容契约**（`SES-006`），
   外部实现按它写；改 `builtins/session_jsonl/codec.py` 的字段就得改它。
-- [`permissions.md`](./permissions.md) 记着 `permissions.json` 的文件格式，以及那句必须
-  保留的诚实声明——**应用级权限不是进程隔离**。
 - [`plugin-development.md`](./plugin-development.md) 的代码块由
   `tests/e2e/test_plugin_docs.py` **直接执行**，因此不会漂移。
 

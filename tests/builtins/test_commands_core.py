@@ -42,14 +42,12 @@ from nucleamind.builtins.commands_core import (
 )
 from nucleamind.builtins.registry import BUILTIN_MANIFESTS, COMMANDS_CORE
 from nucleamind.contracts import (
-    CommandSpec,
     Correlation,
     Disposition,
     ErrorCode,
     InboundMessage,
     InstanceId,
     NucleaError,
-    PermissionKind,
     Role,
     Sender,
     SessionKey,
@@ -185,19 +183,6 @@ class TestHelp:
 
     async def test_empty_index_says_so_instead_of_printing_a_blank(self) -> None:
         assert render_help([], "/") == "当前没有可用的命令。"
-
-    def test_lists_declared_permissions(self) -> None:
-        """`CMD-001` 的第四样。只印名字和说明，用户就只能靠敲一次来发现自己没权限。"""
-        spec = CommandSpec(
-            name="dump",
-            description="把工作区打个包。",
-            permissions=frozenset({PermissionKind.FS_READ, PermissionKind.FS_WRITE}),
-        )
-        text = render_help([spec], "/")
-        assert "需要权限：" in text
-        assert PermissionKind.FS_READ.value in text
-        assert PermissionKind.FS_WRITE.value in text
-
 
 # --------------------------------------------------------------------------- /config
 
@@ -431,10 +416,6 @@ class TestRegistration:
     def test_manifest_declares_exactly_the_six_commands(self) -> None:
         declared = {decl.name for decl in COMMANDS_CORE.capabilities}
         assert declared == set(COMMAND_NAMES) == set(SPECS)
-
-    def test_manifest_declares_no_permissions(self) -> None:
-        """数据全部来自 `ctx.instance` / `ctx.turns`，那两个不是资源访问器。"""
-        assert COMMANDS_CORE.permissions == ()
 
     def test_manifest_leaves_priority_unset(self) -> None:
         """写了就会被原样采纳（默认 100），而内建基准是 0。"""

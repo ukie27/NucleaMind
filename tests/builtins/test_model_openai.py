@@ -82,7 +82,6 @@ from nucleamind.contracts import (
     ModelMessage,
     ModelRequest,
     NucleaError,
-    PermissionKind,
     ProviderId,
     Role,
     SamplingParams,
@@ -109,18 +108,15 @@ BASE_URL: Final = "https://api.example.test/v1"
 #: 认出它，「没泄漏」就变成了一句同义反复。
 SENTINEL_KEY: Final = "sk-ThisMustNeverLeak0123456789"
 
-_GRANTED: Final = frozenset({PermissionKind.NET, PermissionKind.SECRET})
-
-
 # ------------------------------------------------------------------------------ 夹具
 
 
 def make_context(**config: JsonValue) -> FakePluginContext:
-    """一个已授权、带哨兵凭据的 ctx。默认端点是可控的测试域名。"""
+    """一个带哨兵凭据的 ctx。默认端点是可控的测试域名。"""
     payload: dict[str, JsonValue] = {CONFIG_BASE_URL_KEY: BASE_URL}
     payload.update(config)
     return FakePluginContext(
-        config=payload, granted=_GRANTED, secrets={SECRET_NAME: SENTINEL_KEY}
+        config=payload, secrets={SECRET_NAME: SENTINEL_KEY}
     )
 
 
@@ -808,7 +804,7 @@ class TestCancellation:
 class TestSettings:
     def test_defaults_are_usable_without_any_configuration(self) -> None:
         """`BAS-001`：配置一份凭据就能用。"""
-        settings = resolve_settings(FakePluginContext(granted=_GRANTED))
+        settings = resolve_settings(FakePluginContext())
         info = settings.describe(MODEL_ID)
         assert info.provider == PROVIDER_NAME
         assert info.context_window_tokens > 0
@@ -882,7 +878,7 @@ class TestSettings:
         """本内建 critical=True，一份写错的配置应当让实例启动失败。"""
         class RefusingApi:
             ctx = FakePluginContext(
-                config={CONFIG_AUTH_KEY: "basic"}, granted=_GRANTED, secrets={SECRET_NAME: SENTINEL_KEY}
+                config={CONFIG_AUTH_KEY: "basic"}, secrets={SECRET_NAME: SENTINEL_KEY}
             )
 
             def register_model_provider(self, name: str, provider: object) -> None:
@@ -911,10 +907,8 @@ class TestSettings:
         registered: list[object] = []
 
         class RecordingApi:
-            # 刻意不授予 SECRET 权限：碰了 ctx.secret() 就会 PERMISSION_DENIED。
             ctx = FakePluginContext(
                 config={CONFIG_AUTH_KEY: "none", CONFIG_BASE_URL_KEY: "http://127.0.0.1:11434/v1"},
-                granted=frozenset({PermissionKind.NET}),
             )
 
             def register_model_provider(self, name: str, provider: object) -> None:
@@ -923,17 +917,11 @@ class TestSettings:
         setup(RecordingApi())  # type: ignore[arg-type]
         assert len(registered) == 1
 
-    def test_a_missing_credential_is_distinguishable_from_a_denied_one(self) -> None:
-        """`sdk/api.py` 写死的约定：用户才知道该去改权限还是补配置。"""
-        granted_but_unset = FakePluginContext(config={}, granted=_GRANTED, secrets={})
+    def test_a_missing_credential_reports_the_configuration_problem(self) -> None:
+        missing_credential = FakePluginContext(config={}, secrets={})
         with pytest.raises(NucleaError) as missing:
-            granted_but_unset.secret(SECRET_NAME)
+            missing_credential.secret(SECRET_NAME)
         assert missing.value.code is ErrorCode.CONFIG_SECRET_MISSING
-
-        not_granted = FakePluginContext(config={}, secrets={SECRET_NAME: SENTINEL_KEY})
-        with pytest.raises(NucleaError) as denied:
-            not_granted.secret(SECRET_NAME)
-        assert denied.value.code is ErrorCode.PERMISSION_DENIED
 
 
 # ------------------------------------------------------------------------------ 客户端
@@ -1008,7 +996,6 @@ class TestHttpClient:
 
         ctx = FakePluginContext(
             config={CONFIG_AUTH_KEY: "none", CONFIG_BASE_URL_KEY: "http://127.0.0.1:11434/v1"},
-            granted=frozenset({PermissionKind.NET}),
         )
         provider = OpenAIModelProvider(
             resolve_settings(ctx), credential=None, transport=httpx.MockTransport(handler)
@@ -1091,14 +1078,6 @@ class TestRegistration:
         assert declaration.overrides is None
         # `priority` 不写：内建基准是 0，写了（哪怕写的是默认值 100）就会被原样采纳。
         assert "priority" not in declaration.model_fields_set
-
-    def test_the_declared_permissions_match_what_the_code_actually_uses(self) -> None:
-        kinds = {decl.kind for decl in MODEL_OPENAI.permissions}
-        assert kinds == {PermissionKind.NET, PermissionKind.SECRET}
-        assert all(decl.reason.strip() for decl in MODEL_OPENAI.permissions)
-        secret_decl = next(d for d in MODEL_OPENAI.permissions if d.kind is PermissionKind.SECRET)
-        # `target` 与代码里那个固定的密钥名必须一致，否则这条声明就是一句谎话。
-        assert secret_decl.target == SECRET_NAME
 
     def test_the_config_schema_lists_exactly_the_keys_the_code_reads(self) -> None:
         properties = MODEL_OPENAI.config_schema["properties"]

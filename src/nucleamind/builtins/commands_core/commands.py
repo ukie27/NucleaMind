@@ -2,7 +2,7 @@
 
 职责：`/help`、`/config`、`/session`、`/plugins`、`/capabilities`、`/cancel` 的
 `CommandSpec` 与 `CommandHandler` 实现。
-不负责：渲染格式（`render.py`）、解析前缀与参数、校验权限与参数个数（dispatcher 在调用
+不负责：渲染格式（`render.py`）、解析前缀与参数、校验操作者身份与参数个数（dispatcher 在调用
 之前已经做完）、取数据的实现（`ctx.instance` / `ctx.turns`）。
 
 三条贯穿本模块的规则：
@@ -49,7 +49,7 @@ _Body = Callable[[PluginContext, CommandInvocation, "CommandsSettings"], Awaitab
 SPECS: dict[str, CommandSpec] = {
     "help": CommandSpec(
         name="help",
-        description="列出全部可用命令及其用法、说明与权限需求。",
+        description="列出全部可用命令及其用法、说明与操作者要求。",
         aliases=("h",),
     ),
     "config": CommandSpec(

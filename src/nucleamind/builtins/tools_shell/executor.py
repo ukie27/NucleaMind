@@ -35,7 +35,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolInvocation,
@@ -90,7 +89,6 @@ EXEC_SPEC: Final = ToolSpec(
         "required": ["command"],
         "additionalProperties": False,
     },
-    permissions=frozenset({PermissionKind.SHELL}),
     # 只读为假、风险最高档：一条命令能删掉整个 workspace，而 `TOL-004` 的确认策略要拦的
     # 正是这一档。「大多数命令其实只是 ls」不构成降级理由——降级意味着**所有**命令都不
     # 再被确认策略看见。

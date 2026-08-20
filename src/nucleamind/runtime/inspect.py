@@ -1,7 +1,7 @@
 """只读诊断查询：不启动实例也能回答「装了什么」「谁提供了这项能力」。
 
 职责：为 `nm plugins list` / `nm capabilities` / `nm session` 提供**不取实例锁、
-不装 orchestrator、不写 `permissions.json`** 的三条查询路径——`inspect_plugins()` 跑到
+不装 orchestrator**的三条查询路径——`inspect_plugins()` 跑到
 阶段 A 为止，`inspect_capabilities()` 继续跑一次注册并交出覆盖解析报告，
 `open_session_store()` 只装会话存储那一条能力。
 不负责：装配可用实例（`bootstrap.py`）、改配置（`config_edit.py`）、格式化输出
@@ -11,11 +11,8 @@
 
 **为什么不直接调 `bootstrap()`**，三条理由都是硬的：
 
-1. 它**取实例锁**。看一眼装了什么不该与正在跑的实例互斥——`nm config show` 与
-   `nm permissions` 已经立过这条规矩。
-2. 它**写 `permissions.json`**（`ledger.save()`）。只读路径只做权限判定，不保存账本；否则
-   一条不取锁的命令会与正在跑的实例抢同一个文件。
-3. 它跑 §10.1 步骤 8 的必需能力校验。一个还没配模型的实例会让 `nm capabilities` 以
+1. 它**取实例锁**。看一眼装了什么不该与正在跑的实例互斥。
+2. 它跑 §10.1 步骤 8 的必需能力校验。一个还没配模型的实例会让 `nm capabilities` 以
    「没有指定要用哪个模型」失败，而那恰恰是最需要看一眼能力表的时刻。
 
 **同样地，报告里的冲突不抛出**：`raise_if_failed()` 是启动路径的语义。对这两条命令而言，
@@ -37,7 +34,7 @@ from nucleamind.builtins.registry import BUILTIN_MANIFESTS
 from nucleamind.contracts import CapabilityKind, InstanceId, SessionStore
 from nucleamind.kernel.config import InstanceLayout, LoadedConfig, load_config
 from nucleamind.kernel.observability import EventBus, PluginStatus
-from nucleamind.kernel.plugins import LoadOutcome, PermissionLedger
+from nucleamind.kernel.plugins import LoadOutcome
 from nucleamind.kernel.registry import ResolutionReport
 from nucleamind.sdk import PluginManifest
 
@@ -155,9 +152,6 @@ async def inspect_capabilities(
     全部登记都到齐之后才算得出来（`EDG-102`：覆盖永不由加载顺序决定），没有更便宜的路。
     内建与外部插件走的仍是同一次 `wire_capabilities()`（`SDK-007`）。
 
-    **权限账本只读不写**：判定照做（一个插件的能力受不受权限影响，两条路必须给同一个
-    答案），但这里从头到尾没人调 `save()`。
-
     **跑完就把 ctx 收掉**：`setup()` 里订阅的事件与派生的后台任务在这条路上没有实例去
     停它们（`AgentInstance.stop()` 不在这条路上），因此本函数自己走一遍
     `RuntimePluginContext.shutdown()`——一条只读命令不该让进程带着几个还在跑的插件任务
@@ -194,7 +188,6 @@ async def inspect_capabilities(
             PluginRuntime(),
             env,
             resources.contexts,
-            PermissionLedger.load(layout.permissions_path),
             external_ids=[manifest.id for manifest in plan.manifests],
             # `on_disable=leave_missing` 抑制掉的能力在这里同样要缺席，否则
             # 诊断与真实启动必须应用同一份能力抑制规则，否则报告会展示不可用的能力。
@@ -265,10 +258,6 @@ async def open_session_store(
             PluginRuntime(),
             env,
             resources.contexts,
-            # **只读路径不落盘**：`nm session` 不取实例锁，让它改写 `permissions.json` 会与
-            # 正在跑的实例抢同一个文件。判定照做（会话存储插件的授权语义不能两套），
-            # 但这个账本从头到尾没人调 `save()`。
-            PermissionLedger.load(layout.permissions_path),
             external_ids=[manifest.id for manifest in external],
         )
         wiring.report.raise_if_failed()

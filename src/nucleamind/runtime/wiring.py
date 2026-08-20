@@ -142,7 +142,7 @@ async def wire_capabilities(
 ) -> Wiring:
     """注册全部 manifest 声明的能力 → 解析覆盖 → 冻结，返回装配产物。
 
-    `manifests` 默认取 `BUILTIN_MANIFESTS`。`context_for` 必填；给它一个无权限的默认桩会
+    `manifests` 默认取 `BUILTIN_MANIFESTS`。`context_for` 必填；给它一个空的默认桩会
     让测试对象悄悄进入生产路径。生产实现位于 `runtime/plugin_context.py`。
 
     **`context_for` 按 manifest 而不是按 `ProviderId` 索引**：全部内建共用

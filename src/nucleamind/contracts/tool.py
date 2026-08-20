@@ -1,8 +1,8 @@
 """工具契约：声明、调用、结果与副作用（需求 §10.5、`TOL-001`–`TOL-004`）。
 
 职责：定义工具声明 `ToolSpec`、模型发出的 `ToolCall`、带执行上下文的 `ToolInvocation`、
-产物引用 `ArtifactRef` 与结果 `ToolResult`，以及权限、风险、并发与副作用四组枚举。
-不负责：执行工具、判定权限、截断内容、调度并发——那些属于 Kernel 调用机制与具体工具
+产物引用 `ArtifactRef` 与结果 `ToolResult`，以及风险、并发与副作用三组枚举。
+不负责：执行工具、截断内容、调度并发——那些属于 Kernel 调用机制与具体工具
 实现；本模块不含任何 IO。
 
 两条不肯让步的规则：
@@ -34,7 +34,6 @@ __all__ = [
     "MAX_TOOL_RESULT_LENGTH",
     "ArtifactRef",
     "Concurrency",
-    "PermissionKind",
     "RiskLevel",
     "SideEffect",
     "ToolCall",
@@ -54,20 +53,6 @@ _TOOL_NAME_PATTERN: Final = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")
 #: 工具结果允许的两档可信度。`OPERATOR` / `USER` 在这里没有意义——工具结果既不是运维
 #: 写下的配置，也不是用户说的话；放行它们只会让 `trust` 这个字段有四种读法而只有两种后果。
 _TOOL_RESULT_TRUST: Final = frozenset({TrustLevel.SYSTEM, TrustLevel.UNTRUSTED})
-
-
-class PermissionKind(StrEnum):
-    """声明式权限（技术方案 §7.5）。
-
-    首版是「声明 + 应用级强制」，不承诺进程隔离——同进程 Python 插件可以绕过门面。
-    它的价值是让越界意图可审计、在评审与测试中可见。
-    """
-
-    FS_READ = "fs:read"
-    FS_WRITE = "fs:write"
-    NET = "net"
-    SHELL = "shell"
-    SECRET = "secret"
 
 
 class RiskLevel(StrEnum):
@@ -99,7 +84,7 @@ class SideEffect(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
-    """工具声明（`TOL-001`）：名称、描述、输入 schema、输出语义与权限需求。
+    """工具声明（`TOL-001`）：名称、描述、输入 schema、输出语义与风险信息。
 
     `read_only` 与 `risk` 冗余但不重复：前者是给调度与缓存看的硬事实，后者是给确认
     策略看的分档。两者矛盾（只读却声称会破坏）时构造直接失败，不猜哪个是真的。
@@ -108,7 +93,6 @@ class ToolSpec:
     name: str
     description: str
     parameters: JsonSchema
-    permissions: frozenset[PermissionKind] = frozenset()
     read_only: bool = False
     risk: RiskLevel = RiskLevel.MUTATING
     concurrency: Concurrency = Concurrency.PARALLEL
@@ -131,12 +115,6 @@ class ToolSpec:
                 ErrorCode.INPUT_MALFORMED,
                 "只读工具的风险等级必须是 SAFE。",
                 detail={"name": self.name, "risk": self.risk.value},
-            )
-        if self.read_only and PermissionKind.FS_WRITE in self.permissions:
-            raise NucleaError(
-                ErrorCode.INPUT_MALFORMED,
-                "只读工具不得申请写权限。",
-                detail={"name": self.name},
             )
 
 
@@ -176,7 +154,6 @@ class ToolInvocation:
     call: ToolCall
     correlation: Correlation
     timeout_ms: int
-    granted: frozenset[PermissionKind] = frozenset()
     idempotency_key: str | None = None
 
     def __post_init__(self) -> None:

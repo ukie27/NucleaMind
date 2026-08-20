@@ -39,12 +39,10 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
 )
 from nucleamind.sdk import (
     CapabilityDecl,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -70,25 +68,15 @@ __all__ = [
 CAPABILITY_NAME: Final = "openai"
 
 #: 可选的 Bearer 凭据在插件配置块里的键名（`plugins.openai-api.secrets.api_key`）。
-#: 固定成常量而不是可配置——`PermissionDecl.target` 写的就是这个名字，做成可配置会让
-#: 那条声明变成一句谎话（`D19` 的先例）。
+#: 固定成常量，使配置路径与 `ctx.secret()` 的调用点保持同源。
 SECRET_NAME: Final = "api_key"
 
 MANIFEST: Final = PluginManifest(
     id="openai-api",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_openai_api:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
-    # 只声明 secret。**不声明 `net`**：那条权限判的是出站请求，而本插件只监听——
-    # 声明一条用不上的权限会让「这个插件到底要什么」变模糊（`D21` 的先例）。
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_NAME,
-            reason="校验 HTTP 请求的 Bearer 凭据；不配就是不开鉴权（只允许回环）。",
-        ),
-    ),
     config_schema={
         "type": "object",
         "properties": {

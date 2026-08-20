@@ -21,7 +21,6 @@ from nucleamind.contracts import (
     FragmentScope,
     InstanceId,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SessionKey,
     SideEffect,
@@ -93,26 +92,6 @@ def test_read_only_tool_must_be_safe() -> None:
     assert spec(read_only=True, risk=RiskLevel.SAFE).read_only
     with pytest.raises(NucleaError):
         spec(read_only=True, risk=RiskLevel.DESTRUCTIVE)
-
-
-def test_read_only_tool_cannot_request_write_permission() -> None:
-    with pytest.raises(NucleaError):
-        spec(
-            read_only=True,
-            risk=RiskLevel.SAFE,
-            permissions=frozenset({PermissionKind.FS_WRITE}),
-        )
-
-
-def test_permission_values_match_host_api() -> None:
-    """技术方案 §7.5 的权限字符串是 manifest 的一部分，改名等于改插件接口。"""
-    assert {kind.value for kind in PermissionKind} == {
-        "fs:read",
-        "fs:write",
-        "net",
-        "shell",
-        "secret",
-    }
 
 
 def test_default_concurrency_is_parallel() -> None:

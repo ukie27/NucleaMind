@@ -34,7 +34,6 @@ _USAGE: Final = """用法：nm <命令> [参数...]
   config show        打印生效配置与每个值的来源
   session list       列出本实例的会话
   session show <id>  打印一个会话的摘要
-  permissions ...    查看与修改插件权限（list / grant / revoke / forget）
   plugins ...        列出插件、启用 / 禁用 / 移除 / 清理状态目录
   capabilities       打印覆盖解析报告（生效 / 被覆盖 / 已禁用 / 冲突）
 
@@ -136,10 +135,6 @@ def app(argv: list[str] | None = None) -> int:
         from .commands.session import session_command
 
         return _guard(lambda: session_command(options))
-    if command == "permissions":
-        from .commands.permissions import permissions_command
-
-        return _guard(lambda: permissions_command(options))
     if command == "plugins":
         from .commands.plugins import plugins_command
 

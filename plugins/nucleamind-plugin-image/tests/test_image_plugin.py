@@ -37,7 +37,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolHandler,
@@ -208,7 +207,7 @@ class TestFailuresHappenBeforeAnythingIsWritten:
     async def test_an_ungranted_context_fails_the_call_not_the_process(
         self, tmp_path: Path
     ) -> None:
-        ctx = ImageContext(tmp_path, granted=frozenset())
+        ctx = ImageContext(tmp_path)
         settings = resolve_settings({})
         tool = ImageGenerateTool(
             ctx, settings, build_store(ctx, settings, files=FakeWorkspace(tmp_path))
@@ -249,15 +248,6 @@ class TestManifest:
     def test_it_does_not_declare_a_priority(self) -> None:
         for decl in MANIFEST.capabilities:
             assert "priority" not in decl.model_fields_set
-
-    def test_it_declares_net_fs_write_and_one_named_secret(self) -> None:
-        """`fs:write` 是因为 `FileAccess` 没有 `write_bytes`——如实声明而不是绕道。"""
-        assert {(p.kind, p.target) for p in MANIFEST.permissions} == {
-            (PermissionKind.NET, ""),
-            (PermissionKind.FS_WRITE, ""),
-            (PermissionKind.SECRET, "api_key"),
-        }
-        assert all(p.reason.strip() for p in MANIFEST.permissions)
 
     def test_the_tool_is_not_read_only(self) -> None:
         """它写文件、花钱，而且同一个 prompt 两次调用的产物不同。"""

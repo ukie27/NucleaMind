@@ -5,7 +5,7 @@
 兼容；产出可直接喂给诊断的 `PluginInventory`。
 不负责：发现候选（`kernel/plugins/discovery.py`）、导入 `setup` 与注册能力
 （`D27`，走 `runtime/wiring.py` 那条既有路径）、依赖拓扑、`config_schema` 逐字段校验、
-权限授予（`D26`）。
+插件运行上下文的构造。
 
 **这是 `R5` 的落点**，与 `wiring.py` / `introspection.py` 同一条理由：manifest 的类型与
 校验在 `sdk/`，而 `R2` 禁止 `kernel/` import 它，因此「候选 → manifest」的翻译只能发生在

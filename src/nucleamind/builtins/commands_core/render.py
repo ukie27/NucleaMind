@@ -61,11 +61,7 @@ def _usage(spec: CommandSpec, prefix: str) -> str:
 
 
 def render_help(specs: Sequence[CommandSpec], prefix: str) -> str:
-    """全部命令的用法与说明（`CMD-001`：名称、参数形式、说明、权限需求可被统一列出）。
-
-    四样都出现在输出里：`operator_only` 标 `[管理员]`、`permissions` 逐条列出——
-    只印名字和说明，用户就只能靠敲一次来发现自己没权限。
-    """
+    """全部命令的用法与说明；仅操作者命令标记为 ``[管理员]``。"""
     if not specs:
         return "当前没有可用的命令。"
     lines = ["可用命令："]
@@ -75,9 +71,6 @@ def render_help(specs: Sequence[CommandSpec], prefix: str) -> str:
         lines.append(f"      {spec.description}")
         if spec.aliases:
             lines.append(f"      别名：{', '.join(prefix + a for a in sorted(spec.aliases))}")
-        if spec.permissions:
-            needs = ", ".join(sorted(p.value for p in spec.permissions))
-            lines.append(f"      需要权限：{needs}")
         for param in spec.parameters:
             lines.append(f"      {param.name}：{param.description}")
     return "\n".join(lines)

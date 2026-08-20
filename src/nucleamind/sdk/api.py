@@ -1,9 +1,9 @@
 """Host API：插件与 Kernel 之间的注册面与受限运行时（技术方案 §7.5）。
 
-职责：声明 `NucleaAPI`（恰好 10 个注册方法 + `ctx`）、受限的 `PluginContext` 及其四个
+职责：声明 `NucleaAPI`（恰好 10 个注册方法 + `ctx`）、`PluginContext` 及其四个
 资源访问器 Protocol（`fs` / `net` / `shell` / `secret`），以及配套的 `HttpResponse`、
 `ShellResult`。
-不负责：实现注册与冲突判定、构造 `PluginContext`、执行权限判定或决定插件加载结果。
+不负责：实现注册与冲突判定、构造 `PluginContext` 或决定插件加载结果。
 这些分别属于 Kernel 与 Runtime；本模块只有公开签名和纯数据类型。
 
 `SecretStr`、`InstanceView` 与 `TurnControl` 位于 `contracts`，因为 Kernel 也需要创建或实现
@@ -15,11 +15,9 @@
 - **10 个注册方法与 `CapabilityKind` 的 10 个取值一一对应**，不多不少。多出一个方法就等于
   多出一类没有冲突语义的能力（`CAPABILITY_ARITY` 会 KeyError），少一个就等于某类能力
   只能靠 Kernel 内部特权注册——那正是 `BAS-005`「内建能力不享受特权」要堵的路。
-- **权限是声明式 + 应用级强制，不是进程隔离**。访问器只在 manifest 声明且配置授权后
-  才会被构造，否则属性访问抛 `PERMISSION_DENIED`。但同进程 Python 插件可以绕过这些门面
-  直接 `import os`——这不是隐含前提，是必须写在文档里的诚实声明（技术方案 §7.5、§13.7）。
-  它的价值是让声明的资源意图可审计、在评审与测试中可见。需要更严格控制时使用可选独立
-  宿主或部署隔离，不把它变成极简 Kernel 的必备职责。
+- **安装并启用插件即表示完全信任它**。资源访问器提供一致的路径、超时、SSRF 防护和密钥
+  封装，但不是权限或进程隔离；插件也可以直接使用 Python/OS API。需要隔离时应使用独立
+  进程、容器或部署边界，而不是扩张同进程 Host API。
 - **后台任务只能经 `ctx.spawn_task()` 创建**。Host API 不暴露裸 `asyncio.create_task`，
   否则「这个任务是谁的」在禁用插件时就无从判定，`EDG-105` 的痕迹清理也就无从谈起。
 """
@@ -103,7 +101,7 @@ class ShellResult:
 
 @runtime_checkable
 class FileAccess(Protocol):
-    """文件访问门面，需要 `fs:read` / `fs:write` 权限（§7.5、`EDG-405`）。
+    """受工作区边界约束的文件访问服务（`EDG-405`）。
 
     所有路径都相对于插件被授予的根，解析后必须落在允许根内（`realpath` 之后重新校验，
     覆盖符号链接、`..`、Windows 大小写与重解析点）。绝对路径一律拒绝——接受绝对路径就
@@ -113,15 +111,15 @@ class FileAccess(Protocol):
     async def read_text(self, path: str) -> str:
         """读取文本文件（UTF-8）。
 
-        **异常约定**：越界抛 `PERMISSION_PATH_OUTSIDE_WORKSPACE`；未授权抛
-        `PERMISSION_DENIED`；不存在或读失败抛 `PERSISTENCE_READ_FAILED`。
+        **异常约定**：越界抛 `PERMISSION_PATH_OUTSIDE_WORKSPACE`；不存在或读失败抛
+        `PERSISTENCE_READ_FAILED`。
         """
         ...
 
     async def write_text(self, path: str, content: str) -> None:
-        """原子写入文本文件（临时文件 + 替换），需要 `fs:write`。
+        """原子写入文本文件（临时文件 + 替换）。
 
-        **异常约定**：同 `read_text()` 的越界与授权规则；写失败抛
+        **异常约定**：同 `read_text()` 的越界规则；写失败抛
         `PERSISTENCE_WRITE_FAILED`。不得留下半份文件。
         """
         ...
@@ -139,7 +137,7 @@ class FileAccess(Protocol):
         ...
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        """原子写入二进制文件，需要 `fs:write`。**异常约定**同 `write_text()`。"""
+        """原子写入二进制文件。**异常约定**同 `write_text()`。"""
         ...
 
     async def list_dir(self, path: str) -> tuple[str, ...]:
@@ -153,7 +151,7 @@ class FileAccess(Protocol):
 
 @runtime_checkable
 class HttpAccess(Protocol):
-    """出网门面，需要 `net` 权限，内部走 SSRF 守卫（§7.5、`EDG-406`）。"""
+    """带 SSRF 守卫的 HTTP 服务（`EDG-406`）。"""
 
     async def request(
         self,
@@ -168,8 +166,7 @@ class HttpAccess(Protocol):
         """发起一次 HTTP 请求。
 
         解析出的 IP 与**每一次重定向**的目标都会被重新校验，私有网段与云元数据地址一律
-        拒绝。这是插件唯一的出网路径：直接用 httpx 当然也能连出去，但那样就绕过了守卫，
-        评审时能一眼看见（这正是应用级权限的意义）。
+        拒绝。插件仍可直接使用其他网络库；安装并启用插件即表示信任其代码。
 
         `max_bytes` 给响应体一个**下载上界**：到量即停止读取并断开，
         `HttpResponse.truncated` 标着。不给就整份读完。
@@ -183,8 +180,8 @@ class HttpAccess(Protocol):
         常见，守卫会按设计拒掉），`openai-api` 产出 SSE 用的是 aiohttp。为一个没有消费者
         的用例设计一个要长期兼容的接口，只能设计错。
 
-        **异常约定**：未授权抛 `PERMISSION_DENIED`；目标被守卫拒绝抛
-        `PERMISSION_DENIED` 并在 `detail` 说明原因；网络失败抛 `EXTERNAL_SERVICE` 类错误
+        **异常约定**：目标被守卫拒绝抛 `PERMISSION_DENIED` 并在 `detail` 说明原因；
+        网络失败抛 `EXTERNAL_SERVICE` 类错误
         并如实标注 `retryable`；超时抛 `TIMEOUT` 类错误。**非 2xx 不是异常**——它是结果，
         由调用方按业务判断。`max_bytes` 非正抛 `INPUT_MALFORMED`。
         """
@@ -193,7 +190,7 @@ class HttpAccess(Protocol):
 
 @runtime_checkable
 class ShellAccess(Protocol):
-    """子进程门面，需要 `shell` 权限（§7.5、`EDG-404`、`NFR-605`）。"""
+    """带工作区、环境和超时约束的子进程服务（`EDG-404`、`NFR-605`）。"""
 
     async def run(
         self,
@@ -235,12 +232,7 @@ class EventSubscriber(Protocol):
 
 @runtime_checkable
 class PluginContext(Protocol):
-    """插件拿到的受限运行时（§7.5）。
-
-    四个资源访问器是 `property` 而不是方法：**未授权时属性访问就抛**
-    `PERMISSION_DENIED`，插件拿不到一个「看起来能用、调用才失败」的对象。这让越权在
-    第一次触碰时就暴露，而不是在某个罕见分支里。
-    """
+    """插件拿到的宿主运行时；它提供服务和生命周期所有权，不提供安全隔离。"""
 
     @property
     def plugin_id(self) -> str:
@@ -265,7 +257,7 @@ class PluginContext(Protocol):
 
     @property
     def events(self) -> EventSubscriber:
-        """事件订阅面。它不需要权限声明：事件流是只读的可观测性，不是资源访问。"""
+        """事件订阅面。"""
         ...
 
     def spawn_task(self, coro: Awaitable[None], *, name: str) -> None:
@@ -283,26 +275,24 @@ class PluginContext(Protocol):
 
     @property
     def fs(self) -> FileAccess:
-        """文件访问器。需要 `fs:read` / `fs:write` 权限，否则**属性访问**抛
-        `PERMISSION_DENIED`。"""
+        """限定在 workspace 内的文件访问器。"""
         ...
 
     @property
     def net(self) -> HttpAccess:
-        """出网访问器。需要 `net` 权限，否则属性访问抛 `PERMISSION_DENIED`。"""
+        """带 URL 与 SSRF 检查的出网访问器。"""
         ...
 
     @property
     def shell(self) -> ShellAccess:
-        """子进程访问器。需要 `shell` 权限，否则属性访问抛 `PERMISSION_DENIED`。"""
+        """带 cwd、环境、超时和输出上界的子进程访问器。"""
         ...
 
     def secret(self, name: str) -> SecretStr:
-        """取一个凭据。需要 `secret:<name>` 权限。
+        """按名字取得本插件配置的凭据。
 
-        **异常约定**：未声明或未授权抛 `PERMISSION_DENIED`；已授权但配置里没有该值抛
-        `CONFIG_SECRET_MISSING`——两者必须可区分，否则用户不知道该去改权限还是去补配置。
-        返回值默认渲染为掩码，明文需 `reveal()`。
+        **异常约定**：配置里没有该值时抛 `CONFIG_SECRET_MISSING`。返回值默认渲染为掩码，明文需
+        `reveal()`。
         """
         ...
 
@@ -316,8 +306,6 @@ class PluginContext(Protocol):
         由 `runtime/` 特权注册——`BAS-005`「内建能力不享受特权」当场破例，而第三方也就
         永远写不了 `/status` 这类命令。**这类命令本来就该是插件能写的东西。**
 
-        它**不是**资源访问器，因此不需要权限声明也不会抛 `PERMISSION_DENIED`：事件流与
-        诊断是只读的可观测性，与 `events` 同一档（见 `EventSubscriber` 的说明）。
         `config_document()` 是唯一越过 `CFG-002` 的成员，但明文凭据结构性地不在那份文档里
         （配置树自始至终持有 `${VAR}` 字面量）。
         """

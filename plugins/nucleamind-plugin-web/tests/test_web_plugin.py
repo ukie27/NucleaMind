@@ -28,7 +28,6 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
     SideEffect,
     ToolHandler,
     ToolSpec,
@@ -174,7 +173,7 @@ class TestFetch:
         assert result.error is not None
 
     async def test_an_ungranted_context_fails_the_call_not_the_process(self) -> None:
-        ctx = WebContext(StubNet(), granted=frozenset())
+        ctx = WebContext(StubNet())
         tool = WebFetchTool(ctx, resolve_settings({}))
         result = await tool.execute(invocation(FETCH_TOOL, {"url": "https://e.com"}), ManualCancel())
         assert result.ok is False
@@ -243,7 +242,7 @@ class TestSearch:
             del request
             return httpx.Response(200, text="<html></html>")
 
-        ctx = WebContext(granted=frozenset({PermissionKind.NET}))
+        ctx = WebContext()
         tool = WebSearchTool(
             ctx, resolve_settings({}), transport=httpx.MockTransport(handle)
         )
@@ -325,13 +324,6 @@ class TestManifest:
         for decl in MANIFEST.capabilities:
             assert "priority" not in decl.model_fields_set
 
-    def test_permissions_are_net_and_one_named_secret(self) -> None:
-        assert {(p.kind, p.target) for p in MANIFEST.permissions} == {
-            (PermissionKind.NET, ""),
-            (PermissionKind.SECRET, "api_key"),
-        }
-        assert all(p.reason.strip() for p in MANIFEST.permissions)
-
     def test_the_config_schema_forbids_unknown_keys(self) -> None:
         assert CONFIG_SCHEMA["additionalProperties"] is False
 
@@ -401,7 +393,6 @@ class TestRegistration:
     def test_both_tools_are_read_only_and_safe(self) -> None:
         for spec in (fetch_spec(), search_spec()):
             assert spec.read_only is True
-            assert spec.permissions == frozenset({PermissionKind.NET})
 
 
 class TestFetchToolContract(ToolContract):
@@ -424,7 +415,7 @@ class TestSearchToolContract(ToolContract):
             del request
             return httpx.Response(200, text="<html></html>")
 
-        ctx = WebContext(granted=frozenset({PermissionKind.NET}))
+        ctx = WebContext()
         return search_spec(), WebSearchTool(
             ctx, resolve_settings({}), transport=httpx.MockTransport(handle)
         )

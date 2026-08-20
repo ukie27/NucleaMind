@@ -73,12 +73,6 @@ def test_list_is_read_only_and_needs_no_permission() -> None:
     """任务表已经在内存里，列出来不碰任何文件。一条用不上的 `fs:read` 只会稀释权限清单。"""
     spec = list_spec()
     assert spec.read_only is True
-    assert spec.permissions == frozenset()
-
-
-def test_write_tools_declare_fs_write() -> None:
-    for spec in (schedule_spec(), cancel_spec()):
-        assert any(kind.value.startswith("fs:write") for kind in spec.permissions)
 
 
 # ------------------------------------------------------------------------------ 排期

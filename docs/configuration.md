@@ -17,7 +17,6 @@
 ~/.nucleamind/default/
 ├── config.json            # 你的配置（nm init 建，nm plugins enable 改，加载路径只读）
 ├── config.schema.json     # 派生 JSON Schema，供编辑器补全，运行期忽略
-├── permissions.json       # 权限账本（见 permissions.md）
 ├── instance.lock          # 实例锁，同一实例目录同时只跑一个进程
 ├── sessions/              # 内建会话存储（见 session-storage.md）
 ├── plugins/<插件 id>/     # 每个插件的状态目录（ctx.state_dir）

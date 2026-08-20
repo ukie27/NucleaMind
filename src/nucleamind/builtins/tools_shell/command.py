@@ -23,8 +23,8 @@ PowerShell，只会让模型按 sh 语法写的命令以另一种方式失败。
 
 **不做命令内容的安全过滤**。legacy 的 `_guard_command` 维护了一张 `rm -rf` 之类的模式
 黑名单，本内建刻意不移植：模型能写出的绕过形式是无穷的（换行、变量展开、base64 管道），
-而一张挡不住的黑名单会让人以为挡住了。真正的边界是 workspace（cwd 限定）、权限声明
-（`shell` 权限可以整个不授予）与 `TOL-004` 的确认策略——`shell.exec` 因此是
+而一张挡不住的黑名单会让人以为挡住了。真正的边界是 workspace（cwd 限定）与
+`TOL-004` 的确认策略——`shell.exec` 因此是
 `DESTRUCTIVE` + `EXCLUSIVE`。
 """
 

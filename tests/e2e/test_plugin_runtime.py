@@ -439,7 +439,7 @@ def test_a_setup_that_cannot_be_loaded_is_reported_per_provider(
         {
             "id": "broken-setup",
             "version": "1.0.0",
-            "sdk_range": ">=1.0.0,<2.0.0",
+            "sdk_range": ">=2.0.0,<3.0.0",
             "setup": "nucleamind_plugin_echo_tool:no_such_function",
             "capabilities": [{"kind": "tool", "name": "broken.thing"}],
         },

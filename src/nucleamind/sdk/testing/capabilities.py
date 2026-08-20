@@ -1,4 +1,4 @@
-"""能力边界上的 Fake：工具、Channel、Context、Compactor、Memory、CLI 与受限运行时。
+"""能力边界上的 Fake：工具、Channel、Context、Compactor、Memory、CLI 与插件上下文。
 
 职责：为 `TOOL` / `CHANNEL` / `CONTEXT` / `MEMORY` / `CLI_ENTRY` 与 `PluginContext` 各提供
 一个**最小合规**的参考实现，供契约测试基类与插件作者直接使用。
@@ -11,10 +11,8 @@
 `ToolContract` 与 `ChannelContract` 自 `D05` 发布至今都没有这样的东西，`D15` 与
 `tests/sdk/` 因此各自私下写了一份。两个入口都由 `sdk.testing` 统一导出。
 
-**`FakePluginContext` 的权限语义是认真的**（不是空壳）：四个资源访问器只有在构造时显式
-授予才拿得到，否则**属性访问**就抛 `PERMISSION_DENIED`——与 `sdk/api.py` 写死的语义一致。
-这让 `D26` 的权限模型在落地之前就有一个可对照的行为基准，也让插件作者能在没有 Kernel 的
-情况下测出自己的越权路径。
+`FakePluginContext` 只提供不涉及外部资源的参考实现。文件、网络与进程访问仍需插件测试
+自行注入窄替身，避免测试在不知情时执行真实副作用。
 """
 
 from __future__ import annotations
@@ -39,7 +37,6 @@ from nucleamind.contracts import (
     JsonValue,
     NucleaError,
     OutboundMessage,
-    PermissionKind,
     RiskLevel,
     SecretStr,
     SessionKey,
@@ -355,12 +352,7 @@ class FakeTurnControl:
 
 
 class FakePluginContext:
-    """最小合规 `PluginContext`，权限拒绝语义与生产契约一致。
-
-    四个资源访问器是 property：未授予时**属性访问**就抛 `PERMISSION_DENIED`，
-    插件拿不到“看起来能用、调用才失败”的对象。Fake 不实现真实 fs/net/shell I/O；测试若
-    显式授权这些资源，访问时会得到 `NotImplementedError`，避免伪装成生产资源门面。
-    """
+    """最小合规 `PluginContext`；资源 I/O 需要测试显式注入自己的替身。"""
 
     def __init__(
         self,
@@ -368,7 +360,6 @@ class FakePluginContext:
         *,
         config: Mapping[str, JsonValue] | None = None,
         state_dir: Path | None = None,
-        granted: frozenset[PermissionKind] = frozenset(),
         secrets: Mapping[str, str] | None = None,
         instance: FakeInstanceView | None = None,
         turns: FakeTurnControl | None = None,
@@ -376,7 +367,6 @@ class FakePluginContext:
         self._plugin_id = plugin_id
         self._config = dict(config or {})
         self._state_dir = state_dir or Path(".")
-        self._granted = granted
         self._secrets = dict(secrets or {})
         self._events = RecordingEventSubscriber()
         #: `D22`：诊断视图与 turn 控制面。**不需要权限**（与 `events` 同一档：只读的
@@ -419,40 +409,24 @@ class FakePluginContext:
         del coro
         self.tasks.append(name)
 
-    def _require(self, permission: PermissionKind) -> None:
-        if permission not in self._granted:
-            raise NucleaError(
-                ErrorCode.PERMISSION_DENIED,
-                "插件未被授予该权限。",
-                detail={"plugin": self._plugin_id, "permission": permission.value},
-            )
-
     @property
     def fs(self) -> object:
-        self._require(PermissionKind.FS_READ)
-        raise NotImplementedError("FakePluginContext 不提供真实文件访问（D26 落地）。")
+        raise NotImplementedError("FakePluginContext 不提供真实文件访问。")
 
     @property
     def net(self) -> object:
-        self._require(PermissionKind.NET)
-        raise NotImplementedError("FakePluginContext 不提供真实出网（D26 落地）。")
+        raise NotImplementedError("FakePluginContext 不提供真实出网。")
 
     @property
     def shell(self) -> object:
-        self._require(PermissionKind.SHELL)
-        raise NotImplementedError("FakePluginContext 不提供真实子进程（D26 落地）。")
+        raise NotImplementedError("FakePluginContext 不提供真实子进程。")
 
     def secret(self, name: str) -> SecretStr:
-        """取一个凭据。
-
-        **未授权与「授权了但没配」必须可区分**（`sdk/api.py` 写死的约定）：前者
-        `PERMISSION_DENIED`，后者 `CONFIG_SECRET_MISSING`——用户才知道该去改权限还是补配置。
-        """
-        self._require(PermissionKind.SECRET)
+        """取一个测试凭据；缺失时与生产上下文使用同一错误码。"""
         if name not in self._secrets:
             raise NucleaError(
                 ErrorCode.CONFIG_SECRET_MISSING,
-                "已授权但配置里没有该凭据。",
+                "配置里没有该凭据。",
                 detail={"plugin": self._plugin_id, "secret": name},
             )
         return SecretStr(self._secrets[name])

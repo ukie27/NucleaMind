@@ -11,8 +11,7 @@
 `D36`–`D40` 连着五轮漏改 CI 清单那件事说明纪律不够用，而这个仓库对纪律的一贯答案是把它
 变成守卫。
 
-`D52` 另钉住权限文档的三个定位事实：启用插件即信任代码、权限不是完整行为监控、不新增
-监听权限。这里检查稳定术语而不是整段文案，防止后续又把它写回「待补安全沙箱」。
+另钉住插件开发文档的信任事实：启用插件即完全信任代码，资源服务不是安全沙箱。
 
 **每条断言都配一个自证用例**（`test_the_docs_have_something_to_check`）：正则写错、
 文档被改成别的结构时，这些断言会以「零项全部通过」的形式静默失效——那是这类测试最常见的
@@ -38,7 +37,7 @@ DOCS = REPO_ROOT / "docs"
 CONFIG_DOC = DOCS / "configuration.md"
 CLI_DOC = DOCS / "cli.md"
 GETTING_STARTED = DOCS / "getting-started.md"
-PERMISSIONS_DOC = DOCS / "permissions.md"
+PLUGIN_DEVELOPMENT = DOCS / "plugin-development.md"
 ROOT_README = REPO_ROOT / "README.md"
 CLI_MAIN = REPO_ROOT / "src" / "nucleamind" / "runtime" / "cli" / "main.py"
 
@@ -172,13 +171,12 @@ def test_the_top_level_usage_mentions_every_dispatched_subcommand() -> None:
     assert missing == set()
 
 
-def test_permissions_doc_keeps_the_open_plugin_trust_model() -> None:
-    """D52 的定位不许退回「Kernel 监控并隔离插件行为」."""
-    text = PERMISSIONS_DOC.read_text(encoding="utf-8")
-    assert "安装并启用一个插件，等同于信任它" in text
-    assert "不是 Kernel 观测到的完整行为清单" in text
-    assert "`listen` / `net.listen`" in text
-    assert "`plugins.enabled`、`plugins.disable`" in text
+def test_plugin_docs_keep_the_full_trust_model() -> None:
+    """信任边界不许退回一个无法强制的应用级权限系统。"""
+    text = PLUGIN_DEVELOPMENT.read_text(encoding="utf-8")
+    assert "安装并启用即授予完整信任" in text
+    assert "并不是安全沙箱" in text
+    assert "容器或操作系统策略" in text
 
 
 @pytest.mark.parametrize("doc", [GETTING_STARTED, ROOT_README], ids=lambda path: path.name)

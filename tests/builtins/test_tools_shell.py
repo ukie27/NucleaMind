@@ -61,12 +61,9 @@ from nucleamind.builtins.tools_shell.process import (
     run_process,
 )
 from nucleamind.contracts import (
-    Builtin,
-    CapabilityKind,
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     ProviderId,
     RiskLevel,
     SideEffect,
@@ -75,8 +72,7 @@ from nucleamind.contracts import (
     ToolInvocation,
     ToolSpec,
 )
-from nucleamind.kernel.registry import CapabilityRegistry, RegistrationBatch, resolve_into
-from nucleamind.kernel.turn.invoker import RegisteredTool, ToolExecutor, tools_from
+from nucleamind.kernel.turn.invoker import tools_from
 from nucleamind.runtime.wiring import wire_capabilities
 from nucleamind.sdk import PluginContext
 from nucleamind.sdk.testing import (
@@ -578,46 +574,6 @@ class TestSpawnFailure:
         assert result.data["exit_code"] == -1
 
 
-# --------------------------------------------------------------------------- 权限
-
-
-class TestPermissionGate:
-    """未授予 `shell` 权限时工具不可用（`NFR-307`）。"""
-
-    async def test_without_the_shell_permission_the_call_is_denied(self, tmp_path: Path) -> None:
-        """走真实的 `ToolExecutor`：权限判定归 kernel，工具自己不抄一遍。
-
-        断言 `side_effect=NONE` 是关键——权限在**执行之前**判，进程根本没被碰过。
-        """
-        registry = CapabilityRegistry()
-        executor = make_executor(make_workspace(tmp_path))
-        with RegistrationBatch(registry, provider=Builtin()) as batch:
-            batch.add(
-                kind=CapabilityKind.TOOL,
-                name=EXEC_SPEC.name,
-                payload=RegisteredTool(spec=EXEC_SPEC, handler=executor),
-            )
-        resolve_into(registry).raise_if_failed()
-
-        # 实例级授权里**没有** SHELL：模拟运维没给这台实例开 shell 权限。
-        invoker = ToolExecutor(
-            tools_from(registry), granted=frozenset(PermissionKind) - {PermissionKind.SHELL}
-        )
-        result = await invoker.invoke(
-            ToolInvocation(
-                call=ToolCall(call_id="c1", name=EXEC_SPEC.name, arguments={"command": "exit 0"}),
-                correlation=make_correlation(),
-                timeout_ms=5_000,
-                granted=frozenset(),
-            ),
-            ManualCancel(),
-        )
-        assert result.ok is False
-        assert result.error is not None
-        assert result.error.code is ErrorCode.PERMISSION_DENIED
-        assert result.side_effect is SideEffect.NONE, "权限在执行之前判，进程没被碰过"
-
-
 # --------------------------------------------------------------------------- 退出码语义
 
 
@@ -771,10 +727,6 @@ class TestRegistration:
         assert TOOLS_SHELL.id == "tools-shell"
         assert len(TOOLS_SHELL.capabilities) == 1
         assert TOOLS_SHELL.capabilities[0].name == TOOL_NAME
-
-    def test_the_manifest_requires_shell_permission(self) -> None:
-        assert len(TOOLS_SHELL.permissions) == 1
-        assert TOOLS_SHELL.permissions[0].kind is PermissionKind.SHELL
 
     def test_the_spec_is_destructive_and_exclusive(self) -> None:
         """`RiskLevel.DESTRUCTIVE` + `Concurrency.EXCLUSIVE`（与 `fs.write` 同一档）。"""

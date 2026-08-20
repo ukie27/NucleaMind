@@ -8,8 +8,8 @@
 **它取代的是被 `D33` 删掉的 `legacy/channels/discord/`**，但不是移植：
 
 - 旧实现的**配对码流程**没搬。它服务的 pairing store 与 WebUI 审批界面在 `D31` 已经删了，
-  搬过来就是一条走不通的分支。新层的等价物是 `allow_from` 白名单（明确拒绝）+
-  `permissions.json` 的 TOFU 模型。**代价如实说**：陌生人发 DM 从「收到一个配对码」
+  搬过来就是一条走不通的分支。新层使用 `allow_from` 白名单明确拒绝未知来源。
+  **代价如实说**：陌生人发 DM 从「收到一个配对码」
   变成「被静默忽略」。
 - 旧实现注册的一整套 **Discord 原生 slash command** 没搬。命令只有
   `kernel/routing/dispatcher.py` 一个来源——再注册一套会让「命令有几个来源」变成两个
@@ -39,12 +39,11 @@ from __future__ import annotations
 
 from typing import Final
 
-from nucleamind.contracts import CapabilityKind, ErrorCode, NucleaError, PermissionKind, SecretStr
+from nucleamind.contracts import CapabilityKind, ErrorCode, NucleaError, SecretStr
 from nucleamind.sdk import (
     CapabilityDecl,
     ManifestJsonSchema,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -135,31 +134,11 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="discord",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_discord:setup",
     # **不写 `overrides`**（它不取代任何内建）、**不写 `priority`**（默认值 100 会被原样
     # 采纳，而内建基准是 0——`D16` 记的坑）。
     capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
-    # **不声明 `net`**：它判的是经 `ctx.net` 门面的出站请求，而 `discord.py` 自己开连接、
-    # 一个字节都不过门面。声明一条门面根本不经过的权限会让「这个插件到底要什么」变模糊
-    # （`openai-api` 拒绝声明 `net` 的同一条理由）。空档如实写在模块 docstring 里。
-    # **`fs:read` 反过来是真的经门面**（`D47` 的附件上传），因此如实声明。
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_TOKEN,
-            reason="Discord bot token，用于登录 gateway。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_PROXY_PASSWORD,
-            reason="HTTP 代理的密码；没配代理时不会取用。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.FS_READ,
-            reason="读 workspace 里的附件字节，把它们上传到频道（D47）。",
-        ),
-    ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：一个聊天平台连不上（token 过期、Discord 挂了、代理不通）不该让
     # CLI 与其它 Channel 一起下线。`PLG-004`：失败的后果由装配根决定。

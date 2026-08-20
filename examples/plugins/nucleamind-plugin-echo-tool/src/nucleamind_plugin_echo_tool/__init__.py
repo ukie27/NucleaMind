@@ -44,12 +44,11 @@ MANIFEST: Final = PluginManifest(
     version="0.1.0",
     # SDK 兼容区间由**插件**声明，宿主据此判断要不要加载（`SDK-005`）。落在区间外时
     # 拒绝加载并报 `PLUGIN_SDK_INCOMPATIBLE`，不带病运行。
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_echo_tool:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name=TOOL_NAME),),
     # 一个权限也不声明：本插件纯内存。声明一条用不到的权限就是把「越界意图可审计」
     # 这件事变得不可审计（内建 `context_basic` 的同一条理由）。
-    permissions=(),
     config_schema={
         "type": "object",
         "properties": {

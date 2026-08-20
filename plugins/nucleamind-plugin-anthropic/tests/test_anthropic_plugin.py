@@ -28,7 +28,6 @@ from importlib.metadata import entry_points
 import httpx
 import pytest
 from _support import (
-    _GRANTED,
     BASE_URL,
     MODEL_ID,
     SENTINEL_KEY,
@@ -46,7 +45,6 @@ from nucleamind_plugin_anthropic import (
     ENTRY_PROPERTIES,
     MANIFEST,
     MODEL_ENTRY_KEYS,
-    SECRET_NAME,
     THINKING_MODES,
     AnthropicModelProvider,
     error_for_event,
@@ -80,7 +78,6 @@ from nucleamind.contracts import (
     ErrorCode,
     ModelCapability,
     NucleaError,
-    PermissionKind,
 )
 from nucleamind.sdk.testing import FakePluginContext, ManualCancel, ModelProviderContract
 
@@ -242,7 +239,7 @@ class TestCredentialNeverLeaks:
 
     def test_auth_none_never_touches_the_secret(self) -> None:
         """本地 relay 没有密钥，去要一个必然缺失的凭据只会让插件加载失败。"""
-        ctx = FakePluginContext(plugin_id=MANIFEST.id, config={CONFIG_AUTH_KEY: "none"}, granted=_GRANTED)
+        ctx = FakePluginContext(plugin_id=MANIFEST.id, config={CONFIG_AUTH_KEY: "none"})
         settings = resolve_settings(ctx)
         assert read_credential(ctx, settings) is None
 
@@ -413,10 +410,6 @@ class TestManifest:
     def test_priority_is_not_declared(self) -> None:
         """写了默认值 100 会被原样采纳，而内建基准是 0（`D16` 记的坑）。"""
         assert "priority" not in MANIFEST.capabilities[0].model_fields_set
-
-    def test_permissions_are_exactly_net_and_the_named_secret(self) -> None:
-        declared = {(item.kind, item.target) for item in MANIFEST.permissions}
-        assert declared == {(PermissionKind.NET, ""), (PermissionKind.SECRET, SECRET_NAME)}
 
     def test_config_schema_entry_properties_match_the_settings_table(self) -> None:
         """两处都「自洽」而对不上时，一个写对了的配置会在阶段 A 被 schema 拒掉。"""

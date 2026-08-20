@@ -28,7 +28,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SessionKey,
     SideEffect,
@@ -130,7 +129,6 @@ def schedule_spec() -> ToolSpec:
             "additionalProperties": False,
         },
         # 排期会把任务表整份写回磁盘（`store.py`），因此如实声明 `fs:write`。
-        permissions=frozenset({PermissionKind.FS_WRITE}),
         read_only=False,
         risk=RiskLevel.MUTATING,
     )
@@ -144,7 +142,6 @@ def list_spec() -> ToolSpec:
         parameters={"type": "object", "properties": {}, "additionalProperties": False},
         # **一条权限都不要**：任务表已经在内存里（`CronScheduler` 是它的唯一持有者），
         # 列出来不碰任何文件。声明一条用不上的 `fs:read` 会让权限清单失去信息量。
-        permissions=frozenset(),
         read_only=True,
         risk=RiskLevel.SAFE,
     )
@@ -163,7 +160,6 @@ def cancel_spec() -> ToolSpec:
             "required": ["job_id"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.FS_WRITE}),
         read_only=False,
         # 取消不可撤销：任务连同它的运行历史一起消失。
         risk=RiskLevel.DESTRUCTIVE,

@@ -37,7 +37,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolResult,
@@ -149,11 +148,6 @@ class TestToolSpec:
     def test_it_runs_exclusively(self) -> None:
         """远端 server 的并发安全性未知，逐个串行是唯一不用赌的选择。"""
         assert tool_spec("mcp.files.x", "files", READ_TOOL).concurrency is Concurrency.EXCLUSIVE
-
-    def test_it_declares_no_permissions(self) -> None:
-        """远端 server 用的是它自己的进程与网络，本插件的门面一个都不经过——
-        声明一条 `net` 会暗示「它的出网受守卫约束」，而那是假的。"""
-        assert tool_spec("mcp.files.x", "files", READ_TOOL).permissions == frozenset()
 
     def test_the_remote_schema_survives(self) -> None:
         spec = tool_spec("mcp.files.read_file", "files", READ_TOOL)
@@ -330,15 +324,6 @@ class TestManifest:
 
     def test_it_does_not_declare_a_priority(self) -> None:
         assert "priority" not in MANIFEST.capabilities[0].model_fields_set
-
-    def test_it_declares_shell_net_and_one_named_secret(self) -> None:
-        """那两条权限挡不住任何东西，但声明的是**意图**——README 里如实写着。"""
-        assert {(p.kind, p.target) for p in MANIFEST.permissions} == {
-            (PermissionKind.SHELL, ""),
-            (PermissionKind.NET, ""),
-            (PermissionKind.SECRET, "api_key"),
-        }
-        assert all(p.reason.strip() for p in MANIFEST.permissions)
 
     def test_it_is_not_critical(self) -> None:
         assert MANIFEST.critical is False

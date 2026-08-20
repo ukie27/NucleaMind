@@ -1,7 +1,7 @@
 """cwd 边界守卫：把 `cwd` 参数判成 workspace 内的一个目录（`EDG-405`、`NFR-302`）。
 
 职责：`CwdGuard`——解析、双重校验（逻辑 + realpath）、渲染回相对显示路径。
-不负责：执行命令（`process.py`）、判断权限是否被授予（那在 `D26` 的 `PluginContext`）、
+不负责：执行命令（`process.py`）、
 决定 workspace 根在哪（配置交下来，见 `settings.py`）。
 
 **判据与 `tools_fs.WorkspaceGuard` 逐条相同**（`EDG-405`、`NFR-302`）：

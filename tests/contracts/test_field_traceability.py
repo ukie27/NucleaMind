@@ -103,15 +103,15 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
         ),
     ),
     ToolSpec: (
-        "§10.5 / TOL-001（名称、描述、schema、权限、输出语义）",
+        "§10.5 / TOL-001（名称、描述、schema、风险、输出语义）",
         frozenset(
-            {"name", "description", "parameters", "permissions", "read_only", "risk", "concurrency"}
+            {"name", "description", "parameters", "read_only", "risk", "concurrency"}
         ),
     ),
     ToolCall: ("§10.5 Tool Call 输入（调用 ID / 标识 / 参数）", frozenset({"call_id", "name", "arguments"})),
     ToolInvocation: (
-        "§10.5 Tool Call 输入（关联信息 / 超时 / 权限 / 幂等）",
-        frozenset({"call", "correlation", "timeout_ms", "granted", "idempotency_key"}),
+        "§10.5 Tool Call 输入（关联信息 / 超时 / 幂等）",
+        frozenset({"call", "correlation", "timeout_ms", "idempotency_key"}),
     ),
     ArtifactRef: (
         "§10.5 外部产物引用",
@@ -280,9 +280,9 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
         frozenset({"name", "description", "required", "repeated"}),
     ),
     CommandSpec: (
-        "§9.13 CMD-001（名称/参数形式/说明/权限需求）",
+        "§9.13 CMD-001（名称/参数形式/说明/操作者要求）",
         frozenset(
-            {"name", "description", "parameters", "permissions", "operator_only", "aliases"}
+            {"name", "description", "parameters", "operator_only", "aliases"}
         ),
     ),
     CommandInvocation: (

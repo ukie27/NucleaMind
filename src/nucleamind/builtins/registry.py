@@ -1,14 +1,14 @@
 """内建能力的静态清单（技术方案 §7.1、§8）。
 
 职责：以 `BUILTIN_MANIFESTS` 声明全部内建能力的 manifest——这是内建能力**唯一**的发现来源。
-不负责：导入任何 `setup` 实现、决定加载顺序、判定权限、注册能力本身。
+不负责：导入任何 `setup` 实现、决定加载顺序或注册能力本身。
 
 **manifest 写在这里而不是各内建子包里**，因为读 manifest 不该导入实现（§7.1「发现与启用
 分离」）：`import nucleamind.builtins.registry` 只需要 pydantic 与几个字面量，
 `session_jsonl` 的 `setup` 只在真正加载它时才被 `import_setup()` 拉进来。
 
 **内建不享受特权**（`BAS-005`）：这里的每一条都是普通的 `PluginManifest`，与外部插件同型，
-同样要声明 `capabilities` 与 `permissions`，同样经 `runtime/wiring.py` 翻译成 `LoadRequest`
+同样要声明 `capabilities`，同样经 `runtime/wiring.py` 翻译成 `LoadRequest`
 后走 `kernel/plugins/host.py` 那**一个** Host 注册。本目录受 `R4` 约束，只能 import
 `sdk/` 与 `contracts/`，因此这里连 registry 长什么样都看不见。
 
@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from nucleamind.contracts import CapabilityKind, PermissionKind
-from nucleamind.sdk import CapabilityDecl, PermissionDecl, PluginManifest
+from nucleamind.contracts import CapabilityKind
+from nucleamind.sdk import CapabilityDecl, PluginManifest
 
 __all__ = [
     "BUILTIN_MANIFESTS",
@@ -41,19 +41,14 @@ __all__ = [
 #: 它加载失败时实例应当直接启动失败，而不是带着一个「说完就忘」的 Agent 继续跑。
 #: `critical` 是**提供方级**的，同一份 manifest 里的全部能力共享它（`D16` 的结论）。
 #:
-#: 声明 `fs:read` / `fs:write` 而不用 `ctx.fs`：`FileAccess` 没有追加、`fsync` 与原子替换，
-#: 用它实现追加写等于每次重写整个会话文件。应用级权限的意义是让越界意图**可审计**
-#: （`sdk/api.py` 写死的诚实声明），因此如实声明比绕道更符合它。
+#: 会话存储直接使用 pathlib，因为 `FileAccess` 没有追加、`fsync` 与原子替换；用门面实现
+#: 追加写会迫使它每次重写整个会话文件。
 SESSION_JSONL: Final = PluginManifest(
     id="session-jsonl",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.session_jsonl:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.SESSION_STORE, name="jsonl"),),
-    permissions=(
-        PermissionDecl(kind=PermissionKind.FS_READ, reason="读取实例目录下的会话历史与元数据。"),
-        PermissionDecl(kind=PermissionKind.FS_WRITE, reason="追加会话历史并原子替换会话元数据。"),
-    ),
     config_schema={
         "type": "object",
         "properties": {
@@ -79,7 +74,7 @@ SESSION_JSONL: Final = PluginManifest(
 CONTEXT_BASIC: Final = PluginManifest(
     id="context-basic",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.context_basic:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.CONTEXT, name="basic"),),
     config_schema={
@@ -114,31 +109,15 @@ CONTEXT_BASIC: Final = PluginManifest(
 #: `critical=True`：没有模型就没有 Agent。一份写错的 `base_url`、一个没导出的
 #: `OPENAI_API_KEY`，都应当在启动时被指出来，而不是等用户发出第一条消息才炸。
 #:
-#: **两条权限都如实声明**：
-#: - `net`：直接用 httpx 而不是 `ctx.net`。`HttpAccess` 的 SSRF 守卫会拒绝私有网段，
-#:   而本内建的交付要点就包含本地 vLLM / Ollama / LM Studio。与 `session_jsonl` 用
-#:   `pathlib` 是同一条先例——门面能力不足时，诚实声明比绕道更符合「让越界意图可审计」。
-#: - `secret:api_key`：凭据只从 `ctx.secret("api_key")` 来，配置块里根本没有这个键，
+#: 直接用 httpx 而不是 `ctx.net`：模型端点由运维配置，必须支持本地 vLLM / Ollama /
+#: LM Studio，而安全客户端会拒绝私有网段。凭据只从 `ctx.secret("api_key")` 来，配置块里
 #:   `CFG-003`「明文不进配置文档」因此是结构性成立的而不是靠流程遵守。
-#:   密钥名固定为 `SECRET_NAME` 常量——做成可配置会让这条 `target` 变成一句谎话。
 MODEL_OPENAI: Final = PluginManifest(
     id="model-openai",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.model_openai:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.MODEL, name="openai"),),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.NET,
-            reason="调用 OpenAI 兼容的 Chat Completions 端点；地址由运维在配置里显式指定，"
-            "可以是本地的 vLLM / Ollama / LM Studio。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target="api_key",
-            reason="向模型端点认证。auth=\"none\" 时（本地模型服务）不会取用。",
-        ),
-    ),
     config_schema={
         "type": "object",
         "properties": {
@@ -240,14 +219,12 @@ MODEL_OPENAI: Final = PluginManifest(
 #: （`runtime/wiring.py` 的 `keep` 参数 + `tools_fs.enabled_tool_names()`）——否则
 #: `D16` 的 `CapabilityHost.finish()` 会以 `PLUGIN_LOAD_FAILED` 拒绝加载，而那个报错是对的。
 #:
-#: 两条权限如实声明而不用 `ctx.fs`：`FileAccess` 只有 `read_text` / `write_text` /
-#: `list_dir`，没有目录遍历、没有原子替换、没有按字节数截断的读，用它实现本内建等于
-#: 重写一遍它。与 `session_jsonl` 同一条先例——门面能力不足时，诚实声明比绕道更符合
-#: 「让越界意图可审计」。
+#: 文件工具直接实现自己的 workspace 守卫，因为它还需要目录遍历、原子替换和按字节数
+#: 截断读取；这些是模型工具的行为，不应依赖插件便利门面的较窄接口。
 TOOLS_FS: Final = PluginManifest(
     id="tools-fs",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.tools_fs:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.read"),
@@ -255,16 +232,6 @@ TOOLS_FS: Final = PluginManifest(
         CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.edit"),
         CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.list"),
         CapabilityDecl(kind=CapabilityKind.TOOL, name="fs.grep"),
-    ),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.FS_READ,
-            reason="读取 workspace 内的文件与目录，供 fs.read / fs.list / fs.grep 使用。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.FS_WRITE,
-            reason="原子写入 workspace 内的文件，供 fs.write / fs.edit 使用。",
-        ),
     ),
     config_schema={
         "type": "object",
@@ -314,23 +281,14 @@ TOOLS_FS: Final = PluginManifest(
 #:
 #: `critical=False`：没有 shell 工具的 Agent 仍然能对话，与 `tools_fs` 同一条理由。
 #:
-#: **只声明一条 `shell` 权限**。它是全部五种权限里最强的一个——一条命令能读能写能出网，
-#: `fs:read` / `fs:write` / `net` 在它面前都是子集，再声明一遍只会让「这个插件到底要什么」
-#: 变模糊。`NFR-307` 的「默认保守」由两件事兑现：整条权限可以不授予（那时本内建不注册），
-#: 以及子进程的环境变量默认一个都不继承（`environ.py` 是白名单，不是黑名单）。
+#: 子进程环境默认一个变量都不继承（`environ.py` 是白名单，不是黑名单）；这是真正影响
+#: 执行边界的机制，与插件授权状态无关。
 TOOLS_SHELL: Final = PluginManifest(
     id="tools-shell",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.tools_shell:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="shell.exec"),),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.SHELL,
-            reason="在 workspace 内执行运维与开发命令；cwd 限定在 workspace 根内，"
-            "子进程默认不继承父进程的任何环境变量。",
-        ),
-    ),
     config_schema={
         "type": "object",
         "properties": {
@@ -396,7 +354,7 @@ TOOLS_SHELL: Final = PluginManifest(
 COMMANDS_CORE: Final = PluginManifest(
     id="commands-core",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.commands_core:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.COMMAND, name="help"),
@@ -448,7 +406,7 @@ COMMANDS_CORE: Final = PluginManifest(
 CLI_ENTRY: Final = PluginManifest(
     id="cli-entry",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind.builtins.cli_entry:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.CLI_ENTRY, name="stdio"),

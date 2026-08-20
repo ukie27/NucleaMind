@@ -46,12 +46,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
-from nucleamind.contracts import CapabilityKind, PermissionKind
+from nucleamind.contracts import CapabilityKind
 from nucleamind.sdk import (
     CapabilityDecl,
     ManifestJsonSchema,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -213,24 +212,11 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="web",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_web:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.TOOL, name=FETCH_TOOL),
         CapabilityDecl(kind=CapabilityKind.TOOL, name=SEARCH_TOOL),
-    ),
-    permissions=(
-        # `web.fetch` 经 `ctx.net`、`web.search` 直接用 httpx——两者都是出网，因此都在这一条
-        # 声明底下。声明的是**意图**，不是「用了哪个门面」。
-        PermissionDecl(
-            kind=PermissionKind.NET,
-            reason="web.fetch 抓取模型给出的网页；web.search 访问配置好的搜索后端。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_NAME,
-            reason="需要凭据的搜索后端（tavily / brave / custom）用它鉴权。",
-        ),
     ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：没有网页工具的 Agent 仍然能对话，这与「没有模型」不是一回事。

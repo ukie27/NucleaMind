@@ -33,7 +33,6 @@ __all__ = [
     "INSTANCE_NAME_ENV",
     "LOCK_FILENAME",
     "LOGS_DIRNAME",
-    "PERMISSIONS_FILENAME",
     "PLUGINS_DIRNAME",
     "SESSIONS_DIRNAME",
     "WORKSPACE_DIRNAME",
@@ -59,7 +58,6 @@ MAX_INSTANCE_NAME_LENGTH = 64
 
 CONFIG_FILENAME = "config.json"
 LOCK_FILENAME = "instance.lock"
-PERMISSIONS_FILENAME = "permissions.json"
 
 SESSIONS_DIRNAME = "sessions"
 PLUGINS_DIRNAME = "plugins"
@@ -152,11 +150,6 @@ class InstanceLayout:
         return self.root / LOCK_FILENAME
 
     @property
-    def permissions_path(self) -> Path:
-        """`permissions.json`。`D26` 的权限决策持久化落点，`D10` 不读写。"""
-        return self.root / PERMISSIONS_FILENAME
-
-    @property
     def sessions_dir(self) -> Path:
         return self.root / SESSIONS_DIRNAME
 
@@ -224,7 +217,6 @@ class InstanceLayout:
             "root": str(self.root),
             "config": str(self.config_path),
             "lock": str(self.lock_path),
-            "permissions": str(self.permissions_path),
             "sessions": str(self.sessions_dir),
             "plugins": str(self.plugins_dir),
             "logs": str(self.logs_dir),

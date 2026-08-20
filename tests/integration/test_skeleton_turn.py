@@ -100,7 +100,6 @@ async def test_a_turn_with_a_tool_call_runs_end_to_end() -> None:
     # 工具真的被执行了，而且拿到的是它声明的权限（`ToolExecutor.prepare` 的产物）。
     assert len(echo.calls) == 1
     assert echo.calls[0].call.name == "fs.read"
-    assert echo.calls[0].granted == skeleton.executor.specs[0].permissions
 
 
 async def test_the_model_sees_the_assembled_context_and_the_declared_tools() -> None:

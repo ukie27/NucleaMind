@@ -41,12 +41,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from nucleamind.contracts import CapabilityKind, PermissionKind
+from nucleamind.contracts import CapabilityKind
 from nucleamind.sdk import (
     CapabilityDecl,
     ManifestJsonSchema,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -166,24 +165,9 @@ MANIFEST: Final = PluginManifest(
     version="0.1.0",
     # `>=1.2`：`D47` 的 `ToolResult.attachments` 是本插件产出附件的唯一通道，
     # 宿主没有它时那些图发不出去，而**静默发不出去**正是这一版要消除的东西。
-    sdk_range=">=1.2.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_image:setup",
     capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name=GENERATE_TOOL),),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.NET,
-            reason="调用配置好的图像生成端点，并取回它返回的图像。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.FS_WRITE,
-            reason="把生成的图像写进 workspace 下的落盘目录（默认 artifacts/images）。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_NAME,
-            reason="图像后端的 API key。",
-        ),
-    ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：没有图像工具的 Agent 仍然能对话。配置错误因此只表现为
     # `nm plugins` 里的一行 `PLUGIN_LOAD_FAILED`，所以校验必须在 `setup()` 里一次做完

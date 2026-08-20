@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
 from pathlib import Path
 
 import httpx
@@ -22,7 +21,6 @@ from nucleamind.builtins.tools_fs.paths import WorkspaceGuard
 from nucleamind.builtins.tools_shell.environ import BASELINE_NAMES as TOOL_BASELINE
 from nucleamind.builtins.tools_shell.process import DEFAULT_GRACE_MS as TOOL_GRACE_MS
 from nucleamind.contracts import ErrorCode, NucleaError
-from nucleamind.kernel.plugins import PluginGrants
 from nucleamind.runtime.access import (
     BASELINE_NAMES,
     DEFAULT_GRACE_MS,
@@ -72,37 +70,6 @@ def test_absolute_paths_are_rejected_unlike_the_tool_guard(tmp_path: Path) -> No
     assert caught.value.code is ErrorCode.INPUT_MALFORMED
 
 
-def test_a_narrowed_guard_only_admits_its_subtree(tmp_path: Path) -> None:
-    root = tmp_path / "ws"
-    (root / "notes").mkdir(parents=True)
-    (root / "other").mkdir()
-    guard = PathGuard(root, allowed=("notes",))
-
-    assert guard.resolve("notes/a.txt") == (root / "notes" / "a.txt").resolve()
-    with pytest.raises(NucleaError) as caught:
-        guard.resolve("other/a.txt")
-    assert caught.value.code is ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE
-
-
-def test_an_empty_target_means_the_whole_root(tmp_path: Path) -> None:
-    """授予里含空串 = 未收窄。混着写时宽的那条胜出——它本来就已经覆盖了另一条。"""
-    root = tmp_path / "ws"
-    (root / "other").mkdir(parents=True)
-    guard = PathGuard(root, allowed=("notes", ""))
-    assert guard.subtrees == ()
-    assert guard.resolve("other/a.txt") == (root / "other" / "a.txt").resolve()
-
-
-def test_a_bogus_target_denies_everything_rather_than_widening(tmp_path: Path) -> None:
-    """一条写错的 `target` 应当让插件读不到东西，而不是悄悄拿到全部访问权。"""
-    root = tmp_path / "ws"
-    root.mkdir()
-    (root / "a.txt").write_bytes(b"x")
-    guard = PathGuard(root, allowed=("../escape",))
-    with pytest.raises(NucleaError):
-        guard.resolve("a.txt")
-
-
 def test_the_error_detail_never_leaks_the_host_path(tmp_path: Path) -> None:
     root = tmp_path / "ws"
     root.mkdir()
@@ -114,49 +81,21 @@ def test_the_error_detail_never_leaks_the_host_path(tmp_path: Path) -> None:
 # ---------------------------------------------------------------- 文件门面
 
 
-def _fs(tmp_path: Path, *permissions: str) -> GuardedFileAccess:
+def _fs(tmp_path: Path) -> GuardedFileAccess:
     root = tmp_path / "ws"
     root.mkdir(exist_ok=True)
-    return GuardedFileAccess(root, grants=PluginGrants.of(*permissions), plugin_id="probe")
+    return GuardedFileAccess(root, plugin_id="probe")
 
 
 async def test_reading_and_writing_round_trip(tmp_path: Path) -> None:
-    access = _fs(tmp_path, "fs:read", "fs:write")
+    access = _fs(tmp_path)
     await access.write_text("notes/a.txt", "你好")
     assert await access.read_text("notes/a.txt") == "你好"
     assert await access.list_dir("notes") == ("a.txt",)
 
 
-async def test_read_and_write_are_separate_grants(tmp_path: Path) -> None:
-    """`NFR-302`：只声明了读的插件拿得到门面，写抛 `PERMISSION_DENIED`。"""
-    reader = _fs(tmp_path, "fs:read")
-    (tmp_path / "ws" / "a.txt").write_bytes(b"x")
-    assert await reader.read_text("a.txt") == "x"
-    with pytest.raises(NucleaError) as caught:
-        await reader.write_text("a.txt", "y")
-    assert caught.value.code is ErrorCode.PERMISSION_DENIED
-
-    writer = _fs(tmp_path, "fs:write")
-    await writer.write_text("b.txt", "y")
-    with pytest.raises(NucleaError):
-        await writer.read_text("b.txt")
-
-
-async def test_read_and_write_narrow_independently(tmp_path: Path) -> None:
-    """「可以读整个 workspace、只能写 cache/」必须表达得出来。"""
-    root = tmp_path / "ws"
-    (root / "cache").mkdir(parents=True)
-    access = GuardedFileAccess(
-        root, grants=PluginGrants.of("fs:read", "fs:write:cache"), plugin_id="probe"
-    )
-    await access.write_text("cache/a.txt", "x")
-    with pytest.raises(NucleaError) as caught:
-        await access.write_text("elsewhere.txt", "x")
-    assert caught.value.code is ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE
-
-
 async def test_a_missing_file_reports_only_the_relative_path(tmp_path: Path) -> None:
-    access = _fs(tmp_path, "fs:read")
+    access = _fs(tmp_path)
     with pytest.raises(NucleaError) as caught:
         await access.read_text("nope.txt")
     assert caught.value.code is ErrorCode.PERSISTENCE_READ_FAILED
@@ -165,7 +104,7 @@ async def test_a_missing_file_reports_only_the_relative_path(tmp_path: Path) -> 
 
 
 async def test_writing_leaves_no_temporary_file_behind(tmp_path: Path) -> None:
-    access = _fs(tmp_path, "fs:write")
+    access = _fs(tmp_path)
     await access.write_text("a.txt", "x")
     assert [p.name for p in (tmp_path / "ws").iterdir()] == ["a.txt"]
 
@@ -174,7 +113,7 @@ async def test_writing_leaves_no_temporary_file_behind(tmp_path: Path) -> None:
 
 
 async def test_bytes_round_trip(tmp_path: Path) -> None:
-    access = _fs(tmp_path, "fs:read", "fs:write")
+    access = _fs(tmp_path)
     payload = bytes(range(256))
     await access.write_bytes("blob.bin", payload)
     assert await access.read_bytes("blob.bin") == payload
@@ -186,30 +125,15 @@ async def test_read_bytes_is_the_only_way_to_get_the_original_bytes(tmp_path: Pa
     这条就是 `read_bytes` 存在的理由：在它之前，一个想读二进制的插件唯一的选择是
     绕过门面直接 `open()`。
     """
-    access = _fs(tmp_path, "fs:read", "fs:write")
+    access = _fs(tmp_path)
     payload = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xFE])
     await access.write_bytes("img.png", payload)
     assert await access.read_bytes("img.png") == payload
     assert (await access.read_text("img.png")).encode("utf-8") != payload
 
 
-async def test_bytes_obey_the_same_two_grants(tmp_path: Path) -> None:
-    """读写分离对二进制面同样成立（`NFR-302`），不是只挡文本那两个方法。"""
-    reader = _fs(tmp_path, "fs:read")
-    (tmp_path / "ws" / "a.bin").write_bytes(b"x")
-    assert await reader.read_bytes("a.bin") == b"x"
-    with pytest.raises(NucleaError) as caught:
-        await reader.write_bytes("a.bin", b"y")
-    assert caught.value.code is ErrorCode.PERMISSION_DENIED
-
-    writer = _fs(tmp_path, "fs:write")
-    await writer.write_bytes("b.bin", b"y")
-    with pytest.raises(NucleaError):
-        await writer.read_bytes("b.bin")
-
-
 async def test_bytes_writes_are_guarded_by_the_same_path_rules(tmp_path: Path) -> None:
-    access = _fs(tmp_path, "fs:write")
+    access = _fs(tmp_path)
     with pytest.raises(NucleaError) as caught:
         await access.write_bytes("../escape.bin", b"x")
     assert caught.value.code is ErrorCode.PERMISSION_PATH_OUTSIDE_WORKSPACE
@@ -217,7 +141,7 @@ async def test_bytes_writes_are_guarded_by_the_same_path_rules(tmp_path: Path) -
 
 async def test_a_failed_bytes_write_leaves_no_temporary_file(tmp_path: Path) -> None:
     """写失败不得留下半份文件——目标是个目录，替换必然失败。"""
-    access = _fs(tmp_path, "fs:write")
+    access = _fs(tmp_path)
     (tmp_path / "ws" / "taken").mkdir()
     with pytest.raises(NucleaError) as caught:
         await access.write_bytes("taken", b"x")
@@ -325,15 +249,9 @@ def test_the_ssrf_table_is_explicit(address: str, blocked: bool) -> None:
     assert bool(address_is_blocked(address)) is blocked
 
 
-def _net(
-    *,
-    handler: object,
-    resolver: object = None,
-    allowed_hosts: Sequence[str] = (),
-) -> GuardedHttpAccess:
+def _net(*, handler: object, resolver: object = None) -> GuardedHttpAccess:
     return GuardedHttpAccess(
         plugin_id="probe",
-        allowed_hosts=allowed_hosts,
         resolver=resolver or (lambda host, port: ("93.184.216.34",)),  # pyright: ignore[reportUnknownLambdaType]
         transport=httpx.MockTransport(handler),  # pyright: ignore[reportArgumentType]
     )
@@ -505,14 +423,6 @@ async def test_malformed_or_credential_bearing_urls_are_denied(url: str) -> None
     assert caught.value.code is ErrorCode.PERMISSION_DENIED
 
 
-async def test_a_narrowed_grant_is_a_host_allowlist() -> None:
-    access = _net(handler=lambda request: httpx.Response(200), allowed_hosts=("example.com",))
-    assert (await access.request("GET", "https://example.com/")).status == 200
-    with pytest.raises(NucleaError) as caught:
-        await access.request("GET", "https://elsewhere.com/")
-    assert "名单" in str(caught.value.detail["reason"])
-
-
 async def test_the_error_url_drops_the_query_string() -> None:
     """query 常常带着签名与一次性凭据，而 `detail` 会进事件流与日志。"""
     access = _net(handler=lambda request: httpx.Response(200), resolver=_never_called)
@@ -602,7 +512,7 @@ async def test_a_process_that_ignores_the_terminate_signal_is_killed(tmp_path: P
 
 async def test_a_write_failure_is_reported_without_the_host_path(tmp_path: Path) -> None:
     """把一个目录当文件写：失败在落盘之前，且错误里只有插件自己给的那个相对串。"""
-    access = _fs(tmp_path, "fs:write")
+    access = _fs(tmp_path)
     (tmp_path / "ws" / "adir").mkdir()
     with pytest.raises(NucleaError) as caught:
         await access.write_text("adir", "x")
@@ -612,7 +522,7 @@ async def test_a_write_failure_is_reported_without_the_host_path(tmp_path: Path)
 
 
 async def test_listing_a_file_is_a_read_failure(tmp_path: Path) -> None:
-    access = _fs(tmp_path, "fs:read")
+    access = _fs(tmp_path)
     (tmp_path / "ws" / "a.txt").write_bytes(b"x")
     with pytest.raises(NucleaError) as caught:
         await access.list_dir("a.txt")

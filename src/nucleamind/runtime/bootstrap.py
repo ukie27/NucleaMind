@@ -6,7 +6,7 @@
 （`plugin_plan.py` + `kernel/plugins/loader.py`）、插件装配策略（`plugin_bootstrap.py`）、
 生成首次运行的配置。
 
-**插件装配策略已收口在 `plugin_bootstrap.py`**：内建配置块派生、权限批准、阶段 A 桥接、
+**插件装配策略已收口在 `plugin_bootstrap.py`**：内建配置块派生、阶段 A 桥接、
 能力筛选与 `setup()` 配置同源都在那里。本模块只按顺序调用它们，并用 `StartupResources`
 保证任何一步失败时，已经产生的任务、订阅和 sink 都会在实例锁释放前回滚。
 
@@ -49,12 +49,7 @@ from nucleamind.kernel.observability import (
     PluginStatus,
     write_config_error,
 )
-from nucleamind.kernel.plugins import (
-    PermissionLedger,
-    PluginLifecycle,
-    channels_from,
-    cli_entry_from,
-)
+from nucleamind.kernel.plugins import PluginLifecycle, channels_from, cli_entry_from
 from nucleamind.kernel.routing import (
     ConcurrencyPolicy,
     DedupCache,
@@ -78,11 +73,9 @@ from .instance import AgentInstance, Closer, outbound_router
 from .introspection import build_instance_view, build_turn_control
 from .inventory import PluginInventory
 from .plugin_bootstrap import (
-    approve,
     build_lifecycles,
     builtin_config_blocks,
     capability_filter,
-    declared_grants,
     plan_external,
     select_manifests,
     wire_all,
@@ -105,11 +98,9 @@ from .wiring import Wiring
 __all__ = [
     "BUILTIN_MANIFESTS",
     "PluginManifest",
-    "approve",
     "bootstrap",
     "builtin_config_blocks",
     "capability_filter",
-    "declared_grants",
     "load_config_or_report",
     "plan_external",
     "require_sessions",
@@ -247,9 +238,6 @@ async def _build_instance(
     # 内建与外部插件共用注册、覆盖解析和 Registry 冻结路径（`SDK-007`）。
     runtime = PluginRuntime()
     attempt = resources.plugin_checkpoint()
-    # 权限账本：`permissions.json` 的批准叠在 manifest 声明之前。读不懂那份文件
-    # 是**启动失败**而不是「当成空账本」——后者等于一次静默的全部重新授予。
-    ledger = PermissionLedger.load(layout.permissions_path)
     wiring = await wire_all(
         all_manifests,
         config,
@@ -259,7 +247,6 @@ async def _build_instance(
         runtime,
         env,
         resources.contexts,
-        ledger,
         external_ids=external_ids,
         suppressed=suppressed,
     )
@@ -285,14 +272,10 @@ async def _build_instance(
             runtime,
             env,
             resources.contexts,
-            ledger,
             builtin_cli_only=True,
             external_ids=external_ids,
             suppressed=suppressed,
         )
-    # 账本只在真的变了时落盘（`save()` 自己判 `dirty`）。写在注册之后：`setup()` 抛异常
-    # 时那个提供方的授权记录同样值得留下——下一次启动它不该被当成首次而重新全授。
-    ledger.save()
     for outcome in wiring.outcomes:
         bus.publish(
             EventName.PLUGIN_LOADED if outcome.error is None else EventName.PLUGIN_LOAD_FAILED,

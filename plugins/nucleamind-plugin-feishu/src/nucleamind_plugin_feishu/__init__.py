@@ -43,14 +43,12 @@ from nucleamind.contracts import (
     ErrorCode,
     EventName,
     NucleaError,
-    PermissionKind,
     SecretStr,
 )
 from nucleamind.sdk import (
     CapabilityDecl,
     ManifestJsonSchema,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -155,26 +153,13 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="feishu",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_feishu:setup",
     # **不写 `overrides`**（它不取代任何内建）、**不写 `priority`**（默认值 100 会被原样
     # 采纳，而内建基准是 0——`D16` 记的坑）。
     capabilities=(CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CAPABILITY_NAME),),
-    # **两条 secret，没有 `net`**：见模块 docstring 的第一条边界。
-    # **`app_id` 也走 secrets**：`ctx.config` 不解析 `${VAR}`，放 config 会让写
+    # `app_id` 也走 secrets：`ctx.config` 不解析 `${VAR}`，放 config 会让写
     # `${FEISHU_APP_ID}` 的人拿到字面串并在连接时得到一个无法诊断的 401。凭据是一对。
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_APP_ID,
-            reason="飞书应用的 App ID，与 App Secret 成对换取 tenant_access_token。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_APP_SECRET,
-            reason="飞书应用的 App Secret。",
-        ),
-    ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：飞书连不上（应用被停用、网络不通）不该让 CLI 与其它 Channel
     # 一起下线。`PLG-004`：失败的后果由装配根决定。

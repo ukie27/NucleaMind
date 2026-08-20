@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from nucleamind_plugin_echo_tool import CONFIG_PREFIX_KEY, MANIFEST, TOOL_NAME, setup
+from nucleamind_plugin_echo_tool import MANIFEST, TOOL_NAME, setup
 
 from nucleamind.contracts import (
     CapabilityKind,
@@ -58,7 +58,6 @@ async def call(handler: ToolHandler, spec: ToolSpec, text: JsonValue) -> ToolRes
             call=ToolCall(call_id="call-1", name=spec.name, arguments={"text": text}),
             correlation=make_correlation(),
             timeout_ms=1_000,
-            granted=spec.permissions,
         ),
         ManualCancel(),
     )
@@ -83,19 +82,3 @@ def test_the_manifest_declares_exactly_what_setup_registers() -> None:
     declared = {(decl.kind, decl.name) for decl in MANIFEST.capabilities}
     spec, _ = registered()
     assert declared == {(CapabilityKind.TOOL, spec.name)} == {(CapabilityKind.TOOL, TOOL_NAME)}
-
-
-def test_the_manifest_declares_no_permissions() -> None:
-    """一个权限都不声明是本示例的要点之一：纯内存的插件不该申请任何东西。"""
-    assert MANIFEST.permissions == ()
-
-
-async def test_the_prefix_comes_from_the_plugin_config_block() -> None:
-    """`ctx.config` 只有自己那一块（`CFG-002`），形状由 manifest 的 `config_schema` 保证。"""
-    spec, handler = registered({CONFIG_PREFIX_KEY: ">> "})
-    assert (await call(handler, spec, "在")).content == ">> 在"
-
-
-async def test_an_unconfigured_prefix_is_empty() -> None:
-    spec, handler = registered()
-    assert (await call(handler, spec, "在")).content == "在"

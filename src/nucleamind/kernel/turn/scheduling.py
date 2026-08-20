@@ -12,7 +12,7 @@
 ⚠️ **与旧实现的口径差异**：旧实现按 `concurrency_safe`（≈ 只读且非独占）合批，新层按
 `ToolSpec.concurrency is PARALLEL`——而 `concurrency` 的默认值是 `PARALLEL`、`risk` 的默认值是
 `MUTATING`。**一个会写的工具如果忘了声明 `EXCLUSIVE`，新层会并发执行它，旧层不会。**
-写内建工具与插件工具时，声明 `FS_WRITE` 或 `SHELL` 权限的一律要显式给出 `concurrency`。
+写内建工具与插件工具时，具有写入或进程副作用的一律要显式给出 `concurrency`。
 """
 
 from __future__ import annotations

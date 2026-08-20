@@ -18,7 +18,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     ToolCall,
     ToolInvocation,
 )
@@ -96,9 +95,7 @@ class StubNet:
 class WebContext(FakePluginContext):
     """把 `StubNet` 接上 `ctx.net` 的上下文。
 
-    `FakePluginContext.net` 在授权后抛 `NotImplementedError`（`D16` 时它还没有真实现），
-    因此这里覆盖那个 property；**权限判定仍然走基类**，未授予 `net` 时照样
-    `PERMISSION_DENIED`。
+    `FakePluginContext.net` 不提供真实网络实现，因此这里覆盖那个 property。
     """
 
     def __init__(
@@ -107,16 +104,12 @@ class WebContext(FakePluginContext):
         *,
         config: Mapping[str, JsonValue] | None = None,
         secrets: Mapping[str, str] | None = None,
-        granted: frozenset[PermissionKind] = frozenset(
-            {PermissionKind.NET, PermissionKind.SECRET}
-        ),
     ) -> None:
-        super().__init__("web", config=config, granted=granted, secrets=secrets)
+        super().__init__("web", config=config, secrets=secrets)
         self.stub_net = net if net is not None else StubNet()
 
     @property
     def net(self) -> StubNet:
-        self._require(PermissionKind.NET)
         return self.stub_net
 
 
@@ -131,7 +124,6 @@ def invocation(name: str, arguments: Mapping[str, JsonValue]) -> ToolInvocation:
         call=ToolCall(call_id="call-1", name=name, arguments=dict(arguments)),
         correlation=make_correlation(),
         timeout_ms=5_000,
-        granted=frozenset({PermissionKind.NET}),
     )
 
 

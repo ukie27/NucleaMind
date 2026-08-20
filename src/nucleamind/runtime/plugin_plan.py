@@ -5,7 +5,7 @@
 `kernel.plugins.plan_load_order()` 排出 `A4` 的拓扑序；产出一份有序的 manifest 清单与
 失败清单，以及一份**修正过的**（落榜项已从 `discovered` 移进 `failures`）诊断清单。
 不负责：读 manifest 与判 id / 平台 / `sdk_range`（`D25` 的 `inventory.py`）、跑 `setup`
-与注册（`wiring.py` → `kernel.plugins.load_into`，外部与内建同一条路）、判权限
+与注册（`wiring.py` → `kernel.plugins.load_into`，外部与内建同一条路）
 （`bootstrap.approve()` 是唯一调用点）、决定非关键失败之后还做什么（装配根）。
 
 **这是 `R5` 的落点**，与 `inventory.py` / `wiring.py` / `plugin_context.py` 同一条理由：

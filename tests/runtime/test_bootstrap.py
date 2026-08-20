@@ -35,11 +35,7 @@ from nucleamind.contracts import (
 )
 from nucleamind.kernel.config import InstanceLock
 from nucleamind.kernel.turn import CancelToken
-from nucleamind.runtime.bootstrap import (
-    bootstrap,
-    builtin_config_blocks,
-    declared_grants,
-)
+from nucleamind.runtime.bootstrap import bootstrap, builtin_config_blocks
 from nucleamind.runtime.instance import AgentInstance
 from nucleamind.runtime.plugin_context import RuntimePluginContext
 from nucleamind.sdk import CapabilityDecl, NucleaAPI, PluginManifest
@@ -273,7 +269,7 @@ async def test_a_failing_cli_override_falls_back_to_the_builtin(tmp_path: Path) 
     broken = PluginManifest(
         id="cli-broken",
         version="0.1.0",
-        sdk_range=">=1.0.0,<2.0.0",
+        sdk_range=">=2.0.0,<3.0.0",
         setup="tests.runtime.test_bootstrap:setup_broken_cli",
         capabilities=(
             CapabilityDecl(
@@ -301,14 +297,14 @@ async def test_cli_fallback_stops_the_discarded_setup_attempt(
     tracked = PluginManifest(
         id="tracked-setup",
         version="0.1.0",
-        sdk_range=">=1.0.0,<2.0.0",
+        sdk_range=">=2.0.0,<3.0.0",
         setup="tests.runtime.test_bootstrap:setup_with_side_effects",
         capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="startup.probe"),),
     )
     broken = PluginManifest(
         id="cli-broken",
         version="0.1.0",
-        sdk_range=">=1.0.0,<2.0.0",
+        sdk_range=">=2.0.0,<3.0.0",
         setup="tests.runtime.test_bootstrap:setup_broken_cli",
         capabilities=(
             CapabilityDecl(
@@ -354,14 +350,14 @@ async def test_critical_setup_failure_rolls_back_prior_plugin_side_effects(
     tracked = PluginManifest(
         id="tracked-setup",
         version="0.1.0",
-        sdk_range=">=1.0.0,<2.0.0",
+        sdk_range=">=2.0.0,<3.0.0",
         setup="tests.runtime.test_bootstrap:setup_with_side_effects",
         capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="startup.probe"),),
     )
     failing = PluginManifest(
         id="critical-failure",
         version="0.1.0",
-        sdk_range=">=1.0.0,<2.0.0",
+        sdk_range=">=2.0.0,<3.0.0",
         setup="tests.runtime.test_bootstrap:setup_critical_failure",
         capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="startup.fail"),),
         critical=True,
@@ -544,17 +540,6 @@ async def test_stopping_twice_is_safe(tmp_path: Path) -> None:
     instance = await _boot(tmp_path)
     await instance.stop()
     await instance.stop()
-
-
-def test_declared_grants_come_from_the_manifest() -> None:
-    """声明是授权的**上限**（`D26`）：账本只能在这个集合里做减法。"""
-    model = next(m for m in BUILTIN_MANIFESTS if m.id == "model-openai")
-    declared = declared_grants(model)
-    assert ("secret", "api_key") in {(g.kind.value, g.target) for g in declared}
-    # 用途说明原样带进账本——用户批准时读的就是这句（`PermissionDecl.reason` 必填）。
-    assert all(grant.reason for grant in declared)
-    cli = next(m for m in BUILTIN_MANIFESTS if m.id == "cli-entry")
-    assert declared_grants(cli) == ()
 
 
 def test_the_fake_model_manifest_keeps_the_real_shape() -> None:

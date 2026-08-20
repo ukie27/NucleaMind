@@ -46,11 +46,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from nucleamind.contracts import CapabilityKind, InstanceId, PermissionKind
+from nucleamind.contracts import CapabilityKind, InstanceId
 from nucleamind.sdk import (
     CapabilityDecl,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -143,25 +142,12 @@ __all__ = [
 MANIFEST: Final = PluginManifest(
     id="cron",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_cron:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.CHANNEL, name=CHANNEL_NAME),
         *(CapabilityDecl(kind=CapabilityKind.TOOL, name=name) for name in TOOL_NAMES),
         CapabilityDecl(kind=CapabilityKind.COMMAND, name=COMMAND_NAME),
-    ),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.FS_READ,
-            reason="读取插件自己状态目录下的 jobs.json。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.FS_WRITE,
-            reason=(
-                "把任务表写回插件自己的状态目录"
-                "（FileAccess 没有 fsync 与原子替换，见 store.py）。"
-            ),
-        ),
     ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：没有定时任务的 Agent 照样对话。配置错误因此只表现为

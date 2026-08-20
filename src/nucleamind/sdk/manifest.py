@@ -1,9 +1,9 @@
 """插件 manifest：声明式的数据与校验（技术方案 §7.2，需求 `PLG-001`、`SDK-005`、`CMP-001`）。
 
-职责：定义 `CapabilityDecl` / `PermissionDecl` / `PluginManifest` 三个数据类型及其校验
+职责：定义 `CapabilityDecl` / `PluginManifest` 两个数据类型及其校验
 规则，并提供把外部数据（`plugin.toml`、entry point 模块里的字面量）解析为 manifest 的
 `parse_manifest()`。
-不负责：发现插件、导入 `setup`、解析依赖拓扑、判定权限是否已被授权；本模块不读文件、
+不负责：发现插件、导入 `setup`、解析依赖拓扑；本模块不读文件、
 不访问网络、不碰全局状态。
 
 **导入本模块必须无副作用且廉价**（§7.2 硬约束）。阶段 A 校验要保持在毫秒级
@@ -44,7 +44,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonSchema,
     NucleaError,
-    PermissionKind,
     Plugin,
     PluginId,
     ProviderId,
@@ -57,7 +56,6 @@ __all__ = [
     "MANIFEST_MODEL_CONFIG",
     "CapabilityDecl",
     "ManifestJsonSchema",
-    "PermissionDecl",
     "PluginManifest",
     "parse_manifest",
 ]
@@ -85,7 +83,7 @@ _ID_CHARS: Final[frozenset[str]] = frozenset(string.ascii_lowercase + string.dig
 _SETUP_SEPARATOR: Final = ":"
 
 #: 三个模型共用的配置。`extra="forbid"` 让拼错的字段成为错误而不是被静默丢弃——
-#: 一个被忽略的 `permisions` 拼写错误等于插件带着未声明的权限意图上线。
+#: Manifest 对未知字段一律拒绝，避免拼写错误被静默忽略。
 MANIFEST_MODEL_CONFIG: Final = ConfigDict(extra="forbid", frozen=True)
 
 
@@ -276,49 +274,6 @@ class CapabilityDecl(BaseModel):
         return self
 
 
-class PermissionDecl(BaseModel):
-    """一项权限声明（§7.5、`NFR-301`、`NFR-307`）。
-
-    `reason` 必填：授予是用户的显式操作，用户得知道自己在批准什么。它会出现在授权提示
-    与 `permissions.json` 的审计记录里，因此「因为需要」这种废话在评审阶段就该被打回。
-
-    `target` 把权限收窄到具体对象（`secret` 的密钥名、`fs:read` 的相对路径前缀）。
-    `secret` 必须带 target——`secret:*` 等于「给我全部凭据」，那不是最小权限。
-    """
-
-    model_config = MANIFEST_MODEL_CONFIG
-
-    kind: PermissionKind
-    reason: str
-    target: str = ""
-
-    @field_validator("reason")
-    @classmethod
-    def _check_reason(cls, value: str) -> str:
-        if not value.strip():
-            raise _fail(
-                ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED,
-                "权限声明必须写明用途，它会直接展示给授权的用户。",
-                field="reason",
-            )
-        return value
-
-    @model_validator(mode="after")
-    def _check_secret_target(self) -> PermissionDecl:
-        if self.kind is PermissionKind.SECRET and not self.target:
-            raise _fail(
-                ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED,
-                "secret 权限必须指明密钥名——不带 target 等于申请全部凭据。",
-                field="target",
-            )
-        return self
-
-    @property
-    def grant_key(self) -> tuple[PermissionKind, str]:
-        """授权记录的键。同 kind 不同 target 是两条独立授权。"""
-        return (self.kind, self.target)
-
-
 class PluginManifest(BaseModel):
     """插件的全部声明（§7.2）。
 
@@ -334,7 +289,6 @@ class PluginManifest(BaseModel):
     setup: str
     capabilities: tuple[CapabilityDecl, ...]
     dependencies: tuple[str, ...] = ()
-    permissions: tuple[PermissionDecl, ...] = ()
     # 类型的来龙去脉全在 `ManifestJsonValue` 的 docstring 里（协变容器 + 具名递归）。
     # 不再包一层 MappingProxyType：pydantic 在校验时已经深拷贝，调用方事后改自己那份
     # dict 影响不到这里，快照语义已经成立，浅冻结只是装样子。
@@ -479,14 +433,6 @@ class PluginManifest(BaseModel):
                 "插件不得依赖自身。",
                 field="dependencies",
                 id=self.id,
-            )
-        grants = [decl.grant_key for decl in self.permissions]
-        if len(set(grants)) != len(grants):
-            raise _fail(
-                ErrorCode.PLUGIN_MANIFEST_UNSUPPORTED,
-                "权限声明重复；同 kind 同 target 只写一条。",
-                field="permissions",
-                permissions=[f"{kind.value}:{target}" for kind, target in grants],
             )
         return self
 

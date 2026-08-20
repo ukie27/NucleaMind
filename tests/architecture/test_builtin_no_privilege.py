@@ -3,8 +3,7 @@
 职责：对真实源码树断言 `builtins/` 与外部插件受同一套约束——不 import `nucleamind.kernel.*`、
 不持有自己的注册通道；声明为只读的内建连持久化的语法途径都没有。并用注入违规样例证明
 每条守卫都会拦。
-不负责：判定逻辑本身（见 `_boundaries.py`），也不导入被测模块（`_READ_ONLY_BUILTIN_PACKAGES`
-那条 manifest 断言除外——它要读的就是 manifest 本身）。
+不负责：判定逻辑本身（见 `_boundaries.py`），也不导入被测模块。
 
 **为什么这条要单独立一个文件**：`R4` 已经禁止 `builtins/` import `kernel/`，
 `test_import_boundaries.py` 也已覆盖。但 `BAS-005` 说的是一件更具体、也更容易悄悄破掉的
@@ -48,7 +47,7 @@ _KERNEL_ONLY_SYMBOLS = frozenset(
 #:
 #: 判据是模块**根本没有 IO 的语法途径**，而不是「看起来没写盘」：不 import 这些模块，
 #: 也不出现裸 `open`。`session_jsonl` 那样确实要写盘的内建不在这张表里，它如实声明
-#: `fs:read` / `fs:write`。
+#: 自己拥有持久化职责。
 _READ_ONLY_BUILTIN_PACKAGES = frozenset({"context_basic"})
 
 #: 只读内建不得 import 的模块（顶层名）。覆盖文件、进程、网络与数据库四类持久化途径。
@@ -160,18 +159,6 @@ def test_read_only_builtins_have_no_syntactic_route_to_persistence(package: str)
     assert not offenders, f"只读内建 {package} 出现了持久化途径：\n" + "\n".join(offenders)
 
 
-@pytest.mark.parametrize("package", sorted(_READ_ONLY_BUILTIN_PACKAGES))
-def test_read_only_builtins_declare_no_permissions(package: str) -> None:
-    """只读也要体现在 manifest 上：声明一条用不到的权限就是让审计失真（`BAS-005`）。"""
-    from nucleamind.builtins.registry import BUILTIN_MANIFESTS
-
-    setup_prefix = f"nucleamind.builtins.{package}"
-    owners = [item for item in BUILTIN_MANIFESTS if item.setup.startswith(setup_prefix)]
-    assert owners, f"builtins/{package}/ 没有对应的 manifest"
-    for manifest in owners:
-        assert manifest.permissions == (), f"{manifest.id} 声明了它用不到的权限"
-
-
 # --------------------------------------------------------------------------
 # 反向：注入违规样例必须被拦下
 # --------------------------------------------------------------------------
@@ -228,4 +215,3 @@ def test_the_io_scan_accepts_the_pure_module_it_is_meant_to_allow(tmp_path: Path
         encoding="utf-8",
     )
     assert _io_offenders(module) == []
-

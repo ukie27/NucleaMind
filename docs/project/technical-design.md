@@ -227,8 +227,6 @@ src/nucleamind/
 │   │   ├── builtin_loader.py  # 对 LoadRequest 泛化的 setup 运行器（D16）
 │   │   ├── host.py            # NucleaAPI 宿主侧实现（D16）
 │   │   ├── discovery.py       # 两条显式来源的插件发现（D25）
-│   │   ├── permissions.py     # 权限账本：TOFU 判定与 PluginGrants（D26）
-│   │   └── permission_codec.py # permissions.json 的词汇、解析与原子写（D26）
 │   ├── config/                # 含 plugin_blocks.py：plugins.<id>.{config,secrets}（D23）
 │   │   ├── layout.py          # 实例目录的路径代数（不含锁）
 │   │   ├── process.py         # 跨平台 PID 存活探测（Liveness 三态）
@@ -249,7 +247,7 @@ src/nucleamind/
 ├── sdk/                       # 第 3 层：插件唯一依赖面。只 import contracts
 │   ├── __init__.py            # __all__ 为规范性稳定清单
 │   ├── api.py                 # NucleaAPI Protocol（9 方法）
-│   ├── manifest.py            # PluginManifest / CapabilityDecl / PermissionDecl
+│   ├── manifest.py            # PluginManifest / CapabilityDecl
 │   ├── version.py             # SDK_VERSION
 │   └── testing/               # 公开测试工具（插件开发者的验收手段）
 │       ├── fakes.py           # FakeModelProvider / InMemorySessionStore / RecordingHook
@@ -434,7 +432,6 @@ class ToolSpec:
     name: str
     description: str
     parameters: JsonSchema
-    permissions: frozenset[PermissionKind]
     read_only: bool
     risk: RiskLevel                  # SAFE / MUTATING / DESTRUCTIVE
     concurrency: Concurrency         # PARALLEL / EXCLUSIVE
@@ -1070,11 +1067,10 @@ class PluginManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     id: str                            # 小写、`[a-z0-9-]`，全局唯一
     version: str                       # PEP 440
-    sdk_range: str                     # PEP 440 specifier，如 ">=1.0,<2.0"
+    sdk_range: str                     # PEP 440 specifier，如 ">=2.0,<3.0"
     setup: str                         # "pkg.module:setup"，仅在阶段 B 导入
     capabilities: tuple[CapabilityDecl, ...]
     dependencies: tuple[str, ...] = ()          # 其他 plugin id
-    permissions: tuple[PermissionDecl, ...] = ()
     config_schema: JsonSchema | None = None
     state_version: int = 1
     critical: bool = False
@@ -1084,9 +1080,6 @@ class PluginManifest(BaseModel):
 
 `D05` 落地时补齐的三处细节：
 
-- `PermissionDecl` 是 `kind: PermissionKind` + `reason: str`（必填）+ `target: str = ""`。
-  `reason` 会出现在授权提示与 `permissions.json` 的审计记录里（`NFR-301`）；
-  `secret` 类权限必须带 `target`，`secret:*` 等于「给我全部凭据」，不是最小权限。
 - `capabilities` 必填且非空：不注册任何能力的插件没有作用点。
 - `config_schema` 的值类型用 **pydantic 的** `JsonValue` 而不是 `contracts.JsonValue`——
   后者是带前向引用的普通递归 Union，pydantic 为它生成 schema 时会无限递归。两者互相
@@ -1241,45 +1234,18 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 的凭据也擦得掉。它不在 `sdk.__all__` 里——契约类型不从 `sdk` 转发，插件按 `R4` 直接
 `from nucleamind.contracts import SecretStr`。
 
-**必须写进文档的诚实声明**：安装并启用插件等同于信任它在当前进程执行 Python 代码。
-插件可以绕过门面直接 `import os` / `socket` / `subprocess`；manifest 声明的是作者提交的
-资源意图，不是 Kernel 观测到的完整行为清单。应用级权限的目标是「防误用、使意图可审计、
-让声明变化在评审和测试中可见」，不是「防恶意插件」（`13.7`）。需要更严格控制时，使用
-可选独立插件宿主、容器或 OS 部署隔离，不把隔离设施变成极简 Kernel 的必备职责。
+**信任边界**：安装并启用插件等同于完全信任它在当前进程执行 Python 代码。Kernel 不维护
+权限声明、授权账本或行为监控。插件可以直接 `import os` / `socket` / `subprocess`；需要
+更严格控制时，使用独立插件宿主、容器或 OS 部署隔离。
 
-权限授予可审计（`NFR-301`）：授予结果写入 `<instance_dir>/permissions.json`，每次变更
-发布 `capability.permission_granted` 事件。首次使用按声明整份授予并记录；此后声明扩大时，
-新增项必须由用户显式批准（`NFR-307`）。
+资源门面落在 `runtime/access/` 而不是 `kernel/plugins/`。`HttpResponse` / `ShellResult`
+在 `sdk/api.py`，而 `R2` 禁止 `kernel/` import `sdk/`；Kernel 本身不调用这些类型，因而不应
+为组装方便把它们下沉到 `contracts/`。`runtime/` 本就是唯一同时看得见两边的层。
 
-`D52` 对权限范围作出终局定位：**不新增 `listen` / `net.listen`，也不新增 Agent 专属权限
-系统。** 监听端口、聊天平台连接与直接子进程等行为可以绕过现有门面，继续扩权限枚举无法
-把同进程 Python 变成可强制的沙箱。监听型插件由 `plugins.enabled` / `plugins.disable`
-及插件自身配置控制；安全策略可以作为插件或外部宿主独立演进。
+资源服务保留工作区路径校验、SSRF 防护与超时等调用约束。这些约束保证宿主 API 行为一致，
+不构成对插件代码的授权或隔离。
 
-`D26` 落地时对本节的四处细化（实现在 `kernel/plugins/permissions.py`、
-`kernel/plugins/permission_codec.py` 与 `runtime/access/`）：
-
-- **批准模型定为 TOFU + 扩权需显式**。本节原文只说「配置授权」，但没有说授权从哪里来。
-  三条候选里取的是：**第一次见到一个提供方时按 manifest 声明整份授予并记录**
-  （`source="first_use"`），**此后声明集合扩大时新增项默认拒绝**（记 `pending`，
-  要 `nm permissions grant` 或改文件才生效），撤销同样是显式操作。理由是内建与插件必须
-  走同一条判定（`BAS-005`），而「配置白名单为准」会逼 `nm init` 要么列举六份内建的全部
-  权限（违背 `D24`「模板只放用户真的要改的键」）、要么给内建开一条默认全授的特权路径；
-  「启动时交互式提示」则要为 `embed/`、CI 与 Channel-only 部署再定义一套非交互回退。
-  **局限如实记录**：首次授予不是用户点头，它让**扩权**可见，不让**初装**可见。
-  更严的策略是把 `PermissionLedger.first_use_policy` 设成 `PENDING`。
-- **账本按 plugin id 索引而不是 `ProviderId`**：全部内建共用一个 `Builtin()`，按提供方
-  索引会让六份内建的权限并成一条（`D23` 在配置块上踩过同一个坑）。
-- **三个资源门面落在 `runtime/access/` 而不是 `kernel/plugins/`**：`HttpResponse` /
-  `ShellResult` 在 `sdk/api.py`，而 `R2` 禁止 `kernel/` import `sdk/`。把它们下沉到
-  `contracts/` 是另一条路（`CliEntry`、`SecretStr` 的先例），但那两次下沉是因为 **kernel
-  要调用**那些类型；这里 kernel 一次也不碰它们。`runtime/` 本就是唯一同时看得见两边的层，
-  `plugin_context.py` / `introspection.py` 是同一档先例。代价是 workspace 双重校验成为
-  **第三份实现**（`runtime/access/paths.py`），由对照测试逐条钉住。
-- **`ctx.fs` 的读写分别判定**（`NFR-302`）：`fs:read` 与 `fs:write` 各自收窄 `target`，
-  因此「可以读整个 workspace、只能写 `cache/`」表达得出来。访问器本身只要求两者之一——
-  只声明了写的插件同样该拿得到门面。
-- **补了两个 `ErrorCode`**：`EXTERNAL_HTTP_REQUEST` 与 `TIMEOUT_HTTP_REQUEST`（都给
+**两个专用错误码**：`EXTERNAL_HTTP_REQUEST` 与 `TIMEOUT_HTTP_REQUEST`（都给
   `ctx.net`）。复用 `EXTERNAL_MODEL_PROVIDER` 会把一次 webhook 故障记到模型供应商头上，
   复用 `TIMEOUT_TOOL_CALL` 会让诊断指向一个根本没被调用的工具。
 
@@ -1288,8 +1254,7 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 回答 §17.2 第 10 项。
 
 - `sdk/version.py` 导出 `SDK_VERSION`，语义化版本，与主程序版本独立演进。
-  **当前为 `0.1.0`**：下面这套兼容承诺从 `1.0.0` 起算，Kernel 未落地前宣布 1.0 等于承诺
-  一个还没有被任何实现验证过的表面。0.x 期间 minor 可破坏，`D30` 插件里程碑达成后发 1.0。
+  **当前为 `2.0.0`**；2.x 不再包含插件权限声明与授权上下文。
 - 插件用 `sdk_range` 声明兼容范围，不满足即拒绝加载（`SDK-005`）。
 - minor 版本只允许新增；移除或语义变更必须 major，且提前一个 minor 打运行期
   `DeprecationWarning` 并在 `ResolutionReport` 中标注。
@@ -1661,7 +1626,6 @@ nm capabilities                                 # 报告中可见 provider 与 s
 <instance_dir>/                 # 默认 ~/.nucleamind/default/，可用 --instance 或环境变量指定
   config.json                   # 实例配置
   instance.lock                 # 排他锁（含 PID 与启动时间）
-  permissions.json              # 已授予权限（可审计）
   sessions/<storage_id>.jsonl   # 内建 session 存储
   sessions/<storage_id>.meta.json
   plugins/<plugin_id>/          # 插件私有状态目录，插件拥有所有权

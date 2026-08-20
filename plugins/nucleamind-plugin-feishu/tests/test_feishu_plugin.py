@@ -58,7 +58,6 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
     StreamState,
 )
 from nucleamind.sdk.testing import ChannelContract, FakePluginContext
@@ -85,7 +84,6 @@ def make_context(**config: Any) -> FakePluginContext:
     return FakePluginContext(
         plugin_id=MANIFEST.id,
         config=config,
-        granted=frozenset({PermissionKind.SECRET}),
         secrets={SECRET_APP_ID: "cli_app_0123456789", SECRET_APP_SECRET: "secret-0123456789"},
     )
 
@@ -119,13 +117,6 @@ class TestManifest:
     def test_priority_is_not_declared(self) -> None:
         """写了默认值 100 会被原样采纳，而内建基准是 0（`D16` 记的坑）。"""
         assert "priority" not in MANIFEST.capabilities[0].model_fields_set
-
-    def test_permissions_are_exactly_the_two_secrets(self) -> None:
-        """**不声明 `net`**：`lark-oapi` 自己开连接，一个字节都不过 `ctx.net` 门面。"""
-        assert {(item.kind, item.target) for item in MANIFEST.permissions} == {
-            (PermissionKind.SECRET, SECRET_APP_ID),
-            (PermissionKind.SECRET, SECRET_APP_SECRET),
-        }
 
     def test_a_platform_outage_must_not_take_the_instance_down(self) -> None:
         """`critical=False`：飞书连不上不该让 CLI 与其它 Channel 一起下线（`PLG-004`）。"""
@@ -226,7 +217,6 @@ class TestSetup:
         ctx = FakePluginContext(
             plugin_id=MANIFEST.id,
             config={},
-            granted=frozenset({PermissionKind.SECRET}),
             secrets=secrets,
         )
         with pytest.raises(NucleaError) as excinfo:

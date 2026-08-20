@@ -130,24 +130,6 @@ nm session show <会话 id>
 - 读的是**生效的** `SessionStore`——被插件覆盖过就读插件那份。
 - **没有删除或压缩**：那是有副作用的操作，要单独的确认流程。
 
-## `nm permissions`
-
-```text
-nm permissions list [--json]
-nm permissions grant  <插件 id> <权限> [理由]
-nm permissions revoke <插件 id> <权限>
-nm permissions forget <插件 id>
-```
-
-权限写成 `fs:read` / `fs:write` / `net` / `shell` / `secret:<名字>`。
-
-- **这条命令就是「用户显式操作」本身**。首见即按声明整份授予（TOFU）；此后声明**扩大**
-  时，新增项默认落 `pending`（也就是拒绝），只有这里（或你直接编辑那个文件）能把它变成
-  `granted`。
-- `forget` 删掉一个插件的全部记录，下次启动按首次授予重新走一遍；没有记录可删时退出码 `3`。
-- **不取实例锁**，因此 `grant` 与一个正在跑的实例并发时改动要等对方重启才生效
-  （账本在启动期读一次）。这句话印在每次改动的输出里。
-
 ## `nm plugins`
 
 ```text
@@ -193,7 +175,7 @@ nm capabilities [--json]
   「零条」是一条有价值的结论。
 - **冲突印出来而不是抛出去**：对这条命令来说冲突恰恰是要看的东西，
   把它折成一条退出码 2 的诊断只会少印另外三段。
-- 与 `nm plugins list` / `nm session` 一样走只读诊断路径：不取实例锁、不写权限账本、
+- 与 `nm plugins list` / `nm session` 一样走只读诊断路径：不取实例锁、不写业务状态、
   不装编排器、不做启动期的「必需能力」判定。
 
 ## 斜杠命令（会话里）

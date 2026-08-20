@@ -44,10 +44,10 @@ NucleaMind 已经具备一套可运行、受架构守卫约束的 Agent Kernel �
 ### 对外表面
 
 - 包版本：`0.3.0`（alpha）。
-- SDK 版本：`1.3.0`，已承担 1.x 兼容承诺。
+- SDK 版本：`2.0.0`；2.x 移除了旧插件权限契约。
 - `NucleaAPI` 与 `CapabilityKind` 当前一一覆盖十类能力。
 - `nm init`、`nm run`、`nm serve`、`nm config show`、`nm session`、
-  `nm permissions`、`nm plugins`、`nm capabilities` 已可用。
+  `nm plugins`、`nm capabilities` 已可用。
 
 ## 架构是否仍然极简
 

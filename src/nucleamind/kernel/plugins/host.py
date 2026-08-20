@@ -7,7 +7,7 @@ Host）、构造 `PluginContext`、发现插件、判定谁最终生效
 （`kernel/registry/resolution.py`）。本模块不做 IO。
 
 **内建与插件共用这一个实现**（`SDK-007`、`BAS-005`）：不存在内建专用注册 API。两者的差别
-全部在 `LoadRequest` 的产出方式上（内建来自静态可信清单，插件还要过发现、依赖与权限校验），
+全部在 `LoadRequest` 的产出方式上（内建来自静态可信清单，插件还要过发现与依赖校验），
 差异不延伸到能力注册接口。
 
 **不 import `sdk/`**（规则 `R2`），因此本类是 `NucleaAPI` 的**结构化**实现而非继承——
@@ -20,7 +20,7 @@ Host）、构造 `PluginContext`、发现插件、判定谁最终生效
 
 **未声明的注册是错误**（`PLUGIN_LOAD_FAILED`）。放行它等于让 manifest 的 `capabilities`
 变成一份没有约束力的文档，而 `overrides` 只能从那里来（`EDG-102`：覆盖永不由加载顺序
-决定），`nm capabilities` 与阶段 A 的权限校验也都建立在「声明即全集」上。反过来，声明了
+决定），`nm capabilities` 也建立在「声明即全集」上。反过来，声明了
 却没注册同样是错误——那说明 manifest 骗过了阶段 A，用户会看到一项查得到却不存在的能力。
 两者共用一个码，靠 `detail` 区分：诊断要回答的是「manifest 和实现对不上」这件事本身。
 """

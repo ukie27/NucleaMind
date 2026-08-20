@@ -32,7 +32,6 @@ from nucleamind.contracts import (
     FragmentScope,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     Sensitivity,
     SideEffect,
@@ -114,7 +113,6 @@ def remember_spec() -> ToolSpec:
             "required": ["content"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.FS_WRITE}),
         read_only=False,
         # `DESTRUCTIVE` 留给「覆盖既有内容不可撤销」那一档（`builtins/tools_fs` 的
         # `fs.write`）。写一条新记忆只是追加，既不覆盖也不删除别的记忆。
@@ -147,7 +145,6 @@ def recall_spec() -> ToolSpec:
             "required": ["query"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.FS_READ}),
         read_only=True,
         risk=RiskLevel.SAFE,
     )
@@ -166,7 +163,6 @@ def forget_spec() -> ToolSpec:
             "required": ["record_id"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.FS_WRITE}),
         read_only=False,
         # 删除不可撤销——本插件不留墓碑（`store.py` 的模块 docstring）。
         risk=RiskLevel.DESTRUCTIVE,

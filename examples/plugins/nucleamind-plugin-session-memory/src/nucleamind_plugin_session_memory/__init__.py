@@ -46,7 +46,7 @@ OVERRIDE_TARGET: Final = "builtin:jsonl"
 MANIFEST: Final = PluginManifest(
     id="session-memory",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_session_memory:setup",
     capabilities=(
         CapabilityDecl(
@@ -55,9 +55,7 @@ MANIFEST: Final = PluginManifest(
             overrides=OVERRIDE_TARGET,
         ),
     ),
-    # 一个权限都不声明：从不落盘正是它的卖点。反过来说，声明了 `fs:write` 的会话存储
-    # 插件应当被审得更仔细——权限声明的意义就在这里。
-    permissions=(),
+    # 从不落盘正是它的卖点；状态只存在于当前进程。
     config_schema={"type": "object", "properties": {}, "additionalProperties": False},
 )
 

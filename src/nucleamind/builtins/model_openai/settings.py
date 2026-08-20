@@ -63,8 +63,7 @@ CAPABILITY_NAME: Final = "openai"
 #: `ModelInfo.provider`，诊断里「这个回答是谁生成的」的答案。
 PROVIDER_NAME: Final = "openai_compatible"
 
-#: 凭据名，**固定不可配置**。manifest 里声明的是 `secret:api_key`，做成可配置会让那条
-#: 权限声明变成一句谎话——而权限声明的全部价值就是它如实。
+#: 凭据名，固定不可配置，使配置路径与 `ctx.secret()` 的调用点保持同源。
 SECRET_NAME: Final = "api_key"
 
 DEFAULT_BASE_URL: Final = "https://api.openai.com/v1"

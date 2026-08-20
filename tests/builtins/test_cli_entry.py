@@ -359,8 +359,6 @@ def test_the_manifest_declares_exactly_two_capabilities() -> None:
     """入口拥有进程、Channel 拥有消息路径——合成一条就得让其中一件事走近路。"""
     kinds = sorted(decl.kind.value for decl in CLI_ENTRY.capabilities)
     assert kinds == ["channel", "cli_entry"]
-    # 一条权限也不声明：stdin/stdout 是进程自己的 IO，不是对实例资源的访问。
-    assert CLI_ENTRY.permissions == ()
     assert CLI_ENTRY.critical is True
 
 

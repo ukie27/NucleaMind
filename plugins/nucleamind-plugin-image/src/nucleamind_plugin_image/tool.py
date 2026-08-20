@@ -27,7 +27,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolInvocation,
@@ -77,7 +76,6 @@ def generate_spec() -> ToolSpec:
             "required": ["prompt"],
             "additionalProperties": False,
         },
-        permissions=frozenset({PermissionKind.NET, PermissionKind.FS_WRITE}),
         # 不是只读：它写文件、花钱，而且同一个 prompt 两次调用的产物不同。
         read_only=False,
         risk=RiskLevel.MUTATING,

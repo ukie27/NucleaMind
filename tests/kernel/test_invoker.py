@@ -2,8 +2,8 @@
 
 | 组 | 验收内容 |
 | --- | --- |
-| A 准备 | 权限按 spec 与实例授权取交集；只读工具带幂等键（`EDG-402`） |
-| B 校验 | 参数不合 schema / 权限不足 → `ok=False` 且 `side_effect=NONE`，约定不抛 |
+| A 准备 | 只读工具带幂等键（`EDG-402`） |
+| B 校验 | 参数不合 schema → `ok=False` 且 `side_effect=NONE`，约定不抛 |
 | C 执行 | 正常返回原样交回；handler 逸出的异常折成 `UNKNOWN` |
 | D 宽限期 | 超时后请求取消并等宽限期；仍不回来 → `TIMEOUT_TOOL_CANCEL` + 孤儿登记 |
 | E 注册 | `tools_from()` 认 `RegisteredTool`，别的载荷当场报错 |
@@ -20,7 +20,6 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolCall,
@@ -44,7 +43,6 @@ READ_SCHEMA = {
 def spec(
     name: str = "fs.read",
     *,
-    permissions: frozenset[PermissionKind] = frozenset({PermissionKind.FS_READ}),
     read_only: bool = True,
     parameters: dict | None = None,
 ) -> ToolSpec:
@@ -52,7 +50,6 @@ def spec(
         name=name,
         description=f"测试工具 {name}",
         parameters=parameters if parameters is not None else READ_SCHEMA,
-        permissions=permissions,
         read_only=read_only,
         risk=RiskLevel.SAFE if read_only else RiskLevel.MUTATING,
     )
@@ -66,12 +63,11 @@ def executor(
     handler: FakeToolHandler | None = None,
     *,
     tool: ToolSpec | None = None,
-    granted: frozenset[PermissionKind] = frozenset(PermissionKind),
     grace_ms: int = 20,
 ) -> tuple[ToolExecutor, FakeToolHandler]:
     impl = handler or FakeToolHandler()
     registered = RegisteredTool(spec=tool or spec(), handler=impl)  # type: ignore[arg-type]
-    return ToolExecutor([registered], granted=granted, grace_ms=grace_ms), impl
+    return ToolExecutor([registered], grace_ms=grace_ms), impl
 
 
 async def invoke(exec_: ToolExecutor, tool_call: ToolCall, *, timeout_ms: int = 1000) -> ToolResult:
@@ -82,21 +78,10 @@ async def invoke(exec_: ToolExecutor, tool_call: ToolCall, *, timeout_ms: int = 
 # ------------------------------------------------------------------ A 准备
 
 
-def test_granted_permissions_are_the_intersection_of_spec_and_instance() -> None:
-    exec_, _ = executor(
-        tool=spec(permissions=frozenset({PermissionKind.FS_READ, PermissionKind.NET})),
-        granted=frozenset({PermissionKind.FS_READ}),
-    )
-
-    invocation = exec_.prepare(call(), correlation=CORRELATION, timeout_ms=1000)
-
-    assert invocation.granted == frozenset({PermissionKind.FS_READ})
-
-
 def test_read_only_tools_get_an_idempotency_key_and_writers_do_not() -> None:
     reader, _ = executor()
     writer, _ = executor(
-        tool=spec("fs.write", permissions=frozenset({PermissionKind.FS_WRITE}), read_only=False)
+        tool=spec("fs.write", read_only=False)
     )
 
     assert reader.prepare(call(), correlation=CORRELATION, timeout_ms=1).auto_retry_allowed
@@ -109,7 +94,7 @@ def test_prepare_does_not_raise_for_an_unknown_tool() -> None:
     """`before_tool_call` 的必填槽是 `invocation`，这里抛就等于那个 Hook 永远收不到它。"""
     exec_, _ = executor()
     invocation = exec_.prepare(call("nope.missing"), correlation=CORRELATION, timeout_ms=1)
-    assert invocation.granted == frozenset()
+    assert invocation.call.name == "nope.missing"
 
 
 # ------------------------------------------------------------------ B 校验
@@ -145,17 +130,6 @@ async def test_schema_errors_never_carry_the_argument_values() -> None:
 
     assert result.ok is False
     assert "sk-live-x" not in repr(result.error) + str(result.error.detail if result.error else "")
-
-
-async def test_missing_permission_is_denied_without_executing() -> None:
-    exec_, handler = executor(granted=frozenset())
-
-    result = await invoke(exec_, call())
-
-    assert result.error is not None
-    assert result.error.code is ErrorCode.PERMISSION_DENIED
-    assert result.side_effect is SideEffect.NONE
-    assert handler.calls == []
 
 
 async def test_an_unknown_tool_is_a_capability_missing_result() -> None:

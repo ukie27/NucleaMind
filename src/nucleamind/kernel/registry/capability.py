@@ -4,7 +4,7 @@
 的事务性批次）与 `CapabilityRegistry`（登记容器 + 冻结 + `dict[(kind, name)]` 的 O(1)
 查找）。
 不负责：判定谁覆盖谁、谁最终生效——那是 `resolution.py`；也不负责发现插件、导入 `setup`、
-权限判定（`kernel/plugins/`，`D25`–`D27`）。本模块不读文件、不访问网络、不碰全局状态。
+插件加载（`kernel/plugins/`）。本模块不读文件、不访问网络、不碰全局状态。
 
 三条贯穿本模块的约定：
 

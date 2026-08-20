@@ -7,7 +7,7 @@
 （`tests/runtime/test_inspect.py`）。
 
 **退出码同样是主角**（`test_cli.py` 立的规矩）：0 成功、2 用法或配置错、
-3「没事可做 / 没确认」。第三档是 `nm init` 与 `nm permissions forget` 已有的形态。
+3「没事可做 / 没确认」。第三档与 `nm init` 已有的形态一致。
 """
 
 from __future__ import annotations

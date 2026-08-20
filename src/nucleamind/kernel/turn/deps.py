@@ -2,7 +2,7 @@
 
 职责：声明 engine 与外界交互的**唯一**通道——`EngineDeps` 四个槽，`ToolInvoker` 与
 `HookDispatcher` 的方法签名、异常约定与取消语义，以及 engine 负责分发的 4 个 `HookName`。
-不负责：提供任何实现、决定 Hook 顺序与超时、判权限、查 registry、等待不可取消的工具——
+不负责：提供任何实现、决定 Hook 顺序与超时、查 registry、等待不可取消的工具——
 实现在 `D14` 的装配侧与 `D16` 的 Host；本模块只有签名与常量，不含 IO。
 
 **为什么这两个 Protocol 在 kernel 而不是 contracts**：`contracts/protocols.py` 的 9 个是
@@ -71,14 +71,14 @@ ENGINE_HOOKS: Final[frozenset[HookName]] = frozenset(
 class ToolInvoker(Protocol):
     """把一次 `ToolCall` 变成 `ToolResult` 的执行面（技术方案 §6.2 的 `tools` 槽）。
 
-    实现方负责 schema 校验、权限校验、调用预算校验与真正的执行（`KER-004`）。engine 只
-    负责调度顺序、超时数值与结果截断——它不认识 JSON Schema，也不认识权限模型。
+    实现方负责 schema 校验、调用预算校验与真正的执行（`KER-004`）。engine 只负责调度
+    顺序、超时数值与结果截断——它不认识 JSON Schema。
     """
 
     def prepare(
         self, call: ToolCall, *, correlation: Correlation, timeout_ms: int
     ) -> ToolInvocation:
-        """把一次调用补齐成可执行的调用上下文：授予的权限、幂等键。
+        """把一次调用补齐成可执行的调用上下文。
 
         engine 调用它是为了拿到 `before_tool_call` Hook 的必填槽（`HookContext.invocation`）——
         Hook 要能改写工具参数，就必须在执行**之前**看到一个完整的 `ToolInvocation`。
@@ -93,7 +93,7 @@ class ToolInvoker(Protocol):
     async def invoke(self, invocation: ToolInvocation, cancel: CancelSignal) -> ToolResult:
         """执行一次调用，**必须**在 `invocation.timeout_ms + tool_cancel_grace_ms` 内返回。
 
-        **异常约定**：约定不抛——schema 不合、权限不足、超时、handler 逸出的异常一律折成
+        **异常约定**：约定不抛——schema 不合、超时、handler 逸出的异常一律折成
         `ToolResult(ok=False, error=...)`。逸出的异常 engine 会兜成
         `side_effect=UNKNOWN`，但那样就丢掉了执行侧本来能给出的副作用判断。
         **取消语义**：`cancel` 是本次调用专属的子令牌（`CancelToken.child()`）。宽限期等待与

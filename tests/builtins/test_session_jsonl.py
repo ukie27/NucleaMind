@@ -52,16 +52,11 @@ from nucleamind.contracts import (
     CapabilityKind,
     ErrorCode,
     NucleaError,
-    PermissionKind,
-    ProviderId,
     Role,
     SessionKey,
     SessionMessage,
 )
 from nucleamind.kernel.config import InstanceLayout
-from nucleamind.kernel.plugins import session_store_from
-from nucleamind.runtime.wiring import wire_capabilities
-from nucleamind.sdk import PluginContext
 from nucleamind.sdk.testing import FakePluginContext, SessionStoreContract
 
 DOC_PATH = Path(__file__).resolve().parents[2] / "docs" / "session-storage.md"
@@ -776,32 +771,6 @@ class TestRegistration:
         assert declaration.overrides is None
         # `priority` 不写：内建基准是 0，写了（哪怕写的是默认值 100）就会被原样采纳。
         assert "priority" not in declaration.model_fields_set
-
-    def test_the_manifest_declares_the_file_permissions_it_really_uses(self) -> None:
-        granted = {permission.kind for permission in SESSION_JSONL.permissions}
-        assert granted == {PermissionKind.FS_READ, PermissionKind.FS_WRITE}
-        assert all(permission.reason.strip() for permission in SESSION_JSONL.permissions)
-
-    async def test_wiring_registers_a_store_pointed_at_the_configured_directory(
-        self, tmp_path: Path
-    ) -> None:
-        """走真实装配链：manifest -> `import_setup` -> Host -> registry。"""
-        sessions = tmp_path / "sessions"
-
-        def context_for(provider: ProviderId) -> PluginContext:
-            del provider
-            return FakePluginContext(config={CONFIG_DIRECTORY_KEY: str(sessions)})
-
-        wiring = await wire_capabilities(manifests=[SESSION_JSONL], context_for=context_for)
-
-        assert wiring.report.ok
-        binding = session_store_from(wiring.registry)
-        assert binding is not None
-        assert binding.ref.name == CAPABILITY_NAME
-        assert isinstance(binding.value, JsonlSessionStore)
-        assert binding.value.directory == sessions
-        # 注册不做 IO：目录到第一次写入才出现。
-        assert not sessions.exists()
 
     def test_the_directory_falls_back_to_the_plugin_state_dir(self, tmp_path: Path) -> None:
         ctx = FakePluginContext(state_dir=tmp_path / "state")

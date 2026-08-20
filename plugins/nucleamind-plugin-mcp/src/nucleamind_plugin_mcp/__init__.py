@@ -44,12 +44,11 @@ from __future__ import annotations
 
 from typing import Final
 
-from nucleamind.contracts import CapabilityKind, PermissionKind
+from nucleamind.contracts import CapabilityKind
 from nucleamind.sdk import (
     CapabilityDecl,
     ManifestJsonSchema,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -160,27 +159,12 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
 MANIFEST: Final = PluginManifest(
     id="mcp",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_mcp:setup",
     capabilities=(
         # **一条命名空间声明**（`D38-A`）：远端工具名要连上 server 才知道，而 manifest
         # 是静态的。零注册是合法的——server 全连不上时本插件一条工具都不注册。
         CapabilityDecl(kind=CapabilityKind.TOOL, name=NAMESPACE, namespace=True),
-    ),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.SHELL,
-            reason="stdio 传输要启动并长驻一个 MCP server 子进程。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.NET,
-            reason="sse / streamable_http 传输要连到远端 MCP server。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.SECRET,
-            target=SECRET_NAME,
-            reason="远端 server 的鉴权 header 用它（headers 里写 {api_key}）。",
-        ),
     ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：接不上 MCP server 的 Agent 仍然能对话。

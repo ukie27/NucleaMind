@@ -3,12 +3,12 @@
 职责：列出插件与它们的状态，把启用 / 禁用写进 `config.json`，移除配置里的引用，
 并在显式确认后删除插件的状态目录。
 不负责：发现与阶段 A 判定（`runtime/inspect.py` → `inventory.py` / `plugin_plan.py`）、
-改配置的文件操作（`runtime/config_edit.py`）、判定授权（`nm permissions`）。
+改配置的文件操作（`runtime/config_edit.py`）。
 
 **`enable` / `disable` 只改配置，不在当前进程生效**（首版不热更新，需求 §4.2、§10.4）。
-这句印在每一次改动的输出里，与 `nm permissions grant` 一致。
+这句印在每一次改动的输出里。
 
-**不取实例锁**，与 `nm config show` / `nm permissions` 同一条理由：看一眼装了什么、
+**不取实例锁**，与 `nm config show` 同一条理由：看一眼装了什么、
 或者改一行配置，不该与正在跑的实例互斥。代价是改动要等对方重启才生效——反正首版本来
 就不热更新，这里没有多付出什么。
 

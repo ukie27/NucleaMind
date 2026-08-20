@@ -27,7 +27,6 @@ from nucleamind.kernel.config import (
     INSTANCE_NAME_ENV,
     LOCK_FILENAME,
     LOGS_DIRNAME,
-    PERMISSIONS_FILENAME,
     PLUGINS_DIRNAME,
     SESSIONS_DIRNAME,
     WORKSPACE_DIRNAME,
@@ -39,7 +38,6 @@ def test_layout_names_are_frozen() -> None:
     """名字是持久化契约，逐个按字面量固定。"""
     assert CONFIG_FILENAME == "config.json"
     assert LOCK_FILENAME == "instance.lock"
-    assert PERMISSIONS_FILENAME == "permissions.json"
     assert SESSIONS_DIRNAME == "sessions"
     assert PLUGINS_DIRNAME == "plugins"
     assert LOGS_DIRNAME == "logs"
@@ -144,7 +142,6 @@ class TestEnsure:
         layout = InstanceLayout.resolve(instance_dir=tmp_path / "inst", env={})
         layout.ensure()
         assert not layout.config_path.exists()
-        assert not layout.permissions_path.exists()
         assert not layout.lock_path.exists()
 
     def test_is_idempotent(self, tmp_path: Path) -> None:
@@ -161,7 +158,6 @@ def test_all_derived_paths_stay_inside_root(tmp_path: Path) -> None:
     derived = [
         layout.config_path,
         layout.lock_path,
-        layout.permissions_path,
         layout.sessions_dir,
         layout.plugins_dir,
         layout.logs_dir,

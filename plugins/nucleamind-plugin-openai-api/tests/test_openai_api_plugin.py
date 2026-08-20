@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import pytest
-from nucleamind_plugin_openai_api import CAPABILITY_NAME, MANIFEST, SECRET_NAME, setup
+from nucleamind_plugin_openai_api import setup
 from nucleamind_plugin_openai_api.channel import ApiChannel
 from nucleamind_plugin_openai_api.hub import SessionHub
 from nucleamind_plugin_openai_api.settings import ApiSettings, resolve_settings
@@ -18,7 +18,6 @@ from nucleamind.contracts import (
     InstanceId,
     NucleaError,
     OutboundMessage,
-    PermissionKind,
     SessionKey,
     StreamState,
     TurnId,
@@ -98,23 +97,12 @@ def test_binding_a_public_host_without_a_key_is_refused() -> None:
             plugin_id="openai-api",
             config={"host": "0.0.0.0"},
             # 权限授予了但凭据没配——这正是「暴露到回环之外却没有鉴权」的形状。
-            granted=frozenset({PermissionKind.SECRET}),
         )
     )
     with pytest.raises(NucleaError) as caught:
         setup(api)  # type: ignore[arg-type]
     assert caught.value.code is ErrorCode.CONFIG_INVALID
     assert api.registered == []
-
-
-def test_manifest_declares_exactly_one_channel_and_one_secret() -> None:
-    assert [decl.name for decl in MANIFEST.capabilities] == [CAPABILITY_NAME]
-    assert [decl.target for decl in MANIFEST.permissions] == [SECRET_NAME]
-    # 不声明 `net`：那条判的是出站，本插件只监听。
-    assert all(decl.kind.value == "secret" for decl in MANIFEST.permissions)
-
-
-# ---------------------------------------------------------------- 关联与投递
 
 
 def outbound(conversation: str, turn: str, text: str, state: StreamState) -> OutboundMessage:

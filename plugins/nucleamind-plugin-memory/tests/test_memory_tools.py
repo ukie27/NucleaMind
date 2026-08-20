@@ -30,7 +30,6 @@ from nucleamind.contracts import (
     ErrorCategory,
     ErrorCode,
     FragmentScope,
-    PermissionKind,
     RiskLevel,
     SideEffect,
     ToolSpec,
@@ -81,7 +80,6 @@ def test_recall_is_read_only_and_safe() -> None:
     spec = recall_spec()
     assert spec.read_only is True
     assert spec.risk is RiskLevel.SAFE
-    assert spec.permissions == frozenset({PermissionKind.FS_READ})
 
 
 def test_remember_is_mutating_not_destructive() -> None:

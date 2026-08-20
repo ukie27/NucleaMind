@@ -41,7 +41,7 @@ class ListEdit:
     """一次列表改动的结果。`changed=False` 表示目标状态本来就成立。
 
     「本来就启用着」不是错误，但也不该报告成「已改动」——调用方据此决定退出码
-    （`nm permissions forget` 的先例：没事可做时返回 3）。
+    （没事可做时返回 3）。
     """
 
     document: dict[str, JsonValue]

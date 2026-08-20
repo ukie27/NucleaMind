@@ -37,7 +37,7 @@ runtime ───────────────▶ kernel ─────�
 | `sdk` | 插件 manifest、注册 API、`PluginContext`、契约测试基类 | Kernel 实现、发现与装配、具体能力 |
 | `builtins` | 随主包交付的默认能力 | 私有注册通道、Kernel 特权 |
 | `plugins` | 独立发行的可选能力 | 宿主内部实现依赖 |
-| `runtime` | 配置落盘、能力选择、实例启动/停止、权限门面、CLI | 可复用执行机制和供应商业务逻辑 |
+| `runtime` | 配置落盘、能力选择、实例启动/停止、资源服务、CLI | 可复用执行机制和供应商业务逻辑 |
 | `embed` | 稳定、薄的嵌入入口 | 第二套装配流程 |
 
 测试中的 R1–R5 import 守卫是这张表的可执行版本。
@@ -58,13 +58,13 @@ kernel/
   registry/         注册批次、冲突解析、有效能力视图
   turn/             单个 turn 的执行与编排机制
   routing/          入站去重、Session 排队、命令分流、fanout
-  plugins/          发现、加载计划、Host、权限账本、生命周期
+  plugins/          发现、加载计划、Host、生命周期
   config/           纯配置加载、校验、布局、Secret 引用
   observability/    EventBus、脱敏载荷、健康状态与 sinks
 
 runtime/
   bootstrap.py      唯一组装根：启动顺序与最终实例组装
-  plugin_bootstrap.py Manifest 配置、权限、规划与统一注册策略
+  plugin_bootstrap.py Manifest 配置、规划与统一注册策略
   startup.py        启动成功前的任务、订阅与 sink 所有权事务
   instance.py       实例生命周期与输入泵
   wiring.py         Host/Registry 到运行依赖的转换
@@ -136,8 +136,6 @@ runtime.plugin_plan + kernel.plugins.loader
   ├─ config schema
   └─ 确定性 LoadPlan.order
        ▼
-权限批准 / 账本
-       ▼
 CapabilityHost + RegistrationBatch
   ├─ setup(ctx, api)
   ├─ 声明与实际注册逐项核对
@@ -201,7 +199,7 @@ producer ── bus.publish(name, correlation, payload, error)
 |---|---|---|
 | 新模型厂商 | `MODEL` 插件 | 在 Kernel 加 provider 分支或猜测表 |
 | 新 Channel | `CHANNEL` 插件 + `nm serve` | 在 Runtime 写平台专用泵 |
-| 新工具 | `TOOL` 插件和 `PluginContext` 资源门面 | 直接从插件越过权限门面访问宿主状态 |
+| 新工具 | `TOOL` 插件和 `PluginContext` 资源服务 | 把 Runtime/Kernel 私有对象交给插件 |
 | 新 Context 来源 | `CONTEXT` 能力 | 把产品 prompt 写死在 Context Builder |
 | 新压缩策略 | `COMPACTOR` 能力 | 让模型实现偷偷改历史 |
 | 新 Memory 后端 | `MEMORY` 能力 | 把存储策略塞进 Session Store |
@@ -223,7 +221,7 @@ producer ── bus.publish(name, correlation, payload, error)
 | `runtime/plugin_bootstrap.py` | Manifest 到本次注册尝试的 Runtime 策略 | 实例锁、Channel 运行或通用 Kernel 机制 |
 | `kernel/turn/orchestrator.py` | 固定编排阶段之间的连接 | 某阶段已有独立状态机或多种策略 |
 | `kernel/turn/context_builder.py` | 通用 Context 排序/预算机制 | 具体产品内容或独立压缩算法 |
-| `kernel/plugins/loader.py` | 通用依赖与加载机制 | Manifest 项目规则或权限产品策略 |
+| `kernel/plugins/loader.py` | 通用依赖与加载机制 | Manifest 项目规则或产品策略 |
 | `kernel/config/schema.py` | 字段声明到 Config 的映射 | 新字段形状、I/O 或能力选择逻辑 |
 | `sdk/api.py` / `manifest.py` | 公开协议与纯校验 | Runtime 行为、发现、网络或文件 I/O |
 

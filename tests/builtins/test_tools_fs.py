@@ -64,7 +64,6 @@ from nucleamind.contracts import (
     ErrorCode,
     JsonValue,
     NucleaError,
-    PermissionKind,
     ProviderId,
     RiskLevel,
     SideEffect,
@@ -765,11 +764,6 @@ class TestRegistration:
     def test_the_spec_name_matches_the_table_key(self) -> None:
         assert all(spec.name == name for name, (spec, _) in TOOL_FACTORIES.items())
 
-    def test_the_manifest_declares_both_file_permissions(self) -> None:
-        kinds = {decl.kind for decl in TOOLS_FS.permissions}
-        assert kinds == {PermissionKind.FS_READ, PermissionKind.FS_WRITE}
-        assert all(decl.reason.strip() for decl in TOOLS_FS.permissions)
-
     def test_the_config_schema_lists_exactly_the_keys_the_code_reads(self) -> None:
         properties = TOOLS_FS.config_schema["properties"]
         assert isinstance(properties, dict)
@@ -783,12 +777,10 @@ class TestRegistration:
         }
         assert TOOLS_FS.config_schema["additionalProperties"] is False
 
-    def test_read_only_tools_declare_no_write_permission(self) -> None:
-        """`ToolSpec` 已经强制 `read_only ⇒ SAFE`，这里盯的是权限那一半。"""
+    def test_read_only_tools_are_safe(self) -> None:
         for spec in (READ_SPEC, LIST_SPEC, GREP_SPEC):
             assert spec.read_only is True
             assert spec.risk is RiskLevel.SAFE
-            assert PermissionKind.FS_WRITE not in spec.permissions
 
     def test_write_tools_are_exclusive_and_destructive(self) -> None:
         """覆盖既有内容不可撤销；两次写同一个文件的结果又取决于顺序。"""
@@ -796,7 +788,6 @@ class TestRegistration:
             assert spec.read_only is False
             assert spec.risk is RiskLevel.DESTRUCTIVE
             assert spec.concurrency is Concurrency.EXCLUSIVE
-            assert PermissionKind.FS_WRITE in spec.permissions
 
     async def test_wiring_registers_all_five_at_the_builtin_priority(self, tmp_path: Path) -> None:
         def context_for(provider: ProviderId) -> PluginContext:

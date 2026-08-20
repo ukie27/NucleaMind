@@ -46,11 +46,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from nucleamind.contracts import CapabilityKind, PermissionKind
+from nucleamind.contracts import CapabilityKind
 from nucleamind.sdk import (
     CapabilityDecl,
     NucleaAPI,
-    PermissionDecl,
     PluginContext,
     PluginManifest,
 )
@@ -115,26 +114,13 @@ STORE_NAME: Final = "jsonl"
 MANIFEST: Final = PluginManifest(
     id="memory",
     version="0.1.0",
-    sdk_range=">=1.0.0,<2.0.0",
+    sdk_range=">=2.0.0,<3.0.0",
     setup="nucleamind_plugin_memory:setup",
     capabilities=(
         CapabilityDecl(kind=CapabilityKind.MEMORY, name=STORE_NAME),
         CapabilityDecl(kind=CapabilityKind.CONTEXT, name=PROVIDER_NAME),
         *(CapabilityDecl(kind=CapabilityKind.TOOL, name=name) for name in TOOL_NAMES),
         CapabilityDecl(kind=CapabilityKind.COMMAND, name=COMMAND_NAME),
-    ),
-    permissions=(
-        PermissionDecl(
-            kind=PermissionKind.FS_READ,
-            reason="读取插件自己状态目录下的记忆文件。",
-        ),
-        PermissionDecl(
-            kind=PermissionKind.FS_WRITE,
-            reason=(
-                "把记忆写进插件自己的状态目录"
-                "（FileAccess 没有追加、fsync 与原子替换，见 store.py）。"
-            ),
-        ),
     ),
     config_schema=CONFIG_SCHEMA,
     # `critical=False`：没有长期记忆的 Agent 仍然能对话——这正是 `MEM-003`
