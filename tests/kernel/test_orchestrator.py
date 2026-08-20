@@ -545,6 +545,109 @@ async def test_cancelling_mid_stream_keeps_what_was_produced() -> None:
     assert harness.delivered[-1].stream_state is StreamState.CANCELLED
 
 
+async def test_shutdown_cancellation_finishes_the_turn_and_persists_partial_content() -> None:
+    harness = build(ScriptedProvider([]), stream=True)
+    partial_sent = asyncio.Event()
+
+    def stream(request, cancel):  # noqa: ANN001, ANN202 - 契约要求普通 def
+        del request
+
+        async def gen():  # noqa: ANN202
+            from nucleamind.contracts import ChunkKind, ModelChunk
+
+            yield ModelChunk(kind=ChunkKind.TEXT, text="停机前的半句")
+            partial_sent.set()
+            while not cancel.requested:
+                await asyncio.sleep(0)
+            cancel.raise_if_requested()
+
+        return gen()
+
+    harness.provider.stream = stream  # type: ignore[method-assign]
+    running = asyncio.create_task(harness.send())
+    await asyncio.wait_for(partial_sent.wait(), timeout=1)
+
+    forced = await harness.orchestrator.finish_shutdown(timeout_ms=1_000)
+    receipt = await asyncio.wait_for(running, timeout=1)
+
+    assert forced is None
+    assert receipt.outcome is not None
+    assert receipt.outcome.status is TurnStatus.CANCELLED
+    assert receipt.outcome.cancel_reason is CancelReason.SHUTDOWN
+    saved = [record for _, records in harness.store.appends for record in records]
+    assistant = [record for record in saved if record.role is Role.ASSISTANT]
+    assert assistant and assistant[0].content == "停机前的半句"
+    assert assistant[0].interrupted is True
+    assert names(harness).count("turn.cancelled") == 1
+
+
+async def test_shutdown_closes_new_turn_admission() -> None:
+    harness = build(ScriptedProvider([text_response("不应调用")]))
+    harness.orchestrator.begin_shutdown()
+
+    receipt = await harness.send()
+
+    assert receipt.admitted is False
+    assert receipt.error is not None
+    assert receipt.error.code is ErrorCode.CANCELLED_BY_SHUTDOWN
+    assert harness.provider.call_count == 0
+    assert names(harness) == ["turn.rejected"]
+
+
+async def test_shutdown_also_drains_submissions_waiting_for_the_session() -> None:
+    harness = build(ScriptedProvider([], default=text_response("不应调用")))
+    entered = asyncio.Event()
+    calls = 0
+
+    async def slow(request, cancel):  # noqa: ANN001, ANN202
+        nonlocal calls
+        del request
+        calls += 1
+        entered.set()
+        while not cancel.requested:
+            await asyncio.sleep(0)
+        cancel.raise_if_requested()
+
+    harness.provider.complete = slow  # type: ignore[method-assign]
+    first = asyncio.create_task(harness.send(inbound(message_id="active")))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    waiting = asyncio.create_task(harness.send(inbound(message_id="waiting")))
+    await asyncio.sleep(0)
+
+    forced = await harness.orchestrator.finish_shutdown(timeout_ms=1_000)
+    active_receipt, waiting_receipt = await asyncio.gather(first, waiting)
+
+    assert forced is None
+    assert active_receipt.outcome is not None
+    assert active_receipt.outcome.cancel_reason is CancelReason.SHUTDOWN
+    assert waiting_receipt.admitted is False
+    assert waiting_receipt.error is not None
+    assert waiting_receipt.error.code is ErrorCode.CANCELLED_BY_SHUTDOWN
+    assert calls == 1
+
+
+async def test_shutdown_force_cancels_an_uncooperative_submission_after_grace() -> None:
+    harness = build(ScriptedProvider([]))
+    entered = asyncio.Event()
+
+    async def stuck(request, cancel):  # noqa: ANN001, ANN202
+        del request, cancel
+        entered.set()
+        await asyncio.Event().wait()
+
+    harness.provider.complete = stuck  # type: ignore[method-assign]
+    running = asyncio.create_task(harness.send())
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    live = harness.orchestrator.live_turns
+
+    forced = await harness.orchestrator.finish_shutdown(timeout_ms=1)
+    result = await asyncio.gather(running, return_exceptions=True)
+
+    assert forced == live
+    assert len(forced) == 1
+    assert isinstance(result[0], asyncio.CancelledError)
+
+
 def _cancelling_stream(harness):  # noqa: ANN001, ANN202
     """产出两个分片后请求取消——「已产生的内容必须留存」才有东西可断言。"""
 

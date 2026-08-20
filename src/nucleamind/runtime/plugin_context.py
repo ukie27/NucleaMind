@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from logging import Logger, getLogger
 from pathlib import Path
@@ -41,6 +41,8 @@ from nucleamind.kernel.observability import EventBus, Subscription
 from nucleamind.sdk import EventHandler, FileAccess, HttpAccess, PluginContext, ShellAccess
 
 from .access import GuardedFileAccess, GuardedHttpAccess, GuardedShellAccess
+
+LifecycleAction = Callable[[], Awaitable[None]]
 
 __all__ = [
     "PluginEventBridge",
@@ -161,6 +163,11 @@ class RuntimePluginContext:
     config_path: Path | None = None
     #: 经 `spawn_task()` 派生的任务。实例停止时由装配根取消（`EDG-104`、`EDG-105`）。
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
+    #: `setup()` 只登记生命周期与任务；实例按依赖序激活时才执行或启动。
+    start_actions: list[LifecycleAction] = field(default_factory=list)
+    cleanup_actions: list[LifecycleAction] = field(default_factory=list)
+    pending_tasks: list[tuple[Awaitable[None], str]] = field(default_factory=list)
+    started: bool = False
     #: 是否已进入停止流程。进去之后 `spawn_task()` 一律拒绝——`sdk/api.py` 写死的约定，
     #: 否则一个在 `instance.shutdown` Hook 里派生任务的插件会正好逃过刚刚那轮取消。
     stopping: bool = False
@@ -189,13 +196,23 @@ class RuntimePluginContext:
     def events(self) -> PluginEventBridge:
         return self.bridge
 
-    def spawn_task(self, coro: Awaitable[None], *, name: str) -> None:
-        """在实例的事件循环上派生一个后台任务。
+    def on_start(self, action: LifecycleAction) -> None:
+        """登记激活动作；`setup()` 返回不等于插件已经开始运行。"""
+        if self.started or self.stopping:
+            raise self._lifecycle_registration_error("on_start")
+        self.start_actions.append(action)
 
-        **异常约定**：没有运行中的事件循环时抛 `KERNEL_INVARIANT_VIOLATED`——`setup()`
-        在装配期同步执行，那时派生后台任务就是在赌一个还不存在的循环。插件已进入停止
-        流程时同样抛它（`sdk/api.py` 的约定）：那时派生的任务不在任何一轮取消的覆盖
-        范围里，而「停干净了」不能有例外（`EDG-105`）。
+    def add_cleanup(self, action: LifecycleAction) -> None:
+        """登记资源清理；允许激活动作继续登记它刚刚取得的资源。"""
+        if self.stopping:
+            raise self._lifecycle_registration_error("add_cleanup")
+        self.cleanup_actions.append(action)
+
+    def spawn_task(self, coro: Awaitable[None], *, name: str) -> None:
+        """登记后台任务；插件激活前不运行，激活后立即派生。
+
+        `setup()` 期间只保存 awaitable，因此它不会在 Registry 冻结和实例门面就绪之前抢跑。
+        插件已进入停止流程时拒绝：那时派生的任务不在任何一轮取消的覆盖范围里。
         """
         if self.stopping:
             _close_unawaited(coro)
@@ -204,19 +221,39 @@ class RuntimePluginContext:
                 "插件已进入停止流程，不能再派生后台任务。",
                 detail={"plugin": self.plugin_id_, "task": name},
             )
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError as exc:
-            raise NucleaError(
-                ErrorCode.KERNEL_INVARIANT_VIOLATED,
-                "当前没有运行中的事件循环，无法派生后台任务。",
-                detail={"plugin": self.plugin_id_, "task": name},
-            ) from exc
+        if not self.started:
+            self.pending_tasks.append((coro, name))
+            return
+        self._start_task(coro, name)
+
+    async def activate(self) -> None:
+        """按登记顺序激活插件，然后启动它在 `setup()` 中登记的任务。"""
+        if self.started:
+            return
+        if self.stopping:
+            raise self._lifecycle_registration_error("activate")
+        for action in tuple(self.start_actions):
+            await action()
+        self.started = True
+        pending = tuple(self.pending_tasks)
+        self.pending_tasks.clear()
+        for coro, name in pending:
+            self._start_task(coro, name)
+
+    def _start_task(self, coro: Awaitable[None], name: str) -> None:
+        loop = asyncio.get_running_loop()
         task: asyncio.Task[None] = loop.create_task(
             _as_coroutine(coro), name=f"{self.plugin_id_}:{name}"
         )
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
+
+    def _lifecycle_registration_error(self, action: str) -> NucleaError:
+        return NucleaError(
+            ErrorCode.KERNEL_INVARIANT_VIOLATED,
+            "插件生命周期阶段不允许执行该操作。",
+            detail={"plugin": self.plugin_id_, "action": action},
+        )
 
     def _root(self, accessor: str) -> Path:
         if self.workspace is None:
@@ -272,7 +309,7 @@ class RuntimePluginContext:
         return resolved if isinstance(resolved, SecretStr) else SecretStr(resolved)
 
     async def shutdown(self) -> None:
-        """本插件的停止动作：退订事件、取消后台任务、等待它们回收。
+        """本插件的停止动作：停止任务，然后逆序释放登记的资源。
 
         `EDG-105` 的三项里这里做两项。**第三项「注销能力」不在这里，也不在运行期**：
         registry 解析后只读（`NFR-403`），而首版不热更新（技术方案 §10.4）——一个被
@@ -283,16 +320,31 @@ class RuntimePluginContext:
         **不设自己的超时**：预算由 `stop_plugins()` 统一施加（`EDG-104`），两处各判一次
         会让「到底等了多久」取决于两个数的最小值，而配置里只有一个。
 
-        **异常约定**：不抛。`gather(return_exceptions=True)` 吃掉任务自己的异常——一个
-        插件的后台任务崩了不该让它的清理半途而废。
+        任务自己的异常不会阻断清理。清理动作的异常在全部动作跑完后抛出第一条，由
+        `stop_plugins()` 折成该插件的停止结果。
         """
+        if self.stopping:
+            return
         self.stopping = True
         self.bridge.close()
+        for coro, _ in self.pending_tasks:
+            _close_unawaited(coro)
+        self.pending_tasks.clear()
         pending = [*self.tasks, *self.bridge.tasks]
         for task in pending:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+        first_error: Exception | None = None
+        for action in reversed(self.cleanup_actions):
+            try:
+                await action()
+            except Exception as exc:  # noqa: BLE001 - 其余资源仍必须继续释放
+                if first_error is None:
+                    first_error = exc
+        self.cleanup_actions.clear()
+        if first_error is not None:
+            raise first_error
 
     @property
     def instance(self) -> InstanceView:

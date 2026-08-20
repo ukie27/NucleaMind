@@ -433,9 +433,11 @@ class TestManifest:
             def register_model_provider(self, name: str, provider: object) -> None:
                 registered[name] = provider
 
-        setup(_Recorder(make_context()))  # type: ignore[arg-type]
+        context = make_context()
+        setup(_Recorder(context))  # type: ignore[arg-type]
         assert list(registered) == [CAPABILITY_NAME]
         assert isinstance(registered[CAPABILITY_NAME], AnthropicModelProvider)
+        assert context.cleanup_actions == [registered[CAPABILITY_NAME].aclose]
 
     def test_setup_fails_on_a_bad_config(self) -> None:
         """坏配置在 `setup()` 时就被指出来，不拖到第一次 turn。"""

@@ -348,6 +348,26 @@ class TestFailureIsolation:
 
 
 class TestDrain:
+    async def test_pending_messages_can_be_discarded_while_current_work_finishes(self) -> None:
+        recorder = Recorder()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handle(item: InboundMessage) -> None:
+            entered.set()
+            await release.wait()
+            recorder.handled.append(item.content)
+
+        fanout = ConversationFanout(
+            handle, on_failure=recorder.on_failure, on_dropped=recorder.on_dropped
+        )
+        await fanout.run(stream(*(message("c1", str(i), index=i) for i in range(3))))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert fanout.discard_pending() == 2
+        release.set()
+        await fanout.drain(cancel=False)
+        assert recorder.handled == ["0"]
+
     async def test_drain_cancels_in_flight_and_discards_queued(self) -> None:
         """与串行泵时代的 `pump.cancel()` 语义逐字相同，只是从 1 个协程变成 N 个。"""
         recorder = Recorder()

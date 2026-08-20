@@ -1,23 +1,7 @@
-"""Turn 编排：准入、组装、事件发布与持久化（技术方案 §6.2 第二层、§10.2、§10.3）。
-
-职责：把一条 `InboundMessage` 走完 §10.2 的 14 步——去重、并发准入、命令分流、会话加载、
-检查点 1/4、context 组装、驱动 `run_turn`、把引擎事件翻译成 `RuntimeEvent` 与
-`OutboundMessage`、持久化、发布终态与 `turn_end`。它是 **turn 事件的唯一发布点**
-（`KER-010`、`OBS-002`）。
-不负责：模型-工具循环本身（`engine.py`）、Hook 归并（`hooks.py`）、片段裁剪
-（`context_builder.py`）、工具执行（`invoker.py`）、事件名翻译（`translation.py`）、
-判断该不该排队（`routing/`）。
-
-**准入顺序是 去重 → 并发 → 分流**（`routing/__init__.py` 写死）：重复投递的消息不该占
-队列名额，更不该在 `MERGE` 下被并进下一批（`EDG-201`）。
-
-**MERGE 下整批归一个 turn**：被吸收的消息不产生自己的事件流——同一次执行在事件流里出现
-N 份会让 `OBS-002` 的按序重放重复计数。它们的 `message_id` 记进执行 turn 的 `turn.started`
-载荷（`merged_from`），而提交方本人拿到的 `TurnReceipt` 就是执行 turn 的那一份，
-因此「我的消息去哪了」不需要再查一张映射表。
-
-**命令类 turn 不写会话历史**：`/help` 的输出不是模型对话的一部分，写进去只会在下一轮占
-预算。命令影响 turn 的正规路径是 `CommandResult.fragments`（`CMD-004`）。
+"""Turn 编排：准入、Context 组装、事件发布与持久化。
+职责：Turn 准入、执行组装与事件/持久化收口，并作为 Turn 事件的唯一发布点。
+不负责：模型—工具循环、Hook、Context 裁剪、工具执行与排队策略。
+准入顺序是去重 → Session 并发 → 分流。MERGE 每批一个 Turn；命令 Turn 有事件但不写历史。
 """
 
 from __future__ import annotations
@@ -65,6 +49,7 @@ from .events import (
 from .finalization import finish_turn
 from .limits import BudgetLedger
 from .orchestration import OrchestratorDeps, TurnReceipt, emit_outbound, engine_deps
+from .tracker import TurnTracker
 from .transcript import Transcript, TurnState
 from .translation import (
     as_nuclea,
@@ -82,31 +67,40 @@ class TurnOrchestrator:
 
     def __init__(self, deps: OrchestratorDeps) -> None:
         self._deps = deps
-        self._live: dict[TurnId, CancelToken] = {}
+        self._turns = TurnTracker()
 
     @property
     def live_turns(self) -> tuple[TurnId, ...]:
         """当前在跑的 turn，`/cancel` 与实例停止时用。"""
-        return tuple(self._live)
+        return self._turns.live_turns
 
     def cancel(self, turn_id: TurnId, reason: CancelReason = CancelReason.USER) -> bool:
         """请求取消一个在跑的 turn（§10.3 的入口）。返回它是否还在跑。
 
         幂等：`CancelToken.request()` 第一次的原因胜出（`EDG-206`）。
         """
-        token = self._live.get(turn_id)
-        if token is None:
-            return False
-        token.request(reason)
-        return True
+        return self._turns.cancel(turn_id, reason)
+
+    def begin_shutdown(self) -> None:
+        """关闭新准入，并向此刻全部在途 Turn 请求业务取消。"""
+        self._turns.begin_shutdown()
+
+    async def finish_shutdown(self, *, timeout_ms: int) -> tuple[TurnId, ...] | None:
+        """等待业务取消正常收口；超时后强制取消仍不返回的执行任务。"""
+        return await self._turns.finish_shutdown(timeout_ms=timeout_ms)
 
     async def handle(self, message: InboundMessage) -> TurnReceipt:
-        """走完一条入站消息的全流程。
+        """处理入站消息；业务异常折进回执，`BaseException` 穿透。"""
+        if not self._turns.accepting:
+            return self._reject_stopping(message)
+        submission = self._turns.enter_submission()
+        try:
+            return await self._handle_admitted(message)
+        finally:
+            self._turns.leave_submission(submission)
 
-        **异常约定**：turn 内部的异常一律折成 `TurnReceipt` 里的终态或错误（`CMD-003`：
-        会话保持可用，进程不退出）；`BaseException` 穿透。
-        **取消语义**：本次 turn 的令牌登记在 `live_turns`，由 `cancel()` 触发。
-        """
+    async def _handle_admitted(self, message: InboundMessage) -> TurnReceipt:
+        """处理已越过停机准入门槛的消息；其等待调度的时间也受停止预算约束。"""
         deps = self._deps
         key = message.session_key(deps.scope)
         turn_id = TurnId(uuid.uuid4().hex)
@@ -139,12 +133,28 @@ class TurnOrchestrator:
             return TurnReceipt(turn_id=turn_id, admitted=False, error=error)
         return submitted.result
 
+    def _reject_stopping(self, message: InboundMessage) -> TurnReceipt:
+        """拒绝停机后到达或在 Session 队列中尚未开始的消息。"""
+        turn_id = TurnId(uuid.uuid4().hex)
+        error = NucleaError(
+            ErrorCode.CANCELLED_BY_SHUTDOWN,
+            "实例正在停止，不再接收新的 Turn。",
+        )
+        self._deps.bus.publish(
+            EventName.TURN_REJECTED,
+            payload={"reason": "instance_stopping", "message_id": message.message_id},
+            error=error,
+        )
+        return TurnReceipt(turn_id=turn_id, admitted=False, error=error)
+
     # ------------------------------------------------------------------ 一次 turn
 
     async def _run(
         self, batch: Sequence[InboundMessage], key: SessionKey, turn_id: TurnId
     ) -> TurnReceipt:
         """持有 session 槽位期间的全部工作。会话写入只发生在这里（单一写者）。"""
+        if not self._turns.accepting:
+            return self._reject_stopping(batch[0])
         deps = self._deps
         correlation = Correlation(instance_id=deps.instance_id, session_key=key, turn_id=turn_id)
         started_at = deps.clock()
@@ -154,7 +164,7 @@ class TurnOrchestrator:
             transcript=Transcript(turn_id=turn_id, created_at=started_at, limits=deps.limits),
         )
         token = CancelToken()
-        self._live[turn_id] = token
+        self._turns.activate(turn_id, token)
         try:
             deps.bus.publish(
                 EventName.TURN_STARTED,
@@ -166,9 +176,7 @@ class TurnOrchestrator:
                 },
             )
             return await self._execute(batch, key, state, token)
-        # 捕 Exception 而不是 BaseException：`CancelledError` 是任务本身被杀，不是 turn
-        # 被取消（engine 同一条理由）。检查点 1/4 抛出的取消也从这里落地——`outcome_for_error`
-        # 按 `ErrorCategory` 把它翻成 `CANCELLED` 而不是 `FAILED`。
+        # 业务取消由检查点抛普通异常并折为 CANCELLED；任务级 CancelledError 必须穿透。
         except Exception as error:
             return await finish_turn(
                 deps,
@@ -183,7 +191,7 @@ class TurnOrchestrator:
                 ),
             )
         finally:
-            self._live.pop(turn_id, None)
+            self._turns.finish(turn_id)
 
     async def _execute(
         self,
@@ -313,11 +321,7 @@ class TurnOrchestrator:
     async def _route(
         self, batch: Sequence[InboundMessage], state: TurnState, token: CancelToken
     ) -> TurnReceipt | None:
-        """逐条分流（§6.3）。返回非 `None` 表示这一批到此为止。
-
-        **逐条而不是只看第一条**：`MERGE` 下的第二条消息也可能是命令，只看第一条会让它
-        静默变成模型输入。被拒的那条让整批终止——`CMD-003` 要的是可诊断。
-        """
+        """逐条分流；MERGE 中任一消息被拒都会终止整批。"""
         for message in batch:
             outcome = await self._deps.dispatcher.dispatch(message, state.correlation, token)
             if outcome.disposition is Disposition.REJECTED:
@@ -435,14 +439,9 @@ class TurnOrchestrator:
         token: CancelToken,
         terminal: TurnStoppedByLimit,
     ) -> None:
-        """预算用尽后的收尾请求：同一批消息、**不带 tools**、不流式。
+        """预算用尽后发一次不带工具、不流式、不重试的收尾请求。
 
-        engine 撞上限即停、不替模型收尾（§6.2.1），但让用户面对一张空卡片同样不可接受
-        （基线 `test_budget_exhaustion_is_pushed_through_the_stream`）。收尾失败就算了：
-        终态已经是 `STOPPED_BY_LIMIT`，再失败一次不改变结论，只多一条诊断。
-
-        **它走的是没包重试的 `deps.model`**（`D48`）：终态已经定了，为一条注定不改变结论
-        的请求重试只会把一个已经确定的 turn 再拖几秒。
+        终态已确定为 `STOPPED_BY_LIMIT`；收尾失败只记诊断，不改变结论。
         """
         try:
             response = await self._deps.model.complete(

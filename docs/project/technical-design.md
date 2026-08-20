@@ -1138,7 +1138,12 @@ DISCOVERED -> VALIDATED -> LOADED -> STARTED -> STOPPING -> STOPPED
        -> FAILED(阶段与原因记录在 PluginState 中)
 ```
 
-停止顺序与启动拓扑序相反（`PLG-005`）。每个插件 `stop()` 有独立超时
+插件在 `setup()` 中通过 `PluginContext.on_start()` 登记激活动作，通过
+`PluginContext.add_cleanup()` 登记非 Task 资源的清理；Runtime 按加载拓扑激活，并在停止时
+逆序清理。`spawn_task()` 在 `setup()` 中只登记，完成激活动作后才启动，避免插件在 Registry
+冻结与实例门面就绪之前抢跑。
+
+停止顺序与启动拓扑序相反（`PLG-005`）。每个插件停止有独立超时
 `plugin_stop_timeout_ms`（默认 5000）：超时则放弃等待、记录 `PLUGIN_FAILURE` 事件，
 继续停止其余插件，不阻塞进程退出（`EDG-104`）。
 
@@ -1189,6 +1194,8 @@ class PluginContext(Protocol):
     state_dir: Path                     # <instance_dir>/plugins/<id>/
     logger: Logger                      # 已绑定 plugin_id，输出自动脱敏
     events: EventSubscriber
+    def on_start(self, action: Callable[[], Awaitable[None]]) -> None: ...
+    def add_cleanup(self, action: Callable[[], Awaitable[None]]) -> None: ...
     def spawn_task(self, coro: Awaitable[None], *, name: str) -> None: ...
     @property
     def fs(self) -> FileAccess: ...      # Workspace 边界内的文件服务
@@ -1249,8 +1256,9 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 回答 §17.2 第 10 项。
 
 - `sdk/version.py` 导出 `SDK_VERSION`，语义化版本，与主程序版本独立演进。
-  **当前为 `3.0.0`**；3.x 不再包含无消费者的 `runtime_requires`，也不暴露从未分发且与
-  `session.started` 事件重叠的 `session_start` Hook。
+  **当前为 `3.1.0`**；3.1 为 `PluginContext` 兼容新增激活与资源清理登记，3.x 不再包含
+  无消费者的 `runtime_requires`，也不暴露从未分发且与 `session.started` 事件重叠的
+  `session_start` Hook。
 - 插件用 `sdk_range` 声明兼容范围，不满足即拒绝加载（`SDK-005`）。
 - minor 版本只允许新增；移除或语义变更必须 major，且提前一个 minor 打运行期
   `DeprecationWarning` 并在 `ResolutionReport` 中标注。
@@ -1538,6 +1546,10 @@ Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中
 14  释放 session slot 锁，处理队列中的下一条消息
 ```
 
+若 `before_model_request` 替换了工具集合，替换后的 `ModelRequest.tools` 同时决定该轮的模型
+可见工具和可执行工具；不能出现模型看不见却仍可执行的旧表。`before_tool_call` 只允许改写
+参数，不能改变工具名、调用标识、关联标识、超时或幂等键。
+
 任一步的 `NucleaError` 都携带 `Correlation` 与 `capability`，因此日志、事件和用户提示
 可以指向同一次执行和同一个提供方（`10.7`、`NFR-501`）。
 
@@ -1571,6 +1583,11 @@ Python 解释器启动）。以 nanobot 当前启动耗时为基线，在 CI 中
   -> OutboundMessage(stream_state=CANCELLED)
   -> 释放 session 锁；会话保持可用，用户可继续下一条输入
 ```
+
+实例停止复用同一条业务取消路径：先关闭 Turn 新准入并对全部 live Turn 请求
+`CancelReason.SHUTDOWN`，再停止 Channel/pump、丢弃尚未开始的 lane 消息，并在实例级宽限期
+内等待所有已准入提交收口。只有宽限耗尽才取消承载提交的 asyncio Task。Turn 排干后才分发
+`instance_shutdown` Observer 并逆序释放插件资源，避免在途 Turn 使用已经关闭的 Provider。
 
 ### 10.4 插件启用与覆盖
 

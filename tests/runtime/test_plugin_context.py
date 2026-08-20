@@ -249,21 +249,77 @@ async def test_spawn_task_registers_the_task(tmp_path: Path) -> None:
         done.set()
 
     ctx.spawn_task(body(), name="probe")
+    assert not done.is_set()
+    assert [name for _, name in ctx.pending_tasks] == ["probe"]
+    await ctx.activate()
     await asyncio.wait_for(done.wait(), timeout=1)
 
 
-def test_spawn_task_without_a_loop_is_an_invariant_violation(tmp_path: Path) -> None:
-    """`setup()` 在装配期同步执行，那时派生后台任务就是在赌一个还不存在的循环。"""
+def test_spawn_task_without_a_loop_is_deferred_until_activation(tmp_path: Path) -> None:
+    """`setup()` 是同步入口；登记任务不要求它自己拥有事件循环。"""
     ctx = make_ctx(tmp_path)
 
     async def body() -> None:  # pragma: no cover - 不会被跑到
         return None
 
     coro = body()
-    with pytest.raises(NucleaError) as caught:
-        ctx.spawn_task(coro, name="probe")
-    assert caught.value.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+    ctx.spawn_task(coro, name="probe")
+    assert [name for _, name in ctx.pending_tasks] == ["probe"]
     coro.close()
+
+
+async def test_activation_and_cleanup_follow_lifecycle_order(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
+    trace: list[str] = []
+
+    async def action(name: str) -> None:
+        trace.append(name)
+
+    ctx.on_start(lambda: action("start-1"))
+    ctx.on_start(lambda: action("start-2"))
+    ctx.add_cleanup(lambda: action("stop-1"))
+    ctx.add_cleanup(lambda: action("stop-2"))
+
+    await ctx.activate()
+    await ctx.shutdown()
+    assert trace == ["start-1", "start-2", "stop-2", "stop-1"]
+
+
+async def test_shutdown_closes_a_task_that_never_reached_activation(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
+    closed = False
+
+    async def body() -> None:
+        nonlocal closed
+        try:
+            await asyncio.sleep(0)
+        finally:
+            closed = True
+
+    coro = body()
+    ctx.spawn_task(coro, name="pending")
+    await ctx.shutdown()
+    assert coro.cr_frame is None
+    # 关闭一个尚未开始的协程不会进入它的函数体；重要的是它不再等待 GC 才报警。
+    assert closed is False
+
+
+async def test_cleanup_failure_does_not_skip_later_cleanup(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
+    cleaned: list[str] = []
+
+    async def fail() -> None:
+        cleaned.append("failed")
+        raise RuntimeError("cleanup failed")
+
+    async def succeed() -> None:
+        cleaned.append("succeeded")
+
+    ctx.add_cleanup(succeed)
+    ctx.add_cleanup(fail)
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        await ctx.shutdown()
+    assert cleaned == ["failed", "succeeded"]
 
 
 def test_the_two_facades_are_unavailable_before_the_instance_is_ready(tmp_path: Path) -> None:

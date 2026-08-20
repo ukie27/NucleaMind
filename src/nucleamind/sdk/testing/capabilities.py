@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from logging import Logger, getLogger
 from pathlib import Path
 
@@ -375,6 +375,8 @@ class FakePluginContext:
         #: 经 `spawn_task()` 登记过的任务名，按顺序。不真的起协程——「谁的任务」可判定
         #: 才是这个 API 存在的理由，而那件事记下名字就够断言了。
         self.tasks: list[str] = []
+        self.start_actions: list[Callable[[], Awaitable[None]]] = []
+        self.cleanup_actions: list[Callable[[], Awaitable[None]]] = []
 
     @property
     def plugin_id(self) -> str:
@@ -407,6 +409,12 @@ class FakePluginContext:
     def spawn_task(self, coro: object, *, name: str) -> None:
         del coro
         self.tasks.append(name)
+
+    def on_start(self, action: Callable[[], Awaitable[None]]) -> None:
+        self.start_actions.append(action)
+
+    def add_cleanup(self, action: Callable[[], Awaitable[None]]) -> None:
+        self.cleanup_actions.append(action)
 
     @property
     def fs(self) -> object:

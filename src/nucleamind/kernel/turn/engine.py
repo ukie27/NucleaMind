@@ -80,6 +80,7 @@ from .folding import (
     unknown_tool_result,
 )
 from .limits import BudgetLedger, LimitBreach
+from .replacement import validated_model_request, validated_tool_invocation
 from .scheduling import execute_batch, partition_tool_batches
 
 __all__ = ["run_turn"]
@@ -88,7 +89,6 @@ __all__ = ["run_turn"]
 #: handler 用错了 Hook——静默忽略会让插件以为自己拒掉了这个 turn，实际什么都没发生。
 _REQUEST_ACTIONS = frozenset({HookAction.CONTINUE, HookAction.REPLACE})
 _TOOL_ACTIONS = frozenset({HookAction.CONTINUE, HookAction.REPLACE, HookAction.BLOCK})
-
 _MAX_LENGTH_RECOVERIES = 3
 
 
@@ -142,7 +142,6 @@ async def _iterate(
     ledger: BudgetLedger,
 ) -> AsyncIterator[TurnEvent]:
     """主循环。所有异常都留给 `run_turn` 的那一处 `except` 落地。"""
-    specs = {spec.name: spec for spec in request.tools}
     messages = list(request.messages)
     length_recoveries = 0
 
@@ -159,6 +158,7 @@ async def _iterate(
         iteration = ledger.iterations
 
         current = await _prepare_request(request, messages, deps, ledger)
+        specs = {spec.name: spec for spec in current.tools}
 
         if current.stream:
             folder = StreamFolder(current.model_id)
@@ -301,7 +301,7 @@ async def _prepare_request(
         _REQUEST_ACTIONS,
     )
     if outcome.action is HookAction.REPLACE and outcome.request is not None:
-        return outcome.request
+        return validated_model_request(current, outcome.request, remaining_ms=ledger.remaining_ms())
     return current
 
 
@@ -375,7 +375,7 @@ async def _invoke_one(
     if outcome.action is HookAction.BLOCK:
         return _Attempt(blocked_result(call, outcome.reason), ToolDisposition.BLOCKED)
     if outcome.action is HookAction.REPLACE and outcome.invocation is not None:
-        invocation = outcome.invocation
+        invocation = validated_tool_invocation(invocation, outcome.invocation)
 
     try:
         result = await deps.tools.invoke(invocation, cancel.child())

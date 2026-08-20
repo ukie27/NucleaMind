@@ -93,8 +93,8 @@ REGISTRATION_METHODS: Final[dict[CapabilityKind, str]] = {
 API_PROTOCOLS: Final[dict[type, frozenset[str]]] = {
     NucleaAPI: frozenset({"ctx", *REGISTRATION_METHODS.values()}),
     PluginContext: frozenset(
-        {"plugin_id", "config", "state_dir", "logger", "events", "spawn_task", "fs", "net",
-         "shell", "secret", "instance", "turns"}
+        {"plugin_id", "config", "state_dir", "logger", "events", "on_start", "add_cleanup",
+         "spawn_task", "fs", "net", "shell", "secret", "instance", "turns"}
     ),
     # `D42` 补上二进制读写：否则需要二进制的插件无法复用 Workspace 路径与错误语义。
     FileAccess: frozenset(

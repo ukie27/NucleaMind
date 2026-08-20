@@ -1,6 +1,6 @@
 # NucleaMind 当前状态与接手入口
 
-> 更新基线：D52。这里描述当前事实，不记录逐 PR 流水账；历史摘要见
+> 更新基线：D53。这里描述当前事实，不记录逐 PR 流水账；历史摘要见
 > [`history.md`](./history.md)，精确变化以 Git 为准。
 
 ## 结论
@@ -44,7 +44,8 @@ NucleaMind 已经具备一套可运行、受架构守卫约束的 Agent Kernel �
 ### 对外表面
 
 - 包版本：`0.3.0`（alpha）。
-- SDK 版本：`3.0.0`；3.x 移除了无效的 `runtime_requires` 与死 `session_start` Hook。
+- SDK 版本：`3.1.0`；3.1 增加插件激活与资源清理登记，3.x 移除了无效的
+  `runtime_requires` 与死 `session_start` Hook。
 - `NucleaAPI` 与 `CapabilityKind` 当前一一覆盖十类能力。
 - `nm init`、`nm run`、`nm serve`、`nm config show`、`nm session`、
   `nm plugins`、`nm capabilities` 已可用。

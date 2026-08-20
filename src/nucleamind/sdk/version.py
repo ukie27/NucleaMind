@@ -20,7 +20,7 @@ from nucleamind.contracts import ErrorCode, NucleaError
 __all__ = ["SDK_VERSION", "is_compatible", "parse_sdk_range"]
 
 #: 当前 SDK 版本（语义化版本，PEP 440 可解析）。插件用 `sdk_range` 声明兼容范围。
-SDK_VERSION: Final = "3.0.0"
+SDK_VERSION: Final = "3.1.0"
 
 #: 预解析当前版本；插件校验会重复调用 `is_compatible()`，无需每次解析同一字面量。
 _CURRENT: Final = Version(SDK_VERSION)

@@ -82,6 +82,10 @@ __all__ = ["AgentInstance", "Closer", "TurnReceipt", "delivery_error", "outbound
 #: 为它们发明一个只会多出一层。
 Closer = Callable[[], Awaitable[None]]
 
+#: 在途 Turn 收到业务取消后正常持久化与发终态的等待预算。字段可在构造时注入，未来若需要
+#: 配置化，组装根只需贯通数值，不必改停止算法。
+DEFAULT_TURN_SHUTDOWN_GRACE_MS = 5_000
+
 
 class _InstancePhase(StrEnum):
     """实例内部生命周期。失败启动会先进入 FAILED，再由同一停止路径收敛到 STOPPED。"""
@@ -116,6 +120,7 @@ class AgentInstance:
     lifecycles: tuple[PluginLifecycle, ...] = ()
     #: 单个插件的停止预算（配置 `plugins.stop_timeout_ms`，`EDG-104`）。
     stop_timeout_ms: int = DEFAULT_STOP_TIMEOUT_MS
+    turn_shutdown_grace_ms: int = DEFAULT_TURN_SHUTDOWN_GRACE_MS
     #: Channel 泵的扇出上界，来自配置 `routing.channel_*`。
     channel_concurrency: int = DEFAULT_CHANNEL_CONCURRENCY
     channel_queue_max_size: int = DEFAULT_CHANNEL_QUEUE_MAX_SIZE
@@ -143,6 +148,7 @@ class AgentInstance:
                 )
             self._phase = _InstancePhase.STARTING
             try:
+                await self._start_plugins()
                 for channel_id, channel in self.channels:
                     # 即使 start() 做到一半才抛，stop() 仍应有机会释放它已经拿到的资源。
                     self._active_channels.append(channel)
@@ -155,10 +161,6 @@ class AgentInstance:
                         )
                     )
                 await self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_READY))
-                for lifecycle in self.lifecycles:
-                    # 加载失败的提供方没有被启动，保持 FAILED 等停止路径收尾。
-                    if lifecycle.phase is PluginPhase.LOADED:
-                        lifecycle.advance(PluginPhase.STARTED)
                 self.bus.publish(
                     EventName.INSTANCE_READY,
                     payload={
@@ -197,8 +199,7 @@ class AgentInstance:
             return
         self._phase = _InstancePhase.STOPPING
         self.bus.publish(EventName.INSTANCE_STOPPING)
-        self._report_orphans()
-        await self._safe(self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_SHUTDOWN)))
+        self.orchestrator.begin_shutdown()
 
         for channel in reversed(self._active_channels):
             await self._safe(channel.stop())
@@ -208,10 +209,22 @@ class AgentInstance:
         if self._pumps:
             await asyncio.gather(*self._pumps, return_exceptions=True)
         self._pumps.clear()
-        # 顺序不能反：先停泵再排干 lane。反过来泵会在 lane 已经被清掉之后再建一条新的。
+        # 泵已停止，不会再往 lane 放消息。排队但尚未开始的输入不应在停机后产生新 Turn。
         for fanout in self._fanouts:
-            await fanout.drain(cancel=True)
+            fanout.discard_pending()
+        forced = await self.orchestrator.finish_shutdown(
+            timeout_ms=self.turn_shutdown_grace_ms
+        )
+        for fanout in self._fanouts:
+            if forced is not None:
+                fanout.force_cancel()
+            else:
+                await fanout.drain(cancel=False)
         self._fanouts.clear()
+
+        # 实例级 shutdown 观察者看到的是「不再有 Turn 使用插件资源」的时刻。
+        await self._safe(self.deps.hooks.dispatch(HookContext(HookName.INSTANCE_SHUTDOWN)))
+        self._report_orphans()
 
         # 插件按逆加载序逐个停止，每个插件拥有独立超时预算。
         await self._stop_plugins()
@@ -224,6 +237,29 @@ class AgentInstance:
         self._phase = _InstancePhase.STOPPED
 
     # ------------------------------------------------------------------ 内部
+
+    async def _start_plugins(self) -> None:
+        """按加载拓扑激活插件；失败由统一停止路径逆序回滚。"""
+        lifecycles = {item.plugin_id: item for item in self.lifecycles}
+        for context in self.contexts:
+            lifecycle = lifecycles.get(context.plugin_id)
+            if lifecycle is None or lifecycle.phase is not PluginPhase.LOADED:
+                continue
+            try:
+                await context.activate()
+            except Exception as exc:  # noqa: BLE001 - 转成稳定诊断后触发原子回滚
+                error = _as_nuclea(exc)
+                lifecycle.fail(error)
+                self.bus.publish(
+                    EventName.PLUGIN_FAILED,
+                    payload={"plugin": context.plugin_id, "phase": "start"},
+                    error=error,
+                )
+                if error is exc:
+                    raise
+                raise error from exc
+            lifecycle.advance(PluginPhase.STARTED)
+            self.bus.publish(EventName.PLUGIN_ACTIVATED, payload={"plugin": context.plugin_id})
 
     async def _stop_plugins(self) -> None:
         """按逆加载序停掉每个提供方，并把结果发成事件。

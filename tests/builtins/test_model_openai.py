@@ -901,6 +901,7 @@ class TestSettings:
         assert len(registered) == 1
         assert registered[0][0] == CAPABILITY_NAME
         assert isinstance(registered[0][1], OpenAIModelProvider)
+        assert RecordingApi.ctx.cleanup_actions == [registered[0][1].aclose]
 
     def test_auth_none_never_touches_the_secret(self) -> None:
         """本地模型服务没有密钥，去要一个必然缺失的凭据只会让实例起不来。"""

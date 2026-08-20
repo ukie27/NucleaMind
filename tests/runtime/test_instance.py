@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -178,6 +178,32 @@ async def test_stop_walks_the_lifecycle_in_reverse_load_order(tmp_path: Path) ->
         if event.name is EventName.PLUGIN_DEACTIVATED
     ]
     assert deactivated == list(reversed(loaded))
+
+
+async def test_plugin_start_and_cleanup_follow_the_load_topology(tmp_path: Path) -> None:
+    write_config(tmp_path)
+    instance = await _boot(tmp_path, manifests=TEST_MANIFESTS)
+    trace: list[str] = []
+
+    def action(label: str) -> Callable[[], Awaitable[None]]:
+        async def run() -> None:
+            trace.append(label)
+
+        return run
+
+    for context in instance.contexts:
+        context.on_start(action(f"start:{context.plugin_id}"))
+        context.add_cleanup(action(f"stop:{context.plugin_id}"))
+
+    await instance.start()
+    loaded = [context.plugin_id for context in instance.contexts]
+    assert trace == [f"start:{plugin_id}" for plugin_id in loaded]
+
+    await instance.stop()
+    assert trace == [
+        *(f"start:{plugin_id}" for plugin_id in loaded),
+        *(f"stop:{plugin_id}" for plugin_id in reversed(loaded)),
+    ]
 
 
 async def test_stop_unsubscribes_the_plugin_event_bridge(tmp_path: Path) -> None:

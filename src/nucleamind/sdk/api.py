@@ -1,7 +1,7 @@
 """Host API：插件与 Kernel 之间的注册面与受限运行时（技术方案 §7.5）。
 
-职责：声明 `NucleaAPI`（恰好 10 个注册方法 + `ctx`）、`PluginContext` 及其四个
-资源访问器 Protocol（`fs` / `net` / `shell` / `secret`），以及配套的 `HttpResponse`、
+职责：声明 `NucleaAPI`（恰好 10 个能力注册方法 + `ctx`）、`PluginContext` 及其生命周期和
+四个资源访问器 Protocol（`fs` / `net` / `shell` / `secret`），以及配套的 `HttpResponse`、
 `ShellResult`。
 不负责：实现注册与冲突判定、构造 `PluginContext` 或决定插件加载结果。
 这些分别属于 Kernel 与 Runtime；本模块只有公开签名和纯数据类型。
@@ -259,11 +259,34 @@ class PluginContext(Protocol):
         """事件订阅面。"""
         ...
 
+    def on_start(self, action: Callable[[], Awaitable[None]]) -> None:
+        """登记实例激活时执行的异步动作。
+
+        `setup()` 只登记，不应自行连接外部服务。Runtime 在 Registry 冻结、实例门面可用后，
+        按插件依赖顺序逐个执行这些动作；失败会使本次实例启动回滚。
+
+        **异常约定**：插件已经激活或进入停止流程后再登记，抛
+        `KERNEL_INVARIANT_VIOLATED`。
+        """
+        ...
+
+    def add_cleanup(self, action: Callable[[], Awaitable[None]]) -> None:
+        """登记停止时执行的异步清理动作，执行顺序与登记顺序相反。
+
+        清理动作可释放连接池、数据库连接或其他非 Task 资源。一个动作失败不会阻断其余动作；
+        Runtime 在全部动作执行后统一记录插件停止失败。
+
+        **异常约定**：插件已进入停止流程后再登记，抛 `KERNEL_INVARIANT_VIOLATED`。
+        """
+        ...
+
     def spawn_task(self, coro: Awaitable[None], *, name: str) -> None:
-        """在本插件的 task group 下创建后台任务。
+        """在本插件的 task group 下登记或创建后台任务。
 
         这是插件创建后台任务的**唯一**途径。`name` 必填且会出现在诊断里——一个匿名的
         挂起任务和一个没有任务是同一种排查体验。
+
+        `setup()` 期间调用只登记，任务在插件激活后才真正启动；激活后调用则立即创建。
 
         **异常约定**：插件已进入停止流程时抛 `KERNEL_INVARIANT_VIOLATED`。任务自身的
         异常由 Kernel 捕获并记 `PLUGIN_FAILURE`，不会冒泡到别的插件或 turn。

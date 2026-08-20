@@ -360,7 +360,6 @@ def setup(api: NucleaAPI) -> None:
     `nm plugins list` 里就看得见（`D18` 的先例）。
     """
     settings = resolve_settings(api.ctx)
-    api.register_model_provider(
-        CAPABILITY_NAME,
-        AnthropicModelProvider(settings, credential=read_credential(api.ctx, settings)),
-    )
+    provider = AnthropicModelProvider(settings, credential=read_credential(api.ctx, settings))
+    api.ctx.add_cleanup(provider.aclose)
+    api.register_model_provider(CAPABILITY_NAME, provider)

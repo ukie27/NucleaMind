@@ -337,7 +337,6 @@ def setup(api: NucleaAPI) -> None:
     环境变量应当让实例启动失败，而不是等用户发出第一条消息才炸。
     """
     settings = resolve_settings(api.ctx)
-    api.register_model_provider(
-        CAPABILITY_NAME,
-        OpenAIModelProvider(settings, credential=read_credential(api.ctx, settings)),
-    )
+    provider = OpenAIModelProvider(settings, credential=read_credential(api.ctx, settings))
+    api.ctx.add_cleanup(provider.aclose)
+    api.register_model_provider(CAPABILITY_NAME, provider)

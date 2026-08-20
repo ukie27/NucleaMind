@@ -116,6 +116,26 @@ class ConversationFanout:
         lane = self._lanes.get(conversation_id)
         return lane.queue.qsize() if lane is not None else 0
 
+    def discard_pending(self) -> int:
+        """丢弃所有尚未开始的消息，保留正在执行的 worker 让它正常收口。"""
+        discarded = 0
+        for lane in self._lanes.values():
+            while True:
+                try:
+                    lane.queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                discarded += 1
+        return discarded
+
+    def force_cancel(self) -> None:
+        """取消并摘除全部 worker，但不等待不合作的任务。仅供停机宽限耗尽后使用。"""
+        workers = [lane.worker for lane in self._lanes.values() if lane.worker is not None]
+        self._lanes.clear()
+        for worker in workers:
+            worker.cancel()
+            worker.add_done_callback(_consume_task_result)
+
     async def run(self, messages: AsyncIterator[InboundMessage]) -> None:
         """泵的正文：把入站流分派进 lane。`messages` 结束即返回。
 
@@ -130,7 +150,8 @@ class ConversationFanout:
     async def drain(self, *, cancel: bool) -> None:
         """停止时排干。
 
-        `cancel=True` 时取消在途 worker 并丢弃排队未开始的消息——**这与串行泵时代的
+        `cancel=True` 时取消在途 worker；调用方需要明确丢弃排队消息时先调用
+        `discard_pending()`。强制取消路径仍与串行泵时代的
         `pump.cancel()` 语义逐字相同**，只是从 1 个协程变成 N 个。刻意不做「优雅排干 +
         新超时」：`D28` 的教训是两处各判一次会让「等了多久」取决于两个数的最小值，
         而插件停止已经有 `plugins.stop_timeout_ms`。
@@ -199,3 +220,9 @@ class ConversationFanout:
                 await self._handle(message)
             except Exception as exc:  # noqa: BLE001 - 一条消息炸掉不带走 lane，更不带走泵
                 self._on_failure(exc)
+
+
+def _consume_task_result(task: asyncio.Task[None]) -> None:
+    """取走被放弃 worker 的结果，避免稍后刷无人认领异常。"""
+    if not task.cancelled():
+        task.exception()

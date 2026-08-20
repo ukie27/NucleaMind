@@ -102,6 +102,33 @@ Kernel 负责。
 **注册是事务性的**：先进暂存批次，`setup` 正常返回才一次性并入能力表；中途抛异常则整批
 丢弃，不会留下半注册状态。因此不要在 `setup` 里派生一个后台任务去「稍后注册」。
 
+### 长生命周期资源
+
+`setup()` 只登记，不应在这里建立长连接或让后台任务抢跑。使用 `PluginContext` 的三个入口：
+
+```python
+async def connect() -> None:
+    await service.connect()
+
+
+async def close() -> None:
+    await service.close()
+
+
+api.ctx.on_start(connect)
+api.ctx.add_cleanup(close)
+api.ctx.spawn_task(service.run(), name="service-loop")
+```
+
+- `on_start()` 按插件依赖顺序执行，此时 Registry 已冻结，`ctx.instance` 与 `ctx.turns` 已可用。
+- `spawn_task()` 在 `setup()` 中只登记，完成 `on_start()` 后才真正启动；插件激活后调用则立即
+  启动。
+- `add_cleanup()` 释放连接池、数据库连接等非 Task 资源，同一插件内按登记逆序执行。
+- 停止时先取消后台任务，再执行清理；一个清理失败不会跳过其余清理。
+
+不要用 `instance_shutdown` Observer 释放关键资源：Observer 的失败按设计被隔离，而且它不是
+资源所有权接口。
+
 ## 4. entry point：让宿主发现得到
 
 ```toml

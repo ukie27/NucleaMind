@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import pathlib
+from dataclasses import replace
 
 import pytest
 
@@ -281,6 +282,37 @@ async def test_hook_can_replace_tool_invocation() -> None:
     await collect(run_turn(make_request(tools=[tool_spec("echo")]), deps, CancelToken()))
 
     assert invoker.invocations[0].call.arguments == {"text": "改写后"}
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("call.name", lambda item: replace(item, call=replace(item.call, name="other"))),
+        ("call.call_id", lambda item: replace(item, call=replace(item.call, call_id="other"))),
+        ("timeout_ms", lambda item: replace(item, timeout_ms=item.timeout_ms + 1)),
+        ("idempotency_key", lambda item: replace(item, idempotency_key="other")),
+    ],
+)
+async def test_tool_hook_cannot_replace_kernel_owned_invocation_fields(
+    field: str, replacement: object
+) -> None:
+    def swap(context: HookContext) -> HookOutcome:
+        assert context.invocation is not None
+        return HookOutcome(action=HookAction.REPLACE, invocation=replacement(context.invocation))  # type: ignore[operator]
+
+    hooks = RecordingHookDispatcher({HookName.BEFORE_TOOL_CALL: swap})
+    model = ScriptedProvider([tool_response(tool_call("echo"))])
+    events = await collect(
+        run_turn(
+            make_request(tools=[tool_spec("echo")]),
+            build_deps(model, hooks=hooks),
+            CancelToken(),
+        )
+    )
+    terminal = events[-1]
+    assert isinstance(terminal, TurnFailed)
+    assert terminal.error.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+    assert field in terminal.error.detail["fields"]
 
 
 async def test_tool_result_is_truncated_by_limit() -> None:
@@ -646,6 +678,79 @@ async def test_hook_can_replace_the_model_request() -> None:
     model = ScriptedProvider([text_response()])
     await collect(run_turn(make_request(), build_deps(model, hooks=hooks), CancelToken()))
     assert model.requests[0].messages[0].content == "被插件改写过"
+
+
+async def test_model_request_replacement_controls_the_executable_tool_set() -> None:
+    replacement = make_request(tools=[])
+
+    def swap(_: HookContext) -> HookOutcome:
+        return HookOutcome(action=HookAction.REPLACE, request=replacement)
+
+    hooks = RecordingHookDispatcher({HookName.BEFORE_MODEL_REQUEST: swap})
+    model = ScriptedProvider([tool_response(tool_call("echo")), text_response()])
+    invoker = RecordingToolInvoker()
+    events = await collect(
+        run_turn(
+            make_request(tools=[tool_spec("echo")]),
+            build_deps(model, tools=invoker, hooks=hooks),
+            CancelToken(),
+        )
+    )
+    completed = events_of(events, ToolCallCompleted)[0]
+    assert isinstance(completed, ToolCallCompleted)
+    assert completed.disposition is ToolDisposition.UNKNOWN_TOOL
+    assert invoker.invocations == []
+
+
+async def test_model_request_replacement_can_add_an_executable_tool() -> None:
+    replacement = make_request(tools=[tool_spec("echo")])
+
+    def swap(_: HookContext) -> HookOutcome:
+        return HookOutcome(action=HookAction.REPLACE, request=replacement)
+
+    hooks = RecordingHookDispatcher({HookName.BEFORE_MODEL_REQUEST: swap})
+    model = ScriptedProvider([tool_response(tool_call("echo")), text_response()])
+    invoker = RecordingToolInvoker()
+    await collect(
+        run_turn(make_request(), build_deps(model, tools=invoker, hooks=hooks), CancelToken())
+    )
+    assert [item.call.name for item in invoker.invocations] == ["echo"]
+
+
+async def test_model_request_replacement_cannot_change_correlation() -> None:
+    replacement = replace(
+        make_request(),
+        correlation=replace(CORRELATION, turn_id=type(CORRELATION.turn_id)("other")),
+    )
+
+    def swap(_: HookContext) -> HookOutcome:
+        return HookOutcome(action=HookAction.REPLACE, request=replacement)
+
+    hooks = RecordingHookDispatcher({HookName.BEFORE_MODEL_REQUEST: swap})
+    events = await collect(
+        run_turn(make_request(), build_deps(ScriptedProvider([text_response()]), hooks=hooks), CancelToken())
+    )
+    terminal = events[-1]
+    assert isinstance(terminal, TurnFailed)
+    assert terminal.error.code is ErrorCode.KERNEL_INVARIANT_VIOLATED
+
+
+async def test_model_request_replacement_cannot_expand_the_timeout() -> None:
+    replacement = make_request(timeout_ms=999_999)
+
+    def swap(_: HookContext) -> HookOutcome:
+        return HookOutcome(action=HookAction.REPLACE, request=replacement)
+
+    hooks = RecordingHookDispatcher({HookName.BEFORE_MODEL_REQUEST: swap})
+    model = ScriptedProvider([text_response()])
+    await collect(
+        run_turn(
+            make_request(timeout_ms=25),
+            build_deps(model, hooks=hooks, limits=TurnLimits(turn_timeout_ms=25)),
+            CancelToken(),
+        )
+    )
+    assert 0 < model.requests[0].timeout_ms <= 25
 
 
 async def test_after_tool_call_replacement_is_still_truncated() -> None:

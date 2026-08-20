@@ -7,7 +7,7 @@
 - [`docs/project/architecture-map.md`](./docs/project/architecture-map.md)：层次、运行链路与所有权
 - [`docs/project/change-guide.md`](./docs/project/change-guide.md)：常见改动需要触碰哪些位置
 - [`docs/project/evolution-boundaries.md`](./docs/project/evolution-boundaries.md)：哪些已冻结、哪些可扩展、哪些以后才设计
-- [`docs/project/history.md`](./docs/project/history.md)：D00–D52 里程碑摘要
+- [`docs/project/history.md`](./docs/project/history.md)：D00–D53 里程碑摘要
 
 更细的正式约束仍以 [`docs/project/technical-design.md`](./docs/project/technical-design.md)、
 [`docs/project/requirements-analysis.md`](./docs/project/requirements-analysis.md) 和测试守卫为准。
@@ -66,7 +66,7 @@ tests/           # 按层镜像；integration/e2e 验证组装后的骨架
 - `NucleaError.category` 由错误码推导，调用方不能另传一份分类。
 - `contracts.errors.redact()` / `scrub()` 在数据构造时脱敏；不要把责任推给日志 sink。
 - `contracts.SecretStr` 是唯一密钥包装类型；明文只通过 `reveal()` 短暂取得。
-- SDK 当前为 `3.0.0`。`sdk.__all__`、`sdk.testing.__all__`、
+- SDK 当前为 `3.1.0`。`sdk.__all__`、`sdk.testing.__all__`、
   `CapabilityKind`、`NucleaAPI` 和 manifest schema 都受兼容承诺约束。
 - Session JSONL 格式是持久化契约，修改必须先设计迁移。
 
@@ -88,7 +88,8 @@ tests/           # 按层镜像；integration/e2e 验证组装后的骨架
   `runtime/plugin_plan.py`。
 - `LoadPlan.order` 只定义加载顺序。生命周期停止使用其逆序，不要另算一套顺序。
 - `state_version` 不匹配当前直接拒绝加载；尚未设计热迁移，不要静默兼容。
-- 插件后台任务必须通过 `ctx.spawn_task()`，才能被生命周期管理器停止并计入预算。
+- 插件在 `setup()` 中通过 `ctx.on_start()`、`ctx.add_cleanup()` 和 `ctx.spawn_task()` 登记
+  激活、资源释放和后台任务；后台任务只在激活后启动，并由生命周期管理器停止。
 - `setup()` 的 Registry 写入由 `RegistrationBatch` 回滚，任务与事件订阅由 Runtime 的
   `StartupResources` 回滚；启动失败与二次装配都必须同时覆盖这两类副作用。
 
