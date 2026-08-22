@@ -141,15 +141,13 @@ nm plugins enable web    # 写进 config.json 的 plugins.enabled（下次启动
 nm capabilities          # 生效 / 被覆盖 / 已禁用 / 冲突，四段都印
 ```
 
-九个官方插件（`--no-deps` 是刻意的，平台 SDK 由你按需另装）：
+七个官方插件（`--no-deps` 是刻意的，平台 SDK 由你按需另装）：
 
 ```bash
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
-.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-discord
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-feishu
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-web
-.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-image
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-mcp
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-memory
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-cron
@@ -174,7 +172,7 @@ nm plugins enable openai-api
 nm serve                      # 默认监听 127.0.0.1:8760
 ```
 
-它启动全部已启用的 Channel 能力并等信号。Discord、飞书、cron 调度器用的是同一条命令
+它启动全部已启用的 Channel 能力并等信号。飞书和 cron 调度器用的是同一条命令
 ——不为某个插件写第二条。容器与 systemd 见 [`deployment.md`](./deployment.md)。
 
 ## 下一步

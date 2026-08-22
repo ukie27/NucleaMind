@@ -24,9 +24,9 @@
 
 - **插件自己拥有平台连接**。`lark-oapi` 直接建立 WebSocket 与 HTTPS 连接；
   `PluginContext` 的资源服务不是强制网络代理。启用插件就是信任其代码。
-- **出站 workspace 附件传不出去**：`sdk.api.FileAccess` 只有 `read_text` / `write_text` /
-  `list_dir`，没有 `read_bytes`。
-  今天新层也没有任何地方产出带附件的 `OutboundMessage`，因此这是一条没有生产者的死路径。
+- **出站 workspace 附件当前只做明确降级**：`file.send` 会产出带附件的
+  `OutboundMessage`，但本插件尚未实现飞书文件上传 API，所以会在正文里提示本轮无法上传。
+  上传实现属于本 Channel 插件，不需要改变 Kernel 消息契约。
 - **Channel 准入不是进程隔离**。能在允许的会话里说话的人就能驱动
   实例上的全部工具，包括 `shell.exec`。`allow_from` 与 `allow_chats` 是唯一的闸门。
 """

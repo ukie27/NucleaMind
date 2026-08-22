@@ -216,6 +216,7 @@ TRACEABILITY: Final[dict[type, tuple[str, frozenset[str]]]] = {
                 "turn_id",
                 "tool_call_id",
                 "interrupted",
+                "attachments",
                 "metadata",
             }
         ),

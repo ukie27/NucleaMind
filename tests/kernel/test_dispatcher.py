@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 import pytest
 
 from nucleamind.contracts import (
+    AttachmentRef,
+    AttachmentSource,
     Builtin,
     CancelSignal,
     CapabilityKind,
@@ -56,7 +58,12 @@ CORRELATION = Correlation(
 )
 
 
-def message(content: str, *, is_operator: bool = False) -> InboundMessage:
+def message(
+    content: str,
+    *,
+    is_operator: bool = False,
+    attachments: tuple[AttachmentRef, ...] = (),
+) -> InboundMessage:
     return InboundMessage(
         message_id="m1",
         instance_id=InstanceId("inst"),
@@ -65,6 +72,7 @@ def message(content: str, *, is_operator: bool = False) -> InboundMessage:
         sender=Sender(user_id="u1", is_operator=is_operator),
         content=content,
         timestamp=datetime.now(UTC),
+        attachments=attachments,
     )
 
 
@@ -224,6 +232,19 @@ async def test_plain_text_becomes_a_model_turn() -> None:
     assert outcome.result is None
 
 
+async def test_model_turn_keeps_the_message_attachments() -> None:
+    attachment = AttachmentRef(
+        source=AttachmentSource.URL,
+        locator="https://files.example/photo.png",
+        media_type="image/png",
+    )
+    outcome = await dispatcher_for((HELP, StubHandler())).dispatch(
+        message("看看图片", attachments=(attachment,)), CORRELATION, CancelToken()
+    )
+    assert outcome.model_input == "看看图片"
+    assert outcome.model_attachments == (attachment,)
+
+
 async def test_matched_command_is_handled_without_entering_the_model() -> None:
     handler = StubHandler()
 
@@ -259,6 +280,21 @@ async def test_command_continue_carries_the_rewritten_input_into_the_model() -> 
 
     assert outcome.disposition is Disposition.COMMAND_CONTINUE
     assert outcome.model_input == "请总结昨天的会议"
+
+
+async def test_command_rewrite_does_not_drop_attachments() -> None:
+    attachment = AttachmentRef(
+        source=AttachmentSource.WORKSPACE,
+        locator="notes.txt",
+        media_type="text/plain",
+    )
+    handler = StubHandler(
+        CommandResult(disposition=Disposition.COMMAND_CONTINUE, rewritten_input="总结附件")
+    )
+    outcome = await dispatcher_for((HELP, handler)).dispatch(
+        message("/help", attachments=(attachment,)), CORRELATION, CancelToken()
+    )
+    assert outcome.model_attachments == (attachment,)
 
 
 async def test_unknown_command_is_rejected_with_a_suggestion() -> None:

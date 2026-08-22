@@ -57,8 +57,7 @@ class TestAddressing:
         )
 
     def test_without_a_bot_identity_a_userless_ou_mention_counts(self) -> None:
-        """兜底启发式。**方向与 discord 相反**，理由在 `mentions.py` 的模块 docstring 里：
-        飞书拿不到 bot 身份可能是权限缺失（永久），没有兜底整个群聊功能会静默失效。"""
+        """飞书拿不到 bot 身份可能是永久的权限缺失，兜底避免群聊功能静默失效。"""
         assert is_addressed_to_bot(
             content="@_user_1 在吗",
             mentions=(mention(open_id="ou_unknown", user_id=""),),

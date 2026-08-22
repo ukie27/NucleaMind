@@ -32,6 +32,7 @@ __all__ = [
     "MODEL_OPENAI",
     "SESSION_JSONL",
     "TOOLS_FS",
+    "TOOLS_FILE",
     "TOOLS_SHELL",
 ]
 
@@ -276,6 +277,29 @@ TOOLS_FS: Final = PluginManifest(
     critical=False,
 )
 
+#: 默认文件投递工具。它只表达“把这个 workspace 文件附加到当前回复”，实际上传仍走
+#: `ToolResult.attachments -> OutboundMessage -> Channel.deliver()` 的统一链路。
+TOOLS_FILE: Final = PluginManifest(
+    id="tools-file",
+    version="0.1.0",
+    sdk_range=">=3.0.0,<4.0.0",
+    setup="nucleamind.builtins.tools_file:setup",
+    capabilities=(CapabilityDecl(kind=CapabilityKind.TOOL, name="file.send"),),
+    config_schema={
+        "type": "object",
+        "properties": {
+            "max_file_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 26214400,
+                "description": "file.send 接受的单文件字节上限。",
+            }
+        },
+        "additionalProperties": False,
+    },
+    critical=False,
+)
+
 #: `D21` 内建 shell 工具（技术方案 §8.2 冻结清单的第 6 项，至此六件套齐）。
 #:
 #: `critical=False`：没有 shell 工具的 Agent 仍然能对话，与 `tools_fs` 同一条理由。
@@ -455,6 +479,7 @@ BUILTIN_MANIFESTS: Final[tuple[PluginManifest, ...]] = (
     CONTEXT_BASIC,
     MODEL_OPENAI,
     TOOLS_FS,
+    TOOLS_FILE,
     TOOLS_SHELL,
     COMMANDS_CORE,
     CLI_ENTRY,

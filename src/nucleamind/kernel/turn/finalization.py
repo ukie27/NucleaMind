@@ -34,10 +34,20 @@ async def finish_turn(
     """持久化 → 终态事件 → `turn_end` → 出站终帧。"""
     interrupted = outcome.status is TurnStatus.CANCELLED
     if state.final:
-        state.transcript.add_assistant(state.final, interrupted=interrupted)
+        state.transcript.add_assistant(
+            state.final,
+            interrupted=interrupted,
+            attachments=state.attachments,
+        )
     elif state.pending:
         # 被打断的半句必须留存并标记为不完整（`KER-007`、`EDG-304`）。
-        state.transcript.add_assistant("".join(state.pending), interrupted=True)
+        state.transcript.add_assistant(
+            "".join(state.pending),
+            interrupted=True,
+            attachments=state.attachments,
+        )
+    elif state.attachments:
+        state.transcript.add_assistant("", attachments=state.attachments)
     elif interrupted:
         state.transcript.mark_interrupted()
 

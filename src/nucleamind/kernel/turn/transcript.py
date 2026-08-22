@@ -45,6 +45,14 @@ from .limits import BudgetLedger, TurnLimits
 __all__ = ["Transcript", "TurnState"]
 
 
+@dataclass(frozen=True, slots=True)
+class ModelInput:
+    """分流后的一条模型输入；文本与同一消息的附件保持成对。"""
+
+    content: str
+    attachments: tuple[AttachmentRef, ...] = ()
+
+
 @dataclass(slots=True)
 class Transcript:
     """一次 turn 的可持久化产物。边跑边攒，终态时一次性交给 `SessionStore.append`。"""
@@ -67,6 +75,7 @@ class Transcript:
                     content=message.content,
                     created_at=self.created_at,
                     turn_id=self.turn_id,
+                    attachments=message.attachments,
                 )
             )
 
@@ -74,9 +83,15 @@ class Transcript:
         """登记本轮 assistant 声明的调用，供孤儿判定使用。"""
         self._declared.update(call.call_id for call in calls)
 
-    def add_assistant(self, content: str, *, interrupted: bool = False) -> None:
-        """记一条 assistant 正文。空正文直接丢弃（决定 1）。"""
-        if not content:
+    def add_assistant(
+        self,
+        content: str,
+        *,
+        interrupted: bool = False,
+        attachments: Sequence[AttachmentRef] = (),
+    ) -> None:
+        """记一条 assistant 消息；正文和附件同时为空时才丢弃（决定 1）。"""
+        if not content and not attachments:
             return
         self._assistants += 1
         self._body.append(
@@ -87,6 +102,7 @@ class Transcript:
                 created_at=self.created_at,
                 turn_id=self.turn_id,
                 interrupted=interrupted,
+                attachments=tuple(attachments),
             )
         )
 
@@ -117,7 +133,10 @@ class Transcript:
                     content=record.content,
                     created_at=record.created_at,
                     turn_id=record.turn_id,
+                    tool_call_id=record.tool_call_id,
                     interrupted=True,
+                    attachments=record.attachments,
+                    metadata=record.metadata,
                 )
                 return
 
@@ -145,7 +164,7 @@ class TurnState:
     #: 剩下的就是「最后一次完整响应之后产生的内容」，也就是被打断的那半句。
     pending: list[str] = field(default_factory=list)
     #: 分流之后真正要送进模型的输入（可能来自多条被合并的消息）。
-    model_inputs: list[str] = field(default_factory=list)
+    model_inputs: list[ModelInput] = field(default_factory=list)
     #: 命令注入的上下文片段（`CMD-004`）。
     fragments: list[ContextFragment] = field(default_factory=list)
     #: 已发出的中间帧，终帧不在其中——终帧由 `_finish` 单独产出。

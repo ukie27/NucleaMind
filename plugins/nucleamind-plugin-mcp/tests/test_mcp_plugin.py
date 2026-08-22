@@ -377,7 +377,7 @@ class TestSdkBoundary:
 
     def test_only_one_module_imports_the_sdk(self) -> None:
         """本插件的测试树能在没装 `mcp` 的环境里全绿，靠的就是这条边界（CI 用
-        `--no-deps` 装插件）。`discord` 插件的 `gateway.py` 是同一条切分线。
+        `--no-deps` 装插件）。
 
         判据是 **AST 里的 import 语句**而不是文本包含：docstring 里提到 `mcp` 是正常的，
         而 `from mcp import ...` 不是（除了 `client.py`）。

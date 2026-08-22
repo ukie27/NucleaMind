@@ -10,10 +10,10 @@ repository now contains only the new architecture.
 ## Current Status
 
 The kernel is complete and usable: contracts, turn engine, configuration,
-observability, routing, plugin runtime, six built-in capabilities, and the `nm`
-CLI. Capability plugins are delivered too — nine official plugins ship in
+observability, routing, plugin runtime, eight built-in capability packages, and the `nm`
+CLI. Capability plugins are delivered too — seven official plugins ship in
 [`plugins/`](./plugins/README.md), covering an extra model provider, three
-channels, web/image/MCP tools, long-term memory, and cron automation.
+channels, web/MCP tools, long-term memory, and cron automation.
 
 - The Python package is `nucleamind`, the distribution is `nucleamind`, and the
   only CLI command is `nm`. No `nanobot` alias is kept.
@@ -40,7 +40,8 @@ src/nucleamind/
 ```
 
 Capabilities are registered through one `NucleaAPI` implementation; built-ins and
-external plugins share the same load path, permission model, and lifecycle.
+external plugins share the same load path and lifecycle. Enabled plugins are fully trusted
+in-process Python code; the resource facades are services, not a permission sandbox.
 Official plugins live in [`plugins/`](./plugins/README.md); runnable minimal
 examples are in [`examples/plugins/`](./examples/plugins/README.md).
 
@@ -59,10 +60,8 @@ python -m venv .venv
 .venv/bin/python -m pip install --no-deps -e examples/plugins/nucleamind-plugin-session-memory
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-anthropic
-.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-discord
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-feishu
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-web
-.venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-image
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-mcp
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-memory
 .venv/bin/python -m pip install --no-deps -e plugins/nucleamind-plugin-cron
@@ -110,7 +109,6 @@ Also:
 - [Documentation index](./docs/README.md)
 - [Current project status](./docs/project/README.md)
 - [Writing a plugin](./docs/plugin-development.md)
-- [Permission model](./docs/permissions.md)
 - [Development background](./docs/project/开发背景.md)
 - [Architecture map](./docs/project/architecture-map.md)
 - [Evolution boundaries](./docs/project/evolution-boundaries.md)

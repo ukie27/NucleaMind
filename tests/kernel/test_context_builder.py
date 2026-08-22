@@ -19,6 +19,8 @@ import pytest
 
 from nucleamind.contracts import (
     UNTRUSTED_DATA_PREFIX,
+    AttachmentRef,
+    AttachmentSource,
     Builtin,
     CapabilityKind,
     ErrorCode,
@@ -64,6 +66,28 @@ def record(role: Role, content: str, *, tool_call_id: str | None = None) -> Sess
         created_at=NOW,
         tool_call_id=tool_call_id,
     )
+
+
+def test_history_replay_projects_attachment_metadata_without_reading_bytes() -> None:
+    attachment = AttachmentRef(
+        source=AttachmentSource.WORKSPACE,
+        locator="reports/final.pdf",
+        media_type="application/pdf",
+        size_bytes=7,
+        filename="final.pdf",
+    )
+    saved = SessionMessage(
+        message_id="user-file",
+        role=Role.USER,
+        content="请记住这个文件",
+        created_at=NOW,
+        attachments=(attachment,),
+    )
+    projected = replay_messages(snapshot(saved))
+    assert len(projected) == 1
+    assert "请记住这个文件" in projected[0].content
+    assert '"locator": "reports/final.pdf"' in projected[0].content
+    assert '"media_type": "application/pdf"' in projected[0].content
 
 
 async def build(**kwargs: object):  # noqa: ANN201 - 关键字直接透传给 assemble

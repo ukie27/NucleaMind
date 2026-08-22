@@ -42,7 +42,7 @@ from nucleamind.sdk.testing import FakePluginContext
 KEY = SessionKey(channel_id="cli", conversation_id="local", scope="proj")
 
 #: 另一个会话，用来验「只看得见本会话的任务」。
-OTHER_KEY = SessionKey(channel_id="discord", conversation_id="42", scope="proj")
+OTHER_KEY = SessionKey(channel_id="chat", conversation_id="42", scope="proj")
 
 #: 固定的时间基点：2026-08-15 是周六。
 EPOCH = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
@@ -67,8 +67,7 @@ class Sleeper:
 
     挂起而不是立即返回是硬要求：调度循环是 `while True` + `await sleep`，一个立即返回的
     替身会把它变成占满事件循环的忙等——`sleeper.calls` 会涨到几万条，而「循环有没有真的
-    停下来等」这件事就再也断言不了了（`D33` 在 `plugins/…-discord` 的打字指示器上挂过
-    一次，那次是反过来：替身不让出事件循环）。
+    停下来等」这件事就再也断言不了了。
     """
 
     def __init__(self) -> None:

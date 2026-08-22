@@ -10,7 +10,7 @@
 `nm run` 把进程交给 CLI 入口，那条路要读 stdin，在 `nohup` / systemd / 容器里没有意义。
 常驻一律用 `nm serve`：它装配实例、启动**全部已启用的 Channel 能力**、等信号、干净地停。
 
-HTTP 接口、Discord、飞书、cron 调度器都是 Channel 能力，因此都用这同一条命令——
+HTTP 接口、飞书、cron 调度器都是 Channel 能力，因此都用这同一条命令——
 不为某个插件写第二条。
 
 **先决条件是两步而不是一步**：插件要 (1) 装进环境（entry point 没有第二条发现路径），

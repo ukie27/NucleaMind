@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from nucleamind.contracts import (
+    AttachmentRef,
+    AttachmentSource,
     CancelReason,
     Correlation,
     ErrorCode,
@@ -82,6 +84,17 @@ def test_interrupted_defaults_to_false_and_is_recordable() -> None:
     assert message(interrupted=True).interrupted is True
 
 
+def test_attachment_references_are_part_of_the_session_record() -> None:
+    attachment = AttachmentRef(
+        source=AttachmentSource.WORKSPACE,
+        locator="reports/final.pdf",
+        media_type="application/pdf",
+        size_bytes=12,
+        filename="final.pdf",
+    )
+    assert message(attachments=(attachment,)).attachments == (attachment,)
+
+
 def test_naive_created_at_is_rejected() -> None:
     with pytest.raises(NucleaError) as exc:
         message(created_at=datetime(2026, 8, 10))  # noqa: DTZ001
@@ -109,9 +122,10 @@ def test_compaction_watermark_must_stay_in_range(compacted_through: int) -> None
     assert exc.value.code is ErrorCode.PERSISTENCE_RECORD_CORRUPT
 
 
-def test_schema_version_must_be_positive() -> None:
+@pytest.mark.parametrize("schema_version", [0, 1, SESSION_SCHEMA_VERSION + 1])
+def test_snapshot_only_accepts_the_current_schema_version(schema_version: int) -> None:
     with pytest.raises(NucleaError) as exc:
-        SessionSnapshot(SessionKey("cli", "local"), schema_version=0)
+        SessionSnapshot(SessionKey("cli", "local"), schema_version=schema_version)
     assert exc.value.code is ErrorCode.PERSISTENCE_RECORD_CORRUPT
 
 

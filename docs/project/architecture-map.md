@@ -98,7 +98,7 @@ Dispatcher ──命令──▶ RegisteredCommand
        ▼
 TurnOrchestrator
   ├─ load Session
-  ├─ assemble Context (+ optional Memory / Compactor)
+  ├─ project attachment refs + assemble Context (+ optional Memory / Compactor)
   ├─ run Engine
   │    ├─ RetryingModel → Model capability
   │    ├─ ToolInvoker   → Tool capability
@@ -109,6 +109,9 @@ TurnOrchestrator
        ▼
 OutboundMessage → Channel.deliver / CLI
 ```
+
+附件在这条链上始终是 `AttachmentRef`，Session 只持久化引用与元数据。工具请求发送文件时返回
+`ToolResult.attachments`，Orchestrator 汇总到最终 `OutboundMessage`；工具不直接调用 Channel。
 
 关键边界：
 
@@ -200,6 +203,7 @@ producer ── bus.publish(name, correlation, payload, error)
 | 新模型厂商 | `MODEL` 插件 | 在 Kernel 加 provider 分支或猜测表 |
 | 新 Channel | `CHANNEL` 插件 + `nm serve` | 在 Runtime 写平台专用泵 |
 | 新工具 | `TOOL` 插件和 `PluginContext` 资源服务 | 把 Runtime/Kernel 私有对象交给插件 |
+| 发送 workspace 文件 | `file.send` → `ToolResult.attachments` → Channel | 让工具直接调用平台 SDK |
 | 新 Context 来源 | `CONTEXT` 能力 | 把产品 prompt 写死在 Context Builder |
 | 新压缩策略 | `COMPACTOR` 能力 | 让模型实现偷偷改历史 |
 | 新 Memory 后端 | `MEMORY` 能力 | 把存储策略塞进 Session Store |

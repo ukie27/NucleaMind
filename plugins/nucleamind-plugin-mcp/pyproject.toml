@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 # 插件只依赖 SDK 与契约（`R4`）。`mcp` 是**运行期可选**依赖：只有 `client.py` 会
 # 惰性 import 它，装了这个插件却没装它时给一句能照做的错误，而不是在导入期就炸掉整个
-# 实例（`discord` 对 `discord.py`、`openai-api` 对 `aiohttp` 的同一条做法）。
+# 实例（`openai-api` 对 `aiohttp` 也采用同一条做法）。
 dependencies = ["nucleamind>=0.3.0"]
 
 [project.optional-dependencies]

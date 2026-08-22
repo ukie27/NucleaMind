@@ -267,7 +267,7 @@ class TestChannelLifecycle:
         await channel.stop()
 
     async def test_deliver_raises_external_channel_when_the_platform_fails(self) -> None:
-        """`D43`：投递失败照约定抛，理由同 discord 那条。"""
+        """投递失败必须折成可重试的 `EXTERNAL_CHANNEL`。"""
         channel, _, client = make_channel()
         client.fail = True
         await channel.start()
@@ -277,7 +277,6 @@ class TestChannelLifecycle:
         assert caught.value.retryable is True
         # **飞书的失败信号是 `None` 返回值而不是异常**（`client.py` 的四个方法都是），
         # 因此这条错误在 `stream._send_plain` 里按返回值判出来、由 `_relayed` 原样带出。
-        # discord 那一侧是 SDK 抛异常，折出来的 `detail` 因此长得不一样。
         assert dict(caught.value.detail) == {"conversation": CHAT_ID, "parts": 1}
         await channel.stop()
 
@@ -353,9 +352,8 @@ class TestChannelLifecycle:
 
 class TestSdkBoundary:
     def test_only_two_modules_touch_the_sdk(self) -> None:
-        """**这条纪律必须机器检查**：飞书有两个 SDK 出口（WS 与 HTTP），discord 只有一个
-        因此靠 docstring 就够。多一个出口就多一处「不装 SDK 跑不了的用例」。
-        """
+        """**这条纪律必须机器检查**：飞书只有 WS 与 HTTP 两个 SDK 出口。
+        多一个出口就多一处「不装 SDK 跑不了的用例」。"""
         package = Path(plugin.__file__).parent
         offenders: set[str] = set()
         for path in package.glob("*.py"):

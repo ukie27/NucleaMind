@@ -71,7 +71,7 @@ def test_same_message_id_on_another_channel_is_not_a_duplicate() -> None:
     cache = DedupCache()
     cache.remember("telegram", "1", turn("t1"))
 
-    assert cache.remember("discord", "1", turn("t2")) is None
+    assert cache.remember("chat", "1", turn("t2")) is None
 
 
 # --------------------------------------------------------------------------- 边界

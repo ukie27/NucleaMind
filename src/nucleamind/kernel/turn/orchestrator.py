@@ -48,9 +48,10 @@ from .events import (
 )
 from .finalization import finish_turn
 from .limits import BudgetLedger
+from .message_projection import render_message_content
 from .orchestration import OrchestratorDeps, TurnReceipt, emit_outbound, engine_deps
 from .tracker import TurnTracker
-from .transcript import Transcript, TurnState
+from .transcript import ModelInput, Transcript, TurnState
 from .translation import (
     as_nuclea,
     outcome_for_error,
@@ -220,7 +221,9 @@ class TurnOrchestrator:
         )
 
         token.checkpoint(Checkpoint.BEFORE_CONTEXT)  # 检查点 1
-        user_input = "\n\n".join(state.model_inputs)
+        user_input = "\n\n".join(
+            render_message_content(item.content, item.attachments) for item in state.model_inputs
+        )
         context = await assemble(
             snapshot=snapshot,
             user_input=user_input,
@@ -339,8 +342,10 @@ class TurnOrchestrator:
                 state.fragments.extend(outcome.result.fragments)
                 if outcome.result.content:
                     state.text.append(outcome.result.content)
-            if outcome.disposition is not Disposition.COMMAND_HANDLED and outcome.model_input:
-                state.model_inputs.append(outcome.model_input)
+            if outcome.model_input is not None:
+                state.model_inputs.append(
+                    ModelInput(outcome.model_input, outcome.model_attachments)
+                )
         return None
 
     # ------------------------------------------------------------------ engine

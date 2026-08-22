@@ -3,8 +3,8 @@
 职责：按传输类型连上一个 server，把 `mcp` 的 `ClientSession` 包成本插件的 `McpSession`。
 不负责：判定配置（`settings.py`）、命名（`naming.py`）、生命周期（`supervisor.py`）。
 
-**这是整棵测试树的支点**（`discord` 插件的 `gateway.py` 是同一条切分线）：其余模块全部
-对 `session.py` 的两个 Protocol 编程，因此**没装 `mcp` 包的环境里测试仍须全绿**——
+**这是整棵测试树的支点**：其余模块全部对 `session.py` 的两个 Protocol 编程，因此
+**没装 `mcp` 包的环境里测试仍须全绿**——
 CI 用 `--no-deps` 装插件，而本模块只在真的要连一个 server 时才被 import。
 唯一需要碰它的用例是「没装它时说什么」。
 

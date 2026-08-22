@@ -38,7 +38,7 @@ def test_workspace_partition_is_the_session_scope() -> None:
 
 def test_agent_partition_ignores_the_session_key() -> None:
     """实例级分区对任何会话都是同一份——这正是「跨 Session 的长期记忆」的意思。"""
-    other = SessionKey(channel_id="discord", conversation_id="guild-1", scope="another")
+    other = SessionKey(channel_id="chat", conversation_id="group-1", scope="another")
     assert partition_for(FragmentScope.AGENT, KEY) == partition_for(FragmentScope.AGENT, other)
     assert partition_for(FragmentScope.AGENT, KEY).token == AGENT_PARTITION
 

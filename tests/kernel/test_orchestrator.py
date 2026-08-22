@@ -265,6 +265,25 @@ async def test_a_command_can_rewrite_the_input_and_the_turn_continues() -> None:
     assert harness.provider.requests[0].messages[-1].content == "请用中文回答：你好"
 
 
+async def test_inbound_attachment_reaches_model_and_session() -> None:
+    attachment = AttachmentRef(
+        source=AttachmentSource.URL,
+        locator="https://files.example/report.pdf",
+        media_type="application/pdf",
+        size_bytes=42,
+        filename="report.pdf",
+    )
+    harness = build(ScriptedProvider([text_response("收到")]))
+
+    await harness.send(inbound("请查看", attachments=(attachment,)))
+
+    model_input = harness.provider.requests[0].messages[-1].content
+    assert "请查看" in model_input
+    assert '"locator": "https://files.example/report.pdf"' in model_input
+    _, records = harness.store.appends[0]
+    assert records[0].attachments == (attachment,)
+
+
 async def test_command_fragments_reach_the_context() -> None:
     handler = ScriptedCommand(
         CommandResult(
@@ -888,9 +907,9 @@ async def test_tool_attachments_ride_on_the_final_frame() -> None:
     挂在中间帧上等于让 Channel 收到 N 份同样的附件——出站分片是同一段正文的切块。
     """
     harness = build(
-        ScriptedProvider([tool_response(tool_call("image.generate")), text_response("给你")]),
-        tool_specs=[tool_spec("image.generate")],
-        tools=RecordingToolInvoker(results={"image.generate": _with_attachments(_png("a.png"))}),
+        ScriptedProvider([tool_response(tool_call("artifact.create")), text_response("给你")]),
+        tool_specs=[tool_spec("artifact.create")],
+        tools=RecordingToolInvoker(results={"artifact.create": _with_attachments(_png("a.png"))}),
     )
 
     receipt = await harness.send()
@@ -899,6 +918,9 @@ async def test_tool_attachments_ride_on_the_final_frame() -> None:
     assert final.stream_state is StreamState.FINAL
     assert [item.locator for item in final.attachments] == ["artifacts/images/a.png"]
     assert all(not m.attachments for m in receipt.messages[:-1])
+    _, records = harness.store.appends[0]
+    assert records[-1].role is Role.ASSISTANT
+    assert records[-1].attachments == (_png("a.png"),)
 
 
 async def test_the_same_attachment_twice_is_delivered_once() -> None:
@@ -906,13 +928,13 @@ async def test_the_same_attachment_twice_is_delivered_once() -> None:
     harness = build(
         ScriptedProvider(
             [
-                tool_response(tool_call("image.generate", call_id="c1")),
-                tool_response(tool_call("image.generate", call_id="c2")),
+                tool_response(tool_call("artifact.create", call_id="c1")),
+                tool_response(tool_call("artifact.create", call_id="c2")),
                 text_response("给你"),
             ]
         ),
-        tool_specs=[tool_spec("image.generate")],
-        tools=RecordingToolInvoker(results={"image.generate": _with_attachments(_png("a.png"))}),
+        tool_specs=[tool_spec("artifact.create")],
+        tools=RecordingToolInvoker(results={"artifact.create": _with_attachments(_png("a.png"))}),
     )
 
     receipt = await harness.send()
@@ -944,15 +966,18 @@ async def test_attachments_beyond_the_cap_are_reported_not_silently_dropped() ->
 async def test_a_final_frame_with_only_attachments_is_still_sent() -> None:
     """正文为空但有附件时照发：契约的「内容与附件不能同时为空」本来就是二选一。"""
     harness = build(
-        ScriptedProvider([tool_response(tool_call("image.generate")), text_response("")]),
-        tool_specs=[tool_spec("image.generate")],
-        tools=RecordingToolInvoker(results={"image.generate": _with_attachments(_png("a.png"))}),
+        ScriptedProvider([tool_response(tool_call("artifact.create")), text_response("")]),
+        tool_specs=[tool_spec("artifact.create")],
+        tools=RecordingToolInvoker(results={"artifact.create": _with_attachments(_png("a.png"))}),
     )
 
     receipt = await harness.send()
 
     assert receipt.messages[-1].content == ""
     assert len(receipt.messages[-1].attachments) == 1
+    _, records = harness.store.appends[0]
+    assert records[-1].content == ""
+    assert records[-1].attachments == (_png("a.png"),)
 
 
 # ------------------------------------------------------------------ K 重试（`D48`）

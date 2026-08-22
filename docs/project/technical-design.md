@@ -1312,7 +1312,10 @@ Protocol）：`kernel/` 与 `runtime/` 都要调用 CLI 能力，而 `R2` 禁止
 
 `builtins/session_jsonl/` 的格式必须是文档化的、可被外部实现读取的（`SES-006`）：
 JSONL 每行一条记录，字段即 `contracts/session.py` 的序列化形式，
-`docs/` 中给出格式说明与迁移示例。
+`docs/` 中给出当前格式与版本说明。
+
+当前 Session schema 为 v2，`SessionMessage.attachments` 保存结构化 `AttachmentRef`，不保存
+文件字节。运行时只读写当前版本，不保留旧格式双读或自动迁移分支；版本不匹配直接拒绝。
 
 `D17` 落地时对本段的三处细化（实现在 `builtins/session_jsonl/`，格式说明在
 [`docs/session-storage.md`](../session-storage.md)）：
@@ -1856,7 +1859,7 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 
 ### M3 内建能力基线（阶段一，P0）
 
-交付：`builtins/` 全部 7 项、`BUILTIN_MANIFESTS`、契约测试套件、首次运行体验。
+交付：`builtins/` 当前 8 项、`BUILTIN_MANIFESTS`、契约测试套件、首次运行体验。
 
 完成判据（对应 §16.1）：
 
@@ -1892,15 +1895,15 @@ A0 是 M-A 全部完成判据的前提：「与重构前一致」这个标准依
 ```text
 1  额外 Model Provider   —— 止步：内建 model-openai + anthropic 插件已够（D32 交付）
 2  Memory                —— 仍要做，需 MemoryProvider 接口 + MEM-005 管理命令
-3  扩展 Tool（web、search、image、mcp）—— 仍要做，可复用 net/shell 资源服务
-4  Channel               —— 只做 feishu（D34 交付）与 discord（D33 交付），其余 13 个放弃
+3  扩展 Tool（web、search、mcp）—— 仍要做，可复用 net/shell 资源服务
+4  Channel               —— 当前只保留 feishu；其他平台以后按独立插件重新设计
 5  Cron / Automation     —— 仍要做，依赖后台任务与 Hook
 6  WebUI + Gateway       —— 不做，前端源码已随 D35 删除
 ```
 
 收窄的理由是这是个人项目：十几个聊天平台与七八个 Model Provider 的适配面，维护成本
 远超它们创造的价值，而每一个都要长期跟着上游 API 变。**放弃的不是能力而是承诺**——
-第三方随时可以照 `plugins/` 里四个官方插件的形状再写一个。
+第三方随时可以照 `plugins/` 里现有官方插件的形状再写一个。
 
 每个模块的迁移遵循同一套五步，避免 `13.9` 的双重机制问题：
 

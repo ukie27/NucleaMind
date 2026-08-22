@@ -15,9 +15,9 @@
 拦掉，测试就只能证明「起不来」。因此闸门放在**去哪儿**上：回环放行，其余一律失败并指名
 道姓。
 
-这是全项目第五份同样判据的实现（另四份在 `tests/builtins/`、`tests/integration/`、
-`plugins/nucleamind-plugin-anthropic/tests/` 与 `plugins/nucleamind-plugin-discord/tests/`）。
-刻意不共享：`R4` 禁止插件 import 宿主的测试树，而这五棵测试树各自可以独立运行。
+这是全项目第四份同样判据的实现（另三份在 `tests/builtins/`、`tests/integration/` 与
+`plugins/nucleamind-plugin-anthropic/tests/`）。刻意不共享：`R4` 禁止插件 import 宿主的
+测试树，而这些测试树各自可以独立运行。
 """
 
 from __future__ import annotations

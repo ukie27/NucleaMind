@@ -90,7 +90,7 @@ nm serve [--host <地址>] [--port <端口>]
 无头模式：装配实例 → `start()` → 等信号 → `stop()`。它启动**全部已启用的 Channel 能力**
 并常驻。
 
-- **它是通用的，不是给某一个插件写的**：HTTP 接口、Discord、飞书、cron 调度器都用这一条。
+- **它是通用的，不是给某一个插件写的**：HTTP 接口、飞书、cron 调度器都用这一条。
 - ⚠️ **`--host` / `--port` 覆盖的是 `openai-api` 插件的配置块**
   （等价于 `--set plugins.openai-api.config.port=...`）。这条命令本身不认识任何协议，
   但这两个参数是网络 Channel 的公分母、而 `--set` 的完整路径写起来太长。

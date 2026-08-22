@@ -5,7 +5,7 @@
 不负责：任何协议细节（那归 Channel 能力自己，例如 `openai-api` 插件）、
 交互式会话（`nm run`）、生成配置（`runtime/first_run.py`）。
 
-**它是通用的，不是给某一个插件写的**：任何 `CHANNEL` 能力（HTTP、Telegram、Discord）
+**它是通用的，不是给某一个插件写的**：任何 `CHANNEL` 能力（HTTP、飞书或未来的新平台）
 都需要「起来、待着、能被干净地停掉」这条命令。`nm run` 做不到——它把进程交给 CLI 入口，
 那条路要读 stdin，在 `nohup` / systemd 下没有意义。
 

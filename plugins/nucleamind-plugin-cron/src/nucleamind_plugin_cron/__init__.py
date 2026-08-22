@@ -160,7 +160,7 @@ def jobs_directory(ctx: PluginContext, settings: CronSettings) -> Path:
     """落点：配置的 `dir`，没配就是 `<state_dir>/cron`。
 
     **相对路径按状态目录解析**而不是按进程 cwd：`nm` 从哪个目录启动不该改变任务存到哪里。
-    绝对路径原样采纳（`plugins/…-memory` 与 `plugins/…-image` 的同一条判定）。
+    绝对路径原样采纳，因为运维显式指定的位置不应再按状态目录重写。
     """
     if not settings.directory:
         return ctx.state_dir / JOBS_DIR_NAME

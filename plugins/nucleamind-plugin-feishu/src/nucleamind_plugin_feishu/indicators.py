@@ -5,9 +5,7 @@
 不负责：判断什么是终态（由 `channel.py` 传进来）、发消息（`stream.py`）、接触 SDK
 （对注入的 `Reactions` Protocol 编程）。
 
-**飞书没有 typing API**，因此这里与 discord 的 `indicators.py` 形状相同、内容不同：
-那边是「typing 循环 + 两个 emoji」，这边只有 emoji。少一个 `_type_loop` 意味着本模块
-没有任何后台任务，也就没有注入时钟的必要。
+**飞书没有 typing API**，所以这里只用 emoji，不维护 typing 后台循环，也不需要注入时钟。
 
 **移除反应需要 `reaction_id`**（不是 emoji 名），因此必须把 `add` 的返回值记下来。
 表是有界的（`OrderedDict`，上限 512）：一个跑几个月的实例不该把每条消息的反应 id 都留着。

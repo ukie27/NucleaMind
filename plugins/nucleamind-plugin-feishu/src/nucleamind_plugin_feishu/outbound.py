@@ -12,8 +12,8 @@
 飞书的 post 体形状就是 `{"<locale>": {"content": [[…]]}}`，而 `zh_cn` 是唯一一个所有租户
 都认的键。下一个人看到它会想「顺手做成配置吧」——不要，那会让消息在某些租户上发不出去。
 
-`TERMINAL_MARKERS` 与 `builtins/cli_entry/console.py` 逐字相同，这是**第三份**
-（第二份在 discord 插件里）。`R4` 够不着彼此，因此各写一份 + 对照用例。
+`TERMINAL_MARKERS` 与 `builtins/cli_entry/console.py` 逐字相同。`R4` 够不着彼此，因此各写一份
+并用对照用例防止漂移。
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ TERMINAL_MARKERS: Final[Mapping[StreamState, str]] = {
     StreamState.FAILED: "[本轮失败]",
 }
 
-#: workspace 附件本轮发不出去（`sdk.api.FileAccess` 没有 `read_bytes`）。如实说一句。
+#: 本插件尚未实现 workspace 文件上传时的明确降级文案。
 _UNSENDABLE: Final = "[附件：{name}（本轮无法上传）]"
 
 # 以下五个正则逐字来自 legacy `runtime.py:1560–1584`。改它们就是改格式判定。
@@ -145,8 +145,7 @@ def attachment_lines(attachments: Sequence[AttachmentRef]) -> list[str]:
     """附件的正文呈现。
 
     `URL` 直接成行；其余来源（`WORKSPACE` / `OPAQUE` / `INLINE`）本轮上传不了，如实说一句。
-    **今天没有生产者**：新层里没有任何地方产出带附件的 `OutboundMessage`，这是为将来准备
-    的诚实占位而不是可用功能（discord 插件的同一条）。
+    真正的飞书文件上传以后可以在本 Channel 插件内替换这条降级，不需要改变消息契约。
     """
     lines: list[str] = []
     for item in attachments:

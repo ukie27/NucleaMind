@@ -52,10 +52,12 @@ Transcript/事件/出站消息。
 - **D31**：删除旧 Agent/CLI/WebUI/Gateway/API 等路径，以 OpenAI API 插件和通用 `nm serve`
   替代，阶段 8 收口。
 - **D32**：Anthropic 原生 Model 插件，移除宿主 anthropic 依赖。
-- **D33**：Channel fanout 放开跨 conversation 并发，交付 Discord 插件并删除旧实现。
+- **D33**：Channel fanout 放开跨 conversation 并发，曾交付 Discord 插件并删除旧实现；
+  当前产品不需要该平台后已整包删除，通用 Channel 并发骨架保留。
 - **D34**：Feishu Channel 插件。
 - **D35**：删除全部 `legacy/`、`tests/legacy/` 和 `webui/`，收窄产品范围。
-- **D36–D38**：Web、Image、MCP Tool 插件；增加 `CapabilityDecl.namespace`。
+- **D36–D38**：曾交付 Web、Image、MCP Tool 插件；Image 后因当前产品不需要而整包删除，
+  通用 Tool、Artifact 与附件接缝保留；同期增加 `CapabilityDecl.namespace`。
 - **D39**：Memory 插件，一份 manifest 组合 Memory/Context/Tool/Command 能力；SDK 增加 Memory
   契约测试基类。
 - **D40**：Cron/Automation 插件，仅使用现有 Channel/Tool/Command 接缝，Kernel 零修改。

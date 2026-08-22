@@ -2,7 +2,7 @@
 
 内建会话存储 `builtins/session_jsonl/` 的磁盘格式说明。
 
-这份文档是**对外承诺**（需求 `SES-006`）：内建实现的存储格式必须可被外部实现读取或迁移。
+这份文档是**对外承诺**（需求 `SES-006`）：内建实现的存储格式必须可被外部实现读取。
 文档中的每个示例都由 `tests/builtins/test_session_jsonl.py` 直接喂给实现的解码器解析，
 因此它不会与代码漂移——漂移会让测试失败。
 
@@ -33,7 +33,7 @@ UTF-8 编码，每行一条记录，行尾是 `\n`。记录内容里的换行由
 所以「一行一条」不会被消息内容破坏。
 
 ```jsonl
-{"message_id": "m-1", "role": "user", "content": "统计仓库里的 Python 文件数量", "created_at": "2026-08-12T09:30:00+00:00", "turn_id": "turn-7"}
+{"message_id": "m-1", "role": "user", "content": "请查看报告", "created_at": "2026-08-12T09:30:00+00:00", "turn_id": "turn-7", "attachments": [{"source": "workspace", "locator": "reports/final.pdf", "media_type": "application/pdf", "size_bytes": 2048, "filename": "final.pdf"}]}
 {"message_id": "m-2", "role": "assistant", "content": "我来看一下。", "created_at": "2026-08-12T09:30:02+00:00", "turn_id": "turn-7"}
 {"message_id": "m-3", "role": "tool", "content": "42", "created_at": "2026-08-12T09:30:03+00:00", "turn_id": "turn-7", "tool_call_id": "call-1"}
 {"message_id": "m-4", "role": "assistant", "content": "一共 42 个。", "created_at": "2026-08-12T09:30:05+00:00", "turn_id": "turn-7", "interrupted": true, "metadata": {"channel": {"edited": true}}}
@@ -48,6 +48,7 @@ UTF-8 编码，每行一条记录，行尾是 `\n`。记录内容里的换行由
 | `turn_id` | string | 否 | 产生这条记录的 turn |
 | `tool_call_id` | string | 否 | **当且仅当** `role="tool"` 时出现 |
 | `interrupted` | bool | 否 | 缺省为 `false`；流式中途被打断的内容标记为 `true`，不得当作完整回答（`EDG-304`） |
+| `attachments` | array | 否 | 缺省为 `[]`；结构与 `AttachmentRef` 一致，只保存引用与元数据，不保存文件字节 |
 | `metadata` | object | 否 | 缺省为 `{}`；受契约层的条数、深度与大小上限约束 |
 
 **可选字段缺席而不是写 `null`**。解码方一律用「取不到就用默认值」的规则，写入方不产生
@@ -60,7 +61,7 @@ UTF-8 编码的单个 JSON 对象，每次更新都以「临时文件 + `fsync` 
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "session_key": {
     "channel_id": "cli",
     "conversation_id": "local",
@@ -75,15 +76,16 @@ UTF-8 编码的单个 JSON 对象，每次更新都以「临时文件 + `fsync` 
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `schema_version` | int | 格式版本，当前为 `1`。语义变化必须递增 |
-| `session_key` | object | 会话归属，与文件名同源。文件名不便人读，迁移工具靠它 |
+| `schema_version` | int | 格式版本，当前为 `2`。语义变化必须递增 |
+| `session_key` | object | 会话归属，与文件名同源；保留明文结构便于外部工具读取 |
 | `created_at` | string | 首次写入时间 |
 | `updated_at` | string | 最近一次写入时间 |
 | `compacted_through` | int | 压缩水位，见 §5 |
 | `committed_bytes` | int | 历史文件中**已提交**的 UTF-8 字节数，见 §4 |
 
 `meta.json` 不存在即表示会话不存在；此时即使 `.jsonl` 在，也读作空会话。
-`schema_version` 高于实现所知的版本时，实现必须报错而不是尽力解析。
+`schema_version` 不等于当前版本时，实现必须报错。运行时只实现当前格式，不包含旧会话的
+识别、兼容读取或迁移路径。
 
 ## 4. `committed_bytes`：整批原子性与半写恢复
 
@@ -127,10 +129,11 @@ compact(through=2, summary=S)
 
 ## 6. 写给外部实现
 
-一个只想**读**这份数据的实现（迁移工具、分析脚本）需要做的事：
+一个只想**读**这份数据的外部工具需要做的事：
 
 1. 按 `*.jsonl` 枚举目录，文件名主干反解出 `SessionKey`（按 `~` 切三段，百分号解码）；
-2. 读同名的 `.meta.json`，取 `committed_bytes` 与 `compacted_through`；
+2. 读同名的 `.meta.json`，确认 `schema_version == 2`，再取 `committed_bytes` 与
+   `compacted_through`；
 3. 只解析历史文件的前 `committed_bytes` 字节，按行解析记录。
 
 一个想**写**的实现，额外要遵守 §4 的写入顺序。不遵守也能产生可读的文件，

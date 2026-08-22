@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime
 
 from nucleamind.contracts import (
+    AttachmentRef,
     CancelSignal,
     CommandParam,
     CommandResult,
@@ -82,6 +83,7 @@ def inbound(
     channel_id: str = "cli",
     conversation_id: str = "local",
     is_operator: bool = True,
+    attachments: tuple[AttachmentRef, ...] = (),
 ) -> InboundMessage:
     return InboundMessage(
         message_id=message_id,
@@ -91,6 +93,7 @@ def inbound(
         sender=Sender(user_id="u1", is_operator=is_operator),
         content=content,
         timestamp=datetime(2026, 8, 12, tzinfo=UTC),
+        attachments=attachments,
     )
 
 

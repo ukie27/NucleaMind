@@ -268,7 +268,7 @@ async def _wait_for_a_live_turn(instance: AgentInstance) -> None:
 #: 可禁用的内建。`session-jsonl`（会话存储）、`context-basic`（`CTX-006` 的兜底）与
 #: `model-openai` 是必需能力的唯一提供方，禁用它们等于要一个不能回答的实例；
 #: `cli-entry` 由 `EDG-108` 显式拒绝，见下一条用例。
-DISABLEABLE = ("tools-fs", "tools-shell", "commands-core")
+DISABLEABLE = ("tools-fs", "tools-file", "tools-shell", "commands-core")
 
 
 def _write_config(instance_dir: Path, document: dict[str, object]) -> None:

@@ -35,10 +35,11 @@ NucleaMind 已经具备一套可运行、受架构守卫约束的 Agent Kernel �
 
 ### 默认与可选能力
 
-七个内建能力包：JSONL Session、基础 Context、OpenAI-compatible Model、文件工具、Shell 工具、
-核心命令和 CLI 入口。
+八个内建能力包：JSONL Session、基础 Context、OpenAI-compatible Model、文件读写工具、文件
+投递工具、Shell 工具、核心命令和 CLI 入口。`file.send` 只把 workspace 文件附加到当前回复，
+实际上传仍由 Channel 完成。
 
-九个官方独立插件：OpenAI API、Anthropic、Discord、Feishu、Web、Image、MCP、Memory、Cron。
+七个官方独立插件：OpenAI API、Anthropic、Feishu、Web、MCP、Memory、Cron。
 插件安装方式与当前清单见 [`../getting-started.md`](../getting-started.md)。
 
 ### 对外表面
@@ -57,7 +58,7 @@ Loader、Turn、Routing、Config 和 Observability 都是宿主机制；删除�
 无法以统一方式安全装载、执行或诊断。因此它们属于骨架，不属于多余功能。
 
 下列能力已经保持在 Kernel 外：具体模型厂商、Channel 协议、长期 Memory 策略、Web/Search、
-图片生成、MCP Server 适配、Cron 调度、OpenAI API 兼容服务。内建能力也只是随主发行包交付
+MCP Server 适配、Cron 调度、OpenAI API 兼容服务。内建能力也只是随主发行包交付
 的默认插件，不享有架构特权。
 
 需要持续警惕的不是“Kernel 目录有多少文件”，而是：
@@ -116,9 +117,10 @@ Memory 能力；不能改写已经持久化的 `SessionKey.storage_id()`。
 
 ### 多模态输入与输出
 
-附件与 opaque 块已经能保真传递部分非文本数据，但消息主体仍以文本为中心。未来若需要原生
-图像、音频或文档，应新增可演进的内容块联合类型，并明确模型降级、Transcript 和存储兼容，
-而不是把媒体信息塞进字符串或扩张 `Attachment` 的含义。
+附件引用现在会贯穿 InboundMessage、Turn、Session 和历史重放；Agent 也可用 `file.send`
+把 workspace 文件交给统一出站链。模型当前看到的是附件元数据投影，消息主体仍以文本为中心。
+未来若需要原生图像、音频或文档输入，应新增可演进的内容块联合类型，并明确模型降级、
+Transcript 和存储版本，而不是扩张 `AttachmentRef` 的含义。
 
 以上三项只是“设计闸门”，不是待立刻实现的 TODO。触发条件和禁止的捷径见
 [`evolution-boundaries.md`](./evolution-boundaries.md)。
@@ -151,7 +153,7 @@ mkdir -p .pytest-tmp
 .venv/bin/python -m basedpyright
 ```
 
-完整 E2E 需要九个官方插件以 editable 方式装入同一个虚拟环境，确保 entry point 可发现。
+完整 E2E 需要七个官方插件以 editable 方式装入同一个虚拟环境，确保 entry point 可发现。
 架构测试、类型检查和插件清单守卫不能因为开发环境缺依赖而跳过。
 
 ## 阅读顺序

@@ -126,9 +126,13 @@ nm config show --origins
 | --- | --- | --- | --- |
 | `root` | 字符串或 `null` | `null` | 工作区根。`null` = 实例目录下的 `workspace/`。它是文件工具、`ctx.fs` 与 shell 工具 cwd 的边界 |
 
-工具产出的文件也落在这里（`image` 插件默认写 `artifacts/images/`）。**这不只是约定**：
+工具产出的文件也应落在这里。**这不只是约定**：
 出站附件的 locator 必须是 **workspace 相对路径**（契约禁止附件依赖绝对路径），
 落在 workspace 之外的文件因此发不到聊天平台上。
+
+默认插件 `tools-file` 注册 `file.send`。它读取 workspace 相对路径、确认文件存在且不超过
+`plugins.tools-file.config.max_file_bytes`（默认 `26214400`），然后把引用附加到本轮最终
+回复；它不直接连接任何 Channel。
 
 ### `routing` —— 输入分流与 Session 并发
 

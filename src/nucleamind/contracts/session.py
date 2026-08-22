@@ -5,8 +5,8 @@
 不负责：读写存储、加锁与排队、压缩策略、保留期判定——那些在 `kernel/session/`
 （`D07`）与 `kernel/routing/`（`D10`）；本模块不含任何 IO。
 
-`SessionSnapshot` 带 `schema_version` 是 `SES-006` 的落点：内建实现的存储格式必须能被
-外部实现读取或迁移，格式演进就必须有可判定的版本号，而不是靠「读的时候试试看」。
+`SessionSnapshot` 带 `schema_version` 是 `SES-006` 的落点：外部实现可以明确判断自己读到
+的格式，而不是靠字段形状猜测。
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Final
 
 from .errors import ErrorCode, NucleaError
 from .ids import Correlation, SessionKey, TurnId, validate_identifier
+from .message import MAX_ATTACHMENTS, AttachmentRef
 from .metadata import EMPTY_METADATA, normalize_metadata
 
 if TYPE_CHECKING:  # pragma: no cover - 仅为注解，运行时不导入，避免与包根成环。
@@ -35,7 +36,7 @@ __all__ = [
 ]
 
 #: 会话存储格式的版本号。字段语义变化必须递增（`SES-006`）。
-SESSION_SCHEMA_VERSION: Final = 1
+SESSION_SCHEMA_VERSION: Final = 2
 
 
 class Role(StrEnum):
@@ -81,7 +82,8 @@ class SessionMessage:
     检查点 3——流式中途被打断时，已产生的文本要持久化并标记，不能当作完整回答
     （`EDG-304`）。
 
-    `tool_call_id` 只在 `role=TOOL` 时有值，把工具结果与它对应的调用绑起来。
+    `tool_call_id` 只在 `role=TOOL` 时有值，把工具结果与它对应的调用绑起来；
+    `attachments` 保存随消息流转的文件引用，不复制文件字节。
     """
 
     message_id: str
@@ -91,6 +93,7 @@ class SessionMessage:
     turn_id: TurnId | None = None
     tool_call_id: str | None = None
     interrupted: bool = False
+    attachments: tuple[AttachmentRef, ...] = ()
     metadata: Mapping[str, JsonValue] = EMPTY_METADATA
 
     def __post_init__(self) -> None:
@@ -108,6 +111,12 @@ class SessionMessage:
                 ErrorCode.KERNEL_INVARIANT_VIOLATED,
                 "tool_call_id 必须且只能出现在 role=TOOL 的记录上。",
                 detail={"message_id": self.message_id, "role": self.role.value},
+            )
+        if len(self.attachments) > MAX_ATTACHMENTS:
+            raise NucleaError(
+                ErrorCode.INPUT_TOO_LARGE,
+                "会话记录的附件数量超限。",
+                detail={"count": len(self.attachments), "limit": MAX_ATTACHMENTS},
             )
         object.__setattr__(
             self, "metadata", normalize_metadata(self.metadata, field="session_message.metadata")
@@ -140,11 +149,14 @@ class SessionSnapshot:
                     "messages": len(self.messages),
                 },
             )
-        if self.schema_version < 1:
+        if self.schema_version != SESSION_SCHEMA_VERSION:
             raise NucleaError(
                 ErrorCode.PERSISTENCE_RECORD_CORRUPT,
-                "会话存储格式版本号必须为正。",
-                detail={"schema_version": self.schema_version},
+                "会话快照的格式版本与当前契约不一致。",
+                detail={
+                    "schema_version": self.schema_version,
+                    "current": SESSION_SCHEMA_VERSION,
+                },
             )
 
     @property

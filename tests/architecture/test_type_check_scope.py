@@ -13,7 +13,7 @@
 事件就多产一条 `await None` 的异常 Task。**两次都是「测试测不到、类型能看见」。**
 
 **为什么要排除四个模块，以及为什么排除清单也要守。** CI 用 `pip install --no-deps` 装插件
-（见 `test_ci_plugin_list.py`），因此 `discord.py` / `lark-oapi` / `mcp` 在 CI 环境里
+（见 `test_ci_plugin_list.py`），因此 `lark-oapi` / `mcp` 在 CI 环境里
 **不存在**——碰它们的模块在本地报「SDK 类型未知」，在 CI 报「import 解析不到」，两套
 诊断对不上，把它们放进检查范围只会让 CI 与本地各红各的。
 
@@ -34,7 +34,7 @@ from ._common import IGNORED_DIRS, REPO_ROOT, plugin_package_roots, rel
 #: CI 用 `--no-deps` 装插件，因此这些包在 CI 环境里不存在。
 #: **`httpx` 与 `aiohttp` 不在其中**：前者是宿主依赖，后者在 `[dev]` extra 里，
 #: 两者在 CI 都装得到，碰它们的模块照常检查。
-SDKS_ABSENT_IN_CI = frozenset({"discord", "lark_oapi", "mcp"})
+SDKS_ABSENT_IN_CI = frozenset({"lark_oapi", "mcp"})
 
 
 def _basedpyright_config() -> dict[str, object]:

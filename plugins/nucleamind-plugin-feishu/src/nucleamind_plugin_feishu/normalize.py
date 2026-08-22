@@ -15,11 +15,10 @@
 - **去重表上限 1000、FIFO 淘汰**：飞书的 WS 会重投。这是 `EDG-201` 在 Channel 侧的第一道
   防线，kernel 的 `DedupCache` 是第二道——**两道都要**，因为第一道决定要不要打反应。
 
-**与 Discord 刻意不同的一处**：这里按 `sender_type == "bot"` 直接丢，没有 discord #3217 那种
-「只丢自己、放行其它 bot」的需求——飞书的 bot 互相收发要在开放平台另配权限，默认拿不到，
-放行它们只会引入一类无法在这里判定的循环。
+**bot 消息一律丢弃**：飞书的 bot 互相收发要在开放平台另配权限，默认拿不到；放行它们只会
+引入一类本插件无法判定的循环。
 
-**`conversation_id` 是合成的**（与 Discord 最不同的一处）：飞书的话题没有独立 id，
+**`conversation_id` 是合成的**：飞书的话题没有独立 id，
 `chat_id` 对整个群恒定，因此话题隔离要靠 `chat_id:root_id`。合成必须**可逆**——
 `OutboundMessage` 只带 `conversation_id`，Channel 靠它拿回 `chat_id` 去寻址。
 分隔符用 `:`：它过得了 `validate_identifier`（只拒空/超长/控制字符），而

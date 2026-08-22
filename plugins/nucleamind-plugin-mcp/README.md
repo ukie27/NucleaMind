@@ -115,5 +115,4 @@ python -m pytest plugins/nucleamind-plugin-mcp -q
 ```
 
 **不装 `mcp` 也必须全绿**：只有 `client.py` import 它，其余全部对 `session.py` 的两个
-Protocol 编程（`discord` 插件 `gateway.py` 的同一条切分线）。唯一需要碰 SDK 的用例
-是「没装它时说什么」。
+Protocol 编程。唯一需要碰 SDK 的用例是「没装它时说什么」。

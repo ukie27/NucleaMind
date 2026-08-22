@@ -10,7 +10,7 @@
   `stream_edit_interval_ms = 500`：新层配置里所有时长都是毫秒）。`allow_from` 为空 =
   **允许所有**，与 legacy 一致——改它等于静默改变谁能用这个 bot。
 - **`operators` 与 `allow_chats` 是新增的**：前者是因为契约要求 `Sender.is_operator` 由
-  Channel 在边界决定（legacy 没有这个概念），后者是对齐 discord 的 `allow_channels`。
+  Channel 在边界决定（legacy 没有这个概念），后者限制允许驱动 Agent 的会话。
   两者默认空，`operators` 空 = 无人是 operator（安全的一侧）。
 - **`encrypt_key` / `verification_token` 不在这里**：WS 长连接下 SDK 走
   `do_without_validation`，**没有 AES 解密也没有签名校验**（那是 webhook 模式才有的），

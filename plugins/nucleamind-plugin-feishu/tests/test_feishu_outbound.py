@@ -112,8 +112,8 @@ class TestTerminalMarkers:
         assert set(TERMINAL_MARKERS) == {StreamState.CANCELLED, StreamState.FAILED}
 
     def test_the_markers_are_the_same_words_the_terminal_uses(self) -> None:
-        """与 `builtins/cli_entry/console.py::TERMINAL_MARKERS` 逐字相同——这是**第三份**
-        （第二份在 discord 插件里）。`R4` 够不着彼此，因此各写一份 + 这条对照用例。"""
+        """与 `builtins/cli_entry/console.py::TERMINAL_MARKERS` 逐字相同。
+        `R4` 够不着彼此，因此各写一份并用这条对照用例防止漂移。"""
         assert TERMINAL_MARKERS[StreamState.CANCELLED] == "[已中断：以上是中断前已产生的内容]"
         assert TERMINAL_MARKERS[StreamState.FAILED] == "[本轮失败]"
 

@@ -49,6 +49,8 @@ from nucleamind.builtins.session_jsonl import (
 from nucleamind.builtins.session_jsonl.codec import _unfreeze
 from nucleamind.contracts import (
     SESSION_SCHEMA_VERSION,
+    AttachmentRef,
+    AttachmentSource,
     CapabilityKind,
     ErrorCode,
     NucleaError,
@@ -81,6 +83,18 @@ def summary(content: str = "前两条的摘要") -> SessionMessage:
         content=content,
         created_at=datetime.now(UTC),
     )
+
+
+def test_attachment_references_round_trip_in_the_current_format() -> None:
+    attachment = AttachmentRef(
+        source=AttachmentSource.URL,
+        locator="https://files.example/report.pdf",
+        media_type="application/pdf",
+        size_bytes=42,
+        filename="report.pdf",
+    )
+    original = message("m-file", attachments=(attachment,))
+    assert decode_record(encode_record(original)) == original
 
 
 # ------------------------------------------------------------------------------ 契约基类
@@ -365,9 +379,7 @@ class TestCorruption:
             await store.load(KEY)
         assert caught.value.code is ErrorCode.PERSISTENCE_RECORD_CORRUPT
 
-    async def test_a_future_schema_version_raises_with_an_upgrade_hint(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_a_different_schema_version_is_rejected(self, tmp_path: Path) -> None:
         store = await self.prepared(tmp_path)
         _, meta_path = store.paths_for(KEY)
         record = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -377,7 +389,7 @@ class TestCorruption:
         with pytest.raises(NucleaError) as caught:
             await store.load(KEY)
         assert caught.value.code is ErrorCode.PERSISTENCE_RECORD_CORRUPT
-        assert "升级" in caught.value.user_message
+        assert caught.value.detail["schema_version"] == SESSION_SCHEMA_VERSION + 1
 
     @pytest.mark.parametrize(
         "mutate",
@@ -469,6 +481,16 @@ class TestCorruption:
                 ' "created_at": "2026-08-12T09:30:00+00:00", "turn_id": 7}',
                 id="可选字段类型不符",
             ),
+            pytest.param(
+                '{"message_id": "m", "role": "user", "content": "x",'
+                ' "created_at": "2026-08-12T09:30:00+00:00", "attachments": {}}',
+                id="attachments 不是数组",
+            ),
+            pytest.param(
+                '{"message_id": "m", "role": "user", "content": "x",'
+                ' "created_at": "2026-08-12T09:30:00+00:00", "attachments": [7]}',
+                id="附件不是对象",
+            ),
         ],
     )
     def test_broken_record_shapes_raise(self, raw: str) -> None:
@@ -481,10 +503,13 @@ class TestCorruption:
         [
             pytest.param("不是 JSON", id="非 JSON"),
             pytest.param('{"schema_version": true}', id="布尔冒充整数"),
-            pytest.param('{"schema_version": 1, "session_key": 7}', id="session_key 不是对象"),
             pytest.param(
-                '{"schema_version": 1, "session_key": {"channel_id": "",'
-                ' "conversation_id": "c", "scope": "s"}}',
+                f'{{"schema_version": {SESSION_SCHEMA_VERSION}, "session_key": 7}}',
+                id="session_key 不是对象",
+            ),
+            pytest.param(
+                f'{{"schema_version": {SESSION_SCHEMA_VERSION},'
+                ' "session_key": {"channel_id": "", "conversation_id": "c", "scope": "s"}}',
                 id="session_key 分量非法",
             ),
         ],
@@ -608,6 +633,13 @@ class TestDocumentedFormat:
             turn_id="turn-7",
             tool_call_id="call-1",
             interrupted=True,
+            attachments=(
+                AttachmentRef(
+                    source=AttachmentSource.WORKSPACE,
+                    locator="result.txt",
+                    media_type="text/plain",
+                ),
+            ),
             metadata={"x": 1},
         )
         assert set(json.loads(encode_record(record))) == set(RECORD_FIELDS)

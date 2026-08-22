@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from nucleamind.contracts import (
+    AttachmentRef,
     CancelSignal,
     CapabilityKind,
     CommandHandler,
@@ -85,6 +86,8 @@ class DispatchOutcome:
 
     disposition: Disposition
     model_input: str | None = None
+    #: 与 `model_input` 同属一条用户消息；命令改写文本时附件仍必须跟着进入模型。
+    model_attachments: tuple[AttachmentRef, ...] = ()
     result: CommandResult | None = None
     #: 命中的命令名（规范名，非别名）；未命中命令时为 `None`。
     command_name: str | None = None
@@ -95,6 +98,12 @@ class DispatchOutcome:
             raise NucleaError(
                 ErrorCode.KERNEL_INVARIANT_VIOLATED,
                 "model_input 必须且只能出现在会进入模型的分流结论上。",
+                detail={"disposition": self.disposition.value},
+            )
+        if not enters_model and self.model_attachments:
+            raise NucleaError(
+                ErrorCode.KERNEL_INVARIANT_VIOLATED,
+                "不会进入模型的分流结论不该带附件。",
                 detail={"disposition": self.disposition.value},
             )
         if (self.disposition is Disposition.MODEL_TURN) and self.result is not None:
@@ -263,7 +272,9 @@ class Dispatcher:
         parsed = parse_command(message.content, self._prefix)
         if parsed is None:
             return DispatchOutcome(
-                disposition=Disposition.MODEL_TURN, model_input=message.content
+                disposition=Disposition.MODEL_TURN,
+                model_input=message.content,
+                model_attachments=message.attachments,
             )
 
         entry = self._index.get(parsed.name)
@@ -278,6 +289,7 @@ class Dispatcher:
         return DispatchOutcome(
             disposition=result.disposition,
             model_input=result.rewritten_input,
+            model_attachments=message.attachments if result.rewritten_input is not None else (),
             result=result,
             command_name=entry.spec.name,
         )

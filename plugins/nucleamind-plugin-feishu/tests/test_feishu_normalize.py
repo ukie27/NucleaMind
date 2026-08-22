@@ -44,8 +44,7 @@ from nucleamind.contracts import AttachmentSource, SessionKey
 
 class TestGating:
     def test_bot_messages_are_dropped(self) -> None:
-        """**与 discord 刻意不同**：飞书的 bot 互发要另配权限，放行它们只会引入一类
-        无法在这里判定的循环。"""
+        """飞书的 bot 互发要另配权限，放行它们只会引入无法可靠判定的循环。"""
         probe = gate()
         assert normalize(raw(sender_type="bot"), probe) is None
         assert probe.rejections == ["bot_sender"]

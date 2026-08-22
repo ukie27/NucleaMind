@@ -5,8 +5,8 @@
 （`supervisor.py`）。
 
 **这是整棵测试树的支点。** 只有 `client.py` import `mcp`，其余全部对这两个 Protocol
-编程，因此**没装 `mcp` 包的环境里测试仍须全绿**（CI 用 `--no-deps` 装插件）。
-`discord` 插件的 `gateway.py` 是同一条切分线；legacy 的做法是在测试文件第 11 行写
+编程，因此**没装 `mcp` 包的环境里测试仍须全绿**（CI 用 `--no-deps` 装插件）。legacy
+的做法是在测试文件第 11 行写
 `pytest.importorskip("mcp")`，CI 没装依赖时整棵树静默全跳。
 
 **平台 SDK 对象在 `to_remote_tool()` 之后就不存在了**（`MSG-004` 的同一条精神）：

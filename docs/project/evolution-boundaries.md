@@ -130,8 +130,10 @@ Turn，而使用普通 Tool/Command 无法表达。
 - Transcript、Session JSONL、事件与日志如何避免泄密和膨胀；
 - ToolResult/OutboundMessage 与 ModelRequest 是否共享块类型或只做显式转换。
 
-当前 `Attachment` 负责传输附件，`OpaqueBlock` 负责供应商块的保真回放。它们是未来设计的
-证据，但不是应该无限扩张的万能容器。
+当前 `AttachmentRef` 负责跨 Channel、Turn 和 Session 保存文件引用；Context Builder 只把
+这些元数据投影成 user 文本，`file.send` 只产生出站附件意图。`OpaqueBlock` 负责供应商块的
+同 turn 保真回放。它们已经覆盖“收文件引用、记住引用、发送 workspace 文件”，但不是应当
+无限扩张的原生多模态容器。
 
 当前禁止的捷径：
 

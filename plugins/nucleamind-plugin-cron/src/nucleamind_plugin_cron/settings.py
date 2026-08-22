@@ -56,7 +56,7 @@ DEFAULT_CATCH_UP_WINDOW_MS: Final = 0
 #: 任务条数上界。整份文件每次保存都重写，而任务表本该是几十条的量级。
 DEFAULT_MAX_JOBS: Final = 100
 
-#: 实例标识的默认值。与 `discord` / `feishu` 两个官方 Channel 插件逐字相同。
+#: 实例标识的默认值。与其他官方 Channel 使用相同基准。
 DEFAULT_INSTANCE_ID: Final = "default"
 
 _NOT_A_STRING: Final = "这个配置项必须是字符串。"
@@ -114,7 +114,7 @@ CONFIG_SCHEMA: Final[ManifestJsonSchema] = {
         "instance_id": {
             "type": "string",
             "description": (
-                "注入消息上标注的实例标识。与 discord / feishu 两个官方 Channel 插件同名同默认值"
+                "注入消息上标注的实例标识。与其他官方 Channel 使用同名同默认值"
                 "——插件拿不到装配根的实例标识（`PluginContext` 没有这个成员）。"
             ),
         },
@@ -144,9 +144,8 @@ class CronSettings:
     min_interval_ms: int = DEFAULT_MIN_INTERVAL_MS
     catch_up_window_ms: int = DEFAULT_CATCH_UP_WINDOW_MS
     max_jobs: int = DEFAULT_MAX_JOBS
-    #: 注入消息上标注的实例标识。默认值与 `discord` / `feishu` 两个官方 Channel 插件
-    #: 逐字相同（`"default"`）——`PluginContext` 没有实例标识这个成员，三个插件因此都从
-    #: 自己的配置里读。
+    #: 注入消息上标注的实例标识。默认值与其他官方 Channel 相同（`"default"`）——
+    #: `PluginContext` 没有实例标识这个成员，因此各插件都从自己的配置里读。
     instance_id: str = DEFAULT_INSTANCE_ID
 
 

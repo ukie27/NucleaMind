@@ -119,6 +119,7 @@ from .memory import (
     MemoryRecall,
     select_memory,
 )
+from .message_projection import render_message_content
 from .orchestration import (
     EventTap,
     OrchestratorDeps,
@@ -253,6 +254,7 @@ __all__ = [
     "outcome_without_engine",
     "partition_tool_batches",
     "replay_messages",
+    "render_message_content",
     "retry_delay_ms",
     "run_turn",
     "select_memory",

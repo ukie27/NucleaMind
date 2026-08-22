@@ -134,8 +134,7 @@ def memory_directory(ctx: PluginContext, settings: MemorySettings) -> Path:
     """落点：配置的 `dir`，没配就是 `<state_dir>/memory`。
 
     **相对路径按状态目录解析**而不是按进程 cwd：`nm` 从哪个目录启动不该改变记忆存到哪里。
-    绝对路径原样采纳——运维显式写下的绝对路径就是他要的那个位置（`plugins/…-image` 的
-    同一条判定）。
+    绝对路径原样采纳，因为运维显式指定的位置不应再按状态目录重写。
     """
     if not settings.directory:
         return ctx.state_dir / MEMORY_DIR_NAME
@@ -147,7 +146,7 @@ def register(api: NucleaAPI, ctx: PluginContext) -> MemorySettings:
     """真正的注册体。
 
     与 `setup()` 分开是为了让用例能在不构造整个装配根的情况下驱动它，同时保证生产路径与
-    测试路径**注册的是同一批对象**（`plugins/…-image` 的先例）。
+    测试路径**注册的是同一批对象**；测试注入点不另建注册路径。
 
     **四类能力共用同一个 `MemoryStore`**：契约门面、Context Provider、三条工具与 `/memory`
     看到的是同一份数据。给它们各建一个 store 会让「工具刚写的记忆，命令查不到」这种问题

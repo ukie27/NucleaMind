@@ -22,10 +22,8 @@ import 兄弟模块，依赖规则 `R4` 就成了空话。官方插件与第三�
 | --- | --- | --- | --- |
 | `nucleamind-plugin-openai-api/` | `openai-api` | `CHANNEL:openai` —— OpenAI 兼容 HTTP 接口（`/v1/chat/completions`、`/v1/models`），配合 `nm serve` 常驻 | `D31` |
 | `nucleamind-plugin-anthropic/` | `anthropic` | `MODEL:anthropic` —— Anthropic 原生 Messages API，与内建 `model-openai` 并存 | `D32` |
-| `nucleamind-plugin-discord/` | `discord` | `CHANNEL:discord` —— Discord bot，配合 `nm serve` 常驻；出站附件真的上传（`D47`） | `D33` |
 | `nucleamind-plugin-feishu/` | `feishu` | `CHANNEL:feishu` —— 飞书 / Lark bot（WS 长连接、CardKit 流式卡片），配合 `nm serve` 常驻 | `D34` |
 | `nucleamind-plugin-web/` | `web` | `TOOL:web.fetch` + `TOOL:web.search` —— 抓网页与搜网两件工具 | `D36` |
-| `nucleamind-plugin-image/` | `image` | `TOOL:image.generate` —— 按文字描述生成图像，落进 workspace 并作为**出站附件**随本轮终帧发出（`D47`） | `D37` |
 | `nucleamind-plugin-mcp/` | `mcp` | `TOOL:mcp.*` —— 把 MCP server 的工具接进实例（命名空间声明，`D38-A` 机制的第一个使用者） | `D38` |
 | `nucleamind-plugin-memory/` | `memory` | `MEMORY:jsonl` + `CONTEXT:memory` + 三条 `TOOL:memory.*` + `COMMAND:memory` —— 跨 Session 的长期记忆（JSONL 存储 + 关键词召回，零新依赖） | `D39` |
 | `nucleamind-plugin-cron/` | `cron` | `CHANNEL:cron` + 三条 `TOOL:cron.*` + `COMMAND:cron` —— 定时任务：到点自己开一条 turn，结果回到创建它的那个会话（自写 cron 解析，零新依赖） | `D40` |
@@ -35,14 +33,11 @@ import 兄弟模块，依赖规则 `R4` 就成了空话。官方插件与第三�
 ```bash
 pip install --no-deps -e plugins/nucleamind-plugin-openai-api
 pip install --no-deps -e plugins/nucleamind-plugin-anthropic
-pip install --no-deps -e plugins/nucleamind-plugin-discord
 pip install --no-deps -e plugins/nucleamind-plugin-feishu
 pip install --no-deps -e plugins/nucleamind-plugin-web
-pip install --no-deps -e plugins/nucleamind-plugin-image
 pip install --no-deps -e plugins/nucleamind-plugin-mcp
 pip install --no-deps -e plugins/nucleamind-plugin-memory
 pip install --no-deps -e plugins/nucleamind-plugin-cron
 ```
 
 装上不等于启用——`plugins.enabled` 是唯一闸门，改完要重启实例。
-

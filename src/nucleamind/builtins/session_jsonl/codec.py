@@ -12,8 +12,9 @@
 
 两条格式设计上的取舍：
 
-- **可选字段缺席而不是写 `null`**。`turn_id` / `tool_call_id` / `interrupted` / `metadata`
-  只在有值时出现。会话文件是逐条追加的长文件，四个恒为 `null` 的键会让它明显变大，而
+- **可选字段缺席而不是写 `null`**。`turn_id` / `tool_call_id` / `interrupted` /
+  `attachments` / `metadata` 只在有值时出现。会话文件是逐条追加的长文件，恒为空的键会
+  让它明显变大，而
   「缺席即默认值」对外部实现同样是一条好写的规则（解码侧一律 `get()`）。
 - **时间戳一律带时区的 ISO-8601**。`SessionMessage` 拒绝 naive 时间，格式层因此不需要
   「没有时区怎么办」这条分支——`datetime.fromisoformat` 解出 naive 就是记录坏了。
@@ -29,6 +30,8 @@ from typing import Final, NoReturn, cast
 
 from nucleamind.contracts import (
     SESSION_SCHEMA_VERSION,
+    AttachmentRef,
+    AttachmentSource,
     ErrorCode,
     JsonValue,
     NucleaError,
@@ -57,6 +60,7 @@ RECORD_FIELDS: Final = (
     "turn_id",
     "tool_call_id",
     "interrupted",
+    "attachments",
     "metadata",
 )
 
@@ -155,6 +159,59 @@ def _parse_time(raw: str, field: str, **detail: object) -> datetime:
     return parsed
 
 
+def _encode_attachment(item: AttachmentRef) -> dict[str, JsonValue]:
+    payload: dict[str, JsonValue] = {
+        "source": item.source.value,
+        "locator": item.locator,
+        "media_type": item.media_type,
+    }
+    if item.size_bytes is not None:
+        payload["size_bytes"] = item.size_bytes
+    if item.filename is not None:
+        payload["filename"] = item.filename
+    return payload
+
+
+def _decode_attachments(
+    record: Mapping[str, JsonValue], **detail: object
+) -> tuple[AttachmentRef, ...]:
+    value = record.get("attachments", [])
+    if not isinstance(value, list):
+        _raise_corrupt("会话记录的 attachments 必须是数组。", **detail)
+    attachments: list[AttachmentRef] = []
+    for index, raw_item in enumerate(value):
+        if not isinstance(raw_item, dict):
+            _raise_corrupt("会话附件必须是 JSON 对象。", attachment=index, **detail)
+        item = cast("Mapping[str, JsonValue]", raw_item)
+        source_value = _require_str(item, "source", attachment=index, **detail)
+        size_bytes = item.get("size_bytes")
+        if size_bytes is not None and (
+            not isinstance(size_bytes, int) or isinstance(size_bytes, bool)
+        ):
+            _raise_corrupt(
+                "会话附件的 size_bytes 必须是整数。", attachment=index, **detail
+            )
+        try:
+            attachments.append(
+                AttachmentRef(
+                    source=AttachmentSource(source_value),
+                    locator=_require_str(item, "locator", attachment=index, **detail),
+                    media_type=_require_str(item, "media_type", attachment=index, **detail),
+                    size_bytes=size_bytes,
+                    filename=_optional_str(item, "filename", attachment=index, **detail),
+                )
+            )
+        except (NucleaError, ValueError) as exc:
+            _raise_corrupt(
+                "会话附件违反契约不变量。",
+                exc,
+                attachment=index,
+                source=source_value,
+                **detail,
+            )
+    return tuple(attachments)
+
+
 # ------------------------------------------------------------------------------ 记录行
 
 
@@ -190,6 +247,8 @@ def encode_record(message: SessionMessage) -> str:
         payload["tool_call_id"] = message.tool_call_id
     if message.interrupted:
         payload["interrupted"] = True
+    if message.attachments:
+        payload["attachments"] = [_encode_attachment(item) for item in message.attachments]
     if message.metadata:
         payload["metadata"] = dict(message.metadata)
     return json.dumps(payload, ensure_ascii=False, default=_unfreeze)
@@ -227,6 +286,7 @@ def decode_record(raw: str, **detail: object) -> SessionMessage:
             turn_id=None if turn_id is None else TurnId(turn_id),
             tool_call_id=_optional_str(record, "tool_call_id", **detail),
             interrupted=interrupted,
+            attachments=_decode_attachments(record, **detail),
             metadata=metadata,
         )
     except NucleaError as exc:
@@ -276,15 +336,14 @@ def encode_meta(meta: SessionMeta) -> str:
 def decode_meta(raw: str, **detail: object) -> SessionMeta:
     """解析 `meta.json`。
 
-    **异常约定**：形状不符或版本高于本实现所知，一律 `PERSISTENCE_RECORD_CORRUPT`。
-    高版本单独给一句人话——那不是文件坏了，是这个 NucleaMind 太旧，用户该升级而不是
-    去修文件。
+    **异常约定**：形状不符或版本不等于当前版本，一律
+    `PERSISTENCE_RECORD_CORRUPT`。运行时只有当前格式这一条读写路径。
     """
     record = _parse_object(raw, **detail)
     version = _require_int(record, "schema_version", **detail)
-    if version > SESSION_SCHEMA_VERSION:
+    if version != SESSION_SCHEMA_VERSION:
         _raise_corrupt(
-            "会话存储格式版本高于当前实现，请升级 NucleaMind 后再读取该会话。",
+            "会话存储格式版本与当前实现不匹配。",
             schema_version=version,
             supported=SESSION_SCHEMA_VERSION,
             **detail,

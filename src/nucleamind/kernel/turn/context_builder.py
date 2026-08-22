@@ -62,6 +62,7 @@ from ..registry import CapabilityRegistry
 from .deps import HookDispatcher
 from .limits import TurnLimits
 from .memory import MemoryRecall
+from .message_projection import render_message_content
 
 __all__ = [
     "DEFAULT_CONTEXT_PROVIDER_TIMEOUT_MS",
@@ -183,9 +184,14 @@ def replay_messages(snapshot: SessionSnapshot) -> tuple[ModelMessage, ...]:
     """
     messages: list[ModelMessage] = []
     for record in snapshot.live_messages:
-        if record.role is Role.TOOL or not record.content:
+        if record.role is Role.TOOL or (not record.content and not record.attachments):
             continue
-        messages.append(ModelMessage(role=record.role, content=record.content))
+        messages.append(
+            ModelMessage(
+                role=record.role,
+                content=render_message_content(record.content, record.attachments),
+            )
+        )
     return tuple(messages)
 
 

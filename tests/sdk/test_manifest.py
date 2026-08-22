@@ -237,7 +237,7 @@ def test_config_schema_accepts_a_normal_document() -> None:
     schema = {
         "type": "object",
         # `sorted()` 是函数调用而不是字面量，双向推断够不着它——这正是 pydantic 的
-        # `JsonValue`（不变的 `list`）在八个官方插件上都过不去的那个形状。
+        # `JsonValue`（不变的 `list`）在七个官方插件上都过不去的那个形状。
         "required": sorted({"b", "a"}),
         "properties": {"a": {"type": "string", "enum": ["x", "y"]}},
         "additionalProperties": False,

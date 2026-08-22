@@ -140,7 +140,10 @@ async def test_disabling_a_non_critical_builtin_is_honoured(tmp_path: Path) -> N
 
 async def test_the_cli_stays_usable_with_every_disableable_builtin_off(tmp_path: Path) -> None:
     """§16.1 第 5 条：把能关的内建全关掉，CLI 仍然可用。"""
-    write_config(tmp_path, plugins={"disable": ["tools-fs", "tools-shell", "commands-core"]})
+    write_config(
+        tmp_path,
+        plugins={"disable": ["tools-fs", "tools-file", "tools-shell", "commands-core"]},
+    )
     instance = await _boot(tmp_path)
     try:
         assert instance.deps.tool_specs == ()
@@ -154,7 +157,7 @@ async def test_the_cli_stays_usable_with_every_disableable_builtin_off(tmp_path:
 
 
 async def test_each_builtin_gets_its_own_config_block(tmp_path: Path) -> None:
-    """七份内建共用一个 `Builtin()` ProviderId，配置块**只能**按 manifest 索引。"""
+    """八份内建共用一个 `Builtin()` ProviderId，配置块**只能**按 manifest 索引。"""
     write_config(tmp_path)
     instance = await _boot(tmp_path)
     try:
